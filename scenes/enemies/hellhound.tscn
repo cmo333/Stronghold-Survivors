@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/hellhound.gd" id=1]
+[ext_resource type="Script" path="res://scripts/animated_sprite_loader.gd" id=2]
+
+[sub_resource type="CircleShape2D" id=1]
+radius = 9.0
+
+[node name="Hellhound" type="CharacterBody2D"]
+script = ExtResource(1)
+speed_mult = 1.5
+health_mult = 0.75
+damage_mult = 1.0
+attack_rate_mult = 1.2
+
+[node name="Body" type="AnimatedSprite2D" parent="."]
+script = ExtResource(2)
+frame_paths = ["res://assets/level1/buildings_traps_anim60/unit_demon_hellhound_32_move_f001_v001.png", "res://assets/level1/buildings_traps_anim60/unit_demon_hellhound_32_move_f002_v001.png", "res://assets/level1/buildings_traps_anim60/unit_demon_hellhound_32_move_f003_v001.png", "res://assets/level1/buildings_traps_anim60/unit_demon_hellhound_32_move_f004_v001.png"]
+fps = 8.0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource(1)
