@@ -24,7 +24,8 @@
         "projectile_speed": 580,
         "projectile_range": 300
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_anim60/tower_arrow_turret_2x2_fire_f001_v001.png"
   },
   "cannon_tower": {
     "name": "Cannon Tower",
@@ -53,7 +54,8 @@
         "projectile_range": 280,
         "explosion_radius": 80
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_anim60/tower_mortar_2x2_fire_f001_v001.png"
   },
   "tesla_tower": {
     "name": "Tesla Tower",
@@ -78,7 +80,8 @@
         "damage": 14,
         "chain_count": 4
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_anim60/tower_tesla_2x2_fire_f001_v001.png"
   },
   "mine_trap": {
     "name": "Mine Trap",
@@ -101,7 +104,8 @@
         "damage": 40,
         "explosion_radius": 85
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/trap_mine_trap_1x1_trigger_f001_v001.png"
   },
   "ice_trap": {
     "name": "Ice Trap",
@@ -122,7 +126,8 @@
         "field_radius": 90,
         "slow_factor": 0.45
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/trap_ice_trap_1x1_trigger_f001_v001.png"
   },
   "acid_trap": {
     "name": "Acid Burst",
@@ -147,7 +152,8 @@
         "explosion_radius": 95,
         "siege_bonus": 2.3
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/trap_flame_trap_1x1_trigger_f001_v001.png"
   },
   "wall": {
     "name": "Wall",
@@ -164,7 +170,8 @@
         "cost": 10,
         "health": 140
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_tiles/tile_graveyard_wall_stone_32_v001.png"
   },
   "gate": {
     "name": "Gate",
@@ -181,7 +188,8 @@
         "cost": 14,
         "health": 150
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_tiles/tile_graveyard_gate_closed_32_v001.png"
   },
   "resource_generator": {
     "name": "Resource Generator",
@@ -202,7 +210,8 @@
         "income": 3,
         "interval": 1.8
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v001.png"
   },
   "barracks": {
     "name": "Barracks",
@@ -229,7 +238,8 @@
         "projectile_speed": 560,
         "projectile_range": 230
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_barracks_2x2_active_f001_v001.png"
   },
   "armory": {
     "name": "Armory",
@@ -248,7 +258,8 @@
         "health": 120,
         "damage_bonus": 4.0
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_armory_2x2_active_f001_v001.png"
   },
   "tech_lab": {
     "name": "Tech Lab",
@@ -267,7 +278,8 @@
         "health": 115,
         "rate_bonus": 0.12
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_tech_lab_2x2_active_f001_v001.png"
   },
   "shrine": {
     "name": "Shrine",
@@ -290,7 +302,8 @@
         "heal_radius": 160,
         "interval": 3.5
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_shrine_2x2_active_f001_v001.png"
   },
   "stronghold_core": {
     "name": "Stronghold Core",
@@ -303,6 +316,7 @@
         "cost": 0,
         "health": 300
       }
-    ]
+    ],
+    "preview": "res://assets/level1/level1_buildings_traps_anim60/building_stronghold_core_2x2_active_f001_v001.png"
   }
 }

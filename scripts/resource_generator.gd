@@ -1,8 +1,8 @@
-extends Building
+extends "res://scripts/building.gd"
 
-var income := 2
-var interval := 2.0
-var _timer := 0.0
+var income = 2
+var interval = 2.0
+var _timer = 0.0
 var _game: Node = null
 
 func _ready() -> void:

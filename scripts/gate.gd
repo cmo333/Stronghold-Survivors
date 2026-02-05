@@ -1,7 +1,10 @@
-extends Building
+extends "res://scripts/building.gd"
 
-@onready var body: Polygon2D = $Body
-var is_open := false
+@export var texture_closed: Texture2D
+@export var texture_open: Texture2D
+
+@onready var body: Sprite2D = $Body
+var is_open = false
 
 func _ready() -> void:
     super._ready()
@@ -15,12 +18,12 @@ func _apply_gate_state() -> void:
     if collider_body != null:
         collider_body.collision_layer = 0 if is_open else GameLayers.BUILDING
     if body != null:
-        if is_open:
-            body.color = Color(0.2, 0.7, 0.3, 1.0)
-        else:
-            body.color = Color(0.4, 0.25, 0.15, 1.0)
+        if is_open and texture_open != null:
+            body.texture = texture_open
+        elif not is_open and texture_closed != null:
+            body.texture = texture_closed
 
 func get_display_name() -> String:
-    var base := definition.get("name", "Gate")
-    var state := "Open" if is_open else "Closed"
+    var base = definition.get("name", "Gate")
+    var state = "Open" if is_open else "Closed"
     return "%s (%s)" % [base, state]

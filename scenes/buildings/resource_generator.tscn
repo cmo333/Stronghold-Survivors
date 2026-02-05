@@ -11,7 +11,7 @@ script = ExtResource(1)
 
 [node name="Sprite" type="AnimatedSprite2D" parent="."]
 script = ExtResource(2)
-frame_paths = ["res://assets/level1/buildings_traps_anim60/building_resource_generator_2x2_active_f001_v001.png", "res://assets/level1/buildings_traps_anim60/building_resource_generator_2x2_active_f002_v001.png", "res://assets/level1/buildings_traps_anim60/building_resource_generator_2x2_active_f003_v001.png", "res://assets/level1/buildings_traps_anim60/building_resource_generator_2x2_active_f004_v001.png"]
+frame_paths = ["res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f002_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f003_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f004_v001.png"]
 fps = 6.0
 
 [node name="Collider" type="StaticBody2D" parent="."]

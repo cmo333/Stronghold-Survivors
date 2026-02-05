@@ -1,9 +1,9 @@
-extends Building
+extends "res://scripts/building.gd"
 
-var heal_amount := 4.0
-var heal_radius := 140.0
-var interval := 4.0
-var _timer := 0.0
+var heal_amount = 4.0
+var heal_radius = 140.0
+var interval = 4.0
+var _timer = 0.0
 var _game: Node = null
 
 func _ready() -> void:
@@ -26,8 +26,8 @@ func _process(delta: float) -> void:
 func _pulse_heal() -> void:
     if _game == null:
         return
-    var radius_sq := heal_radius * heal_radius
-    var player := _game.player
+    var radius_sq = heal_radius * heal_radius
+    var player = _game.player
     if player != null and player.has_method("heal"):
         if global_position.distance_squared_to(player.global_position) <= radius_sq:
             player.heal(heal_amount)

@@ -1,1 +1,1 @@
-extends Building
+extends "res://scripts/building.gd"

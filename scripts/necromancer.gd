@@ -1,7 +1,7 @@
 extends "res://scripts/enemy_variant.gd"
 
-var summon_interval := 7.0
-var _timer := 0.0
+var summon_interval = 7.0
+var _timer = 0.0
 
 func _process(delta: float) -> void:
     if _game == null:
@@ -12,3 +12,5 @@ func _process(delta: float) -> void:
     _timer = 0.0
     if _game.has_method("spawn_minion"):
         _game.spawn_minion(global_position)
+    if _game.has_method("spawn_fx"):
+        _game.spawn_fx("necrotic", global_position)

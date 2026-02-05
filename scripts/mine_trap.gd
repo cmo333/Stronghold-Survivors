@@ -4,10 +4,10 @@ extends Trap
 @onready var trigger_shape: CollisionShape2D = $Trigger/CollisionShape2D
 @onready var sprite: AnimatedSprite2D = $Sprite
 
-var damage := 30.0
-var explosion_radius := 70.0
-var trigger_radius := 22.0
-var _armed := true
+var damage = 30.0
+var explosion_radius = 70.0
+var trigger_radius = 22.0
+var _armed = true
 var _game: Node = null
 
 func _ready() -> void:
@@ -23,7 +23,7 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
     trigger_radius = float(tier_data.get("trigger_radius", trigger_radius))
     damage = float(tier_data.get("damage", damage))
     explosion_radius = float(tier_data.get("explosion_radius", explosion_radius))
-    var shape := CircleShape2D.new()
+    var shape = CircleShape2D.new()
     shape.radius = trigger_radius
     trigger_shape.shape = shape
 

@@ -1,14 +1,14 @@
 extends Node2D
 class_name Building
 
-var structure_id := ""
+var structure_id = ""
 var definition: Dictionary = {}
-var tier := 0
+var tier = 0
 
-var max_health := 40.0
-var health := 40.0
-var footprint_radius := 12.0
-var blocks_path := true
+var max_health = 40.0
+var health = 40.0
+var footprint_radius = 12.0
+var blocks_path = true
 
 @onready var collider_body: StaticBody2D = $Collider
 @onready var collider_shape: CollisionShape2D = $Collider/CollisionShape2D
@@ -30,7 +30,7 @@ func _apply_common() -> void:
         collider_body.collision_layer = GameLayers.BUILDING if blocks_path else 0
         collider_body.collision_mask = 0
     if collider_shape != null:
-        var shape := CircleShape2D.new()
+        var shape = CircleShape2D.new()
         shape.radius = footprint_radius
         collider_shape.shape = shape
 
@@ -52,7 +52,7 @@ func can_upgrade() -> bool:
 func get_upgrade_cost() -> int:
     if not can_upgrade():
         return 0
-    var next_tier := StructureDB.get_tier(definition, tier + 1)
+    var next_tier = StructureDB.get_tier(definition, tier + 1)
     return int(next_tier.get("cost", 0))
 
 func upgrade() -> void:
@@ -62,14 +62,14 @@ func upgrade() -> void:
     _apply_tier_stats(StructureDB.get_tier(definition, tier))
 
 func get_display_name() -> String:
-    var name := definition.get("name", structure_id)
+    var name = definition.get("name", structure_id)
     return "%s (Tier %d)" % [name, tier + 1]
 
 func get_footprint_radius() -> float:
     return footprint_radius
 
 func _max_tier() -> int:
-    var tiers := definition.get("tiers", [])
+    var tiers = definition.get("tiers", [])
     if tiers.is_empty():
         return 0
     return tiers.size() - 1

@@ -4,9 +4,9 @@ extends Trap
 @onready var field_shape: CollisionShape2D = $Field/CollisionShape2D
 @onready var sprite: AnimatedSprite2D = $Sprite
 
-var field_radius := 70.0
-var slow_factor := 0.55
-var _source_id := 0
+var field_radius = 70.0
+var slow_factor = 0.55
+var _source_id = 0
 
 func _ready() -> void:
     _source_id = get_instance_id()
@@ -21,7 +21,7 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
     super._apply_tier_stats(tier_data)
     field_radius = float(tier_data.get("field_radius", field_radius))
     slow_factor = float(tier_data.get("slow_factor", slow_factor))
-    var shape := CircleShape2D.new()
+    var shape = CircleShape2D.new()
     shape.radius = field_radius
     field_shape.shape = shape
 
@@ -34,7 +34,7 @@ func _on_body_entered(body: Node) -> void:
         sprite.frame = 0
         sprite.play()
     if get_tree().get_first_node_in_group("game") != null:
-        var game := get_tree().get_first_node_in_group("game")
+        var game = get_tree().get_first_node_in_group("game")
         if game.has_method("spawn_fx"):
             game.spawn_fx("ice", global_position)
 

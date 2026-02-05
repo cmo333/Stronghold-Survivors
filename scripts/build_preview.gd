@@ -2,14 +2,21 @@ extends Node2D
 
 @onready var shape: Polygon2D = $Shape
 @onready var icon: Sprite2D = $Icon
+@onready var ghost: Sprite2D = $Ghost
 var radius: float = 12.0
-const TEX_OK := preload("res://assets/ui/ui_build_ok_64x64_v001.png")
-const TEX_BLOCKED := preload("res://assets/ui/ui_build_blocked_64x64_v001.png")
+const TEX_OK = preload("res://assets/ui/ui_build_ok_64x64_v001.png")
+const TEX_BLOCKED = preload("res://assets/ui/ui_build_blocked_64x64_v001.png")
 
 func _ready() -> void:
     _update_shape()
     if icon != null:
         icon.texture = TEX_OK
+        icon.visible = false
+    if ghost != null:
+        ghost.texture = null
+        ghost.centered = true
+        ghost.visible = true
+        ghost.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 func set_radius(value: float) -> void:
     radius = max(2.0, value)
@@ -23,8 +30,19 @@ func set_state(can_place: bool) -> void:
         return
     icon.texture = TEX_OK if can_place else TEX_BLOCKED
 
+func set_ghost_texture(path: String) -> void:
+    if ghost == null:
+        return
+    if path == "":
+        ghost.texture = null
+        return
+    if ResourceLoader.exists(path):
+        ghost.texture = load(path)
+    else:
+        ghost.texture = null
+
 func _update_shape() -> void:
-    var r := radius
+    var r = radius
     shape.polygon = PackedVector2Array([
         Vector2(-r, -r),
         Vector2(-r, r),
