@@ -10,6 +10,10 @@ func _ready() -> void:
 	if tex == null:
 		push_error("Failed to load grass tile: " + GRASS_TILE)
 		return
+	
+	# Fix for pixel art: nearest neighbor filtering, no filter
+	tex.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tex.texture_repeat = CanvasItem.TEXTURE_REPEAT_DISABLED
 
 	var tileset := TileSet.new()
 	tileset.tile_size = tile_size
@@ -17,6 +21,9 @@ func _ready() -> void:
 	var source := TileSetAtlasSource.new()
 	source.texture = tex
 	source.texture_region_size = tile_size
+	# Ensure no margins or separation causing black lines
+	source.margins = Vector2i.ZERO
+	source.separation = Vector2i.ZERO
 	var source_id := tileset.add_source(source)
 	source.create_tile(Vector2i.ZERO)
 
