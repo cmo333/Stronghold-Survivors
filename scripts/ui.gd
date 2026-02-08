@@ -1,6 +1,6 @@
 extends CanvasLayer
 
-const UI_FONT_PATH = "res://assets/ui/font_ui_gothic_ascii_12x16_v001.fnt"
+const UI_FONT_PATH = "res://assets/ui/pixel_font.ttf"
 const USE_CUSTOM_FONT = true
 
 @onready var resources_label: Label = $HUD/Resources

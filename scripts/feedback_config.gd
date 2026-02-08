@@ -38,7 +38,7 @@ const DAMAGE_NUMBER_FONT_SIZE = 12
 const DAMAGE_NUMBER_CRIT_FONT_SIZE = 18
 const DAMAGE_NUMBER_ROTATION_MAX = 0.06
 
-const DAMAGE_NUMBER_FONT_PATH = "res://assets/ui/font_ui_gothic_ascii_12x16_v001.fnt"
+const DAMAGE_NUMBER_FONT_PATH = "res://assets/ui/pixel_font.ttf"
 const DAMAGE_NUMBER_OUTLINE_SIZE = 1
 const DAMAGE_NUMBER_OUTLINE_COLOR = Color(0.043, 0.043, 0.043, 1.0)
 

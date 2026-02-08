@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3 uid="uid://b3iccjuodukry"]
+[gd_scene load_steps=17 format=3 uid="uid://b3iccjuodukry"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2"]
@@ -10,13 +10,9 @@
 [ext_resource type="Texture2D" uid="uid://bd6hunee4nvrb" path="res://assets/ui/ui_bar_xp_empty_384x16_v001.png" id="8"]
 [ext_resource type="Texture2D" uid="uid://caf0i0ns76qm1" path="res://assets/ui/ui_icon_gold_32_v001.png" id="9"]
 [ext_resource type="Script" path="res://scripts/directional_sprite.gd" id="11"]
-[ext_resource type="Texture2D" uid="uid://b6fk1pq65w3qe" path="res://assets/level1/level1_tiles/tile_graveyard_grass_base_32_v001.png" id="12"]
 [ext_resource type="Texture2D" uid="uid://burf07jpx6hws" path="res://assets/ui/ui_panel_frame_medium_384x192_v001.png" id="13"]
 [ext_resource type="Texture2D" uid="uid://c7ackk6g8qa2u" path="res://assets/ui/ui_dialog_frame_384x224_v001.png" id="14"]
 [ext_resource type="Script" path="res://scripts/ground.gd" id="15"]
-[ext_resource type="Texture2D" uid="uid://de0syghr6y8f2" path="res://assets/level1/level1_tiles/tile_graveyard_grass_varA_32_v001.png" id="16"]
-[ext_resource type="Texture2D" uid="uid://pwvw5kg4wuim" path="res://assets/level1/level1_tiles/tile_graveyard_grass_varB_32_v001.png" id="17"]
-[ext_resource type="Texture2D" uid="uid://fwvaw0doauus" path="res://assets/level1/level1_tiles_more/tile_graveyard_grass_mossy_32_v001.png" id="18"]
 [ext_resource type="Texture2D" uid="uid://dtvmyjiyni8w7" path="res://assets/ui/ui_bar_health_256x24_v001.png" id="21"]
 [ext_resource type="Texture2D" uid="uid://c7060wefc781" path="res://assets/ui/ui_bar_health_empty_256x24_v001.png" id="22"]
 
@@ -31,13 +27,7 @@ script = ExtResource("1")
 z_index = -10
 format = 2
 script = ExtResource("15")
-tile_texture = ExtResource("12")
-tile_textures = Array[Texture2D]([ExtResource("12"), ExtResource("16"), ExtResource("17"), ExtResource("18")])
 radius = 90
-base_weight = 0.82
-terrain_folder = "res://assets/level1/level1_terrain_v002"
-noise_frequency = 0.02
-smooth_passes = 2
 
 [node name="Player" type="CharacterBody2D" parent="World"]
 position = Vector2(120, 0)

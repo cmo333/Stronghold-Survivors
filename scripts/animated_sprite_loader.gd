@@ -10,6 +10,9 @@ func _ready() -> void:
 	if frame_paths.is_empty():
 		return
 	var frames = SpriteFrames.new()
+	# SpriteFrames already has "default" animation, remove it first
+	if frames.has_animation("default"):
+		frames.remove_animation("default")
 	frames.add_animation(animation_name)
 	frames.set_animation_speed(animation_name, fps)
 	frames.set_animation_loop(animation_name, loop)
