@@ -12,6 +12,9 @@ func setup(frame_paths: Array, fps: float = 10.0, lifetime: float = 0.35, loop: 
 		queue_free()
 		return
 	var frames = SpriteFrames.new()
+	# Remove default animation that SpriteFrames creates automatically
+	if frames.has_animation("default"):
+		frames.remove_animation("default")
 	frames.add_animation("default")
 	frames.set_animation_speed("default", fps)
 	frames.set_animation_loop("default", loop)

@@ -3,8 +3,8 @@ extends CharacterBody2D
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 
 var speed = 92.0
-var max_health = 30.0
-var health = 30.0
+var max_health = 20.0
+var health = 20.0
 var attack_damage = 10.0
 var attack_rate = 1.05
 var attack_range = 20.0

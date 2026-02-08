@@ -5,17 +5,17 @@ const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 var speed = 230.0
 var attack_range = 520.0
 var attack_rate = 2.1
-var damage = 10.0
+var damage = 15.0
 var projectile_speed = 720.0
 var projectile_range = 420.0
 
-var max_health = 80.0
-var health = 80.0
+var max_health = 100.0
+var health = 100.0
 
 var _attack_cooldown = 0.0
 var _game: Node = null
 var _shot_counter = 0
-var _base_damage = 10.0
+var _base_damage = 15.0
 var _base_attack_rate = 1.2
 var _slow_timer = 0.0
 var _slow_factor = 1.0
