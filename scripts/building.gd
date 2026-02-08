@@ -64,6 +64,8 @@ func upgrade() -> void:
         return
     tier += 1
     _apply_tier_stats(StructureDB.get_tier(definition, tier))
+    # Notify subclasses that upgrade occurred (for visual updates)
+    _on_upgraded()
 
 func get_display_name() -> String:
     var name = definition.get("name", structure_id)
@@ -77,3 +79,7 @@ func _max_tier() -> int:
     if tiers.is_empty():
         return 0
     return tiers.size() - 1
+
+# Called after upgrade is applied - override in subclasses for visual effects
+func _on_upgraded() -> void:
+    pass

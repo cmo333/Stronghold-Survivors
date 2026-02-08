@@ -70,6 +70,160 @@ func _ready() -> void:
 	_build_palette()
 	_add_tech_rarity_frames()
 	_polish_start_panel()
+	_build_upgrade_panel()
+
+# =========================================================
+# UPGRADE PANEL
+# =========================================================
+
+var upgrade_panel: PanelContainer = null
+var upgrade_title: Label = null
+var upgrade_stats: Label = null
+var upgrade_cost: Label = null
+var upgrade_button: Button = null
+
+func _build_upgrade_panel() -> void:
+	var hud = $HUD
+	
+	upgrade_panel = PanelContainer.new()
+	upgrade_panel.name = "UpgradePanel"
+	upgrade_panel.visible = false
+	upgrade_panel.size = Vector2(200, 140)
+	upgrade_panel.position = Vector2(10, 200)
+	
+	# Style the panel background
+	var panel_style = StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.08, 0.08, 0.1, 0.95)
+	panel_style.border_width_left = 2
+	panel_style.border_width_top = 2
+	panel_style.border_width_right = 2
+	panel_style.border_width_bottom = 2
+	panel_style.border_color = Color(0.3, 0.7, 0.6, 0.8)
+	panel_style.corner_radius_top_left = 4
+	panel_style.corner_radius_top_right = 4
+	panel_style.corner_radius_bottom_left = 4
+	panel_style.corner_radius_bottom_right = 4
+	upgrade_panel.add_theme_stylebox_override("panel", panel_style)
+	
+	hud.add_child(upgrade_panel)
+	
+	var vbox = VBoxContainer.new()
+	vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_theme_constant_override("separation", 4)
+	upgrade_panel.add_child(vbox)
+	
+	upgrade_title = Label.new()
+	upgrade_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	upgrade_title.add_theme_font_size_override("font_size", 12)
+	upgrade_title.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	vbox.add_child(upgrade_title)
+	
+	upgrade_stats = Label.new()
+	upgrade_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	upgrade_stats.add_theme_font_size_override("font_size", 9)
+	upgrade_stats.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85))
+	vbox.add_child(upgrade_stats)
+	
+	upgrade_cost = Label.new()
+	upgrade_cost.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	upgrade_cost.add_theme_font_size_override("font_size", 11)
+	upgrade_cost.add_theme_color_override("font_color", Color(1.0, 0.8, 0.3))
+	vbox.add_child(upgrade_cost)
+	
+	upgrade_button = Button.new()
+	upgrade_button.text = "Press U to Upgrade"
+	upgrade_button.disabled = true
+	vbox.add_child(upgrade_button)
+
+func show_upgrade_panel(building: Node) -> void:
+	if upgrade_panel == null or building == null:
+		return
+	
+	if not building.has_method("can_upgrade") or not building.can_upgrade():
+		upgrade_panel.visible = false
+		return
+	
+	var def = {}
+	if "definition" in building:
+		def = building.definition
+	
+	var tier = 0
+	if "tier" in building:
+		tier = building.tier
+	
+	var tower_name = def.get("name", "Tower")
+	var next_tier = tier + 1
+	var tier_names = ["BASE", "ENHANCED", "MASTER"]
+	var tier_colors = [Color.WHITE, Color(0.4, 0.8, 1.0), Color(1.0, 0.5, 0.9)]
+	
+	upgrade_title.text = "UPGRADE: %s" % tier_names[next_tier]
+	upgrade_title.add_theme_color_override("font_color", tier_colors[next_tier])
+	
+	# Update border color to match tier
+	var panel_style = upgrade_panel.get_theme_stylebox("panel").duplicate()
+	panel_style.border_color = tier_colors[next_tier]
+	upgrade_panel.add_theme_stylebox_override("panel", panel_style)
+	
+	# Build stats description with comparison
+	var stats_text = ""
+	if not def.is_empty():
+		var tier_data = _get_next_tier_data(def, next_tier)
+		if not tier_data.is_empty():
+			# Get current tier for comparison
+			var current_tier_data = _get_next_tier_data(def, tier) if tier > 0 else tier_data
+			
+			var range_val = int(tier_data.get("range", 0))
+			var damage_val = int(tier_data.get("damage", 0))
+			var rate_val = tier_data.get("fire_rate", 0)
+			
+			stats_text += "Range: %d\n" % range_val
+			stats_text += "Damage: %d\n" % damage_val
+			stats_text += "Fire Rate: %.1f/s\n" % rate_val
+			
+			# Special abilities with icons
+			if tier_data.has("pierce_count") and tier_data.get("pierce_count", 1) > 1:
+				stats_text += "★ Pierce %d enemies\n" % tier_data.get("pierce_count")
+			if tier_data.has("chain_count") and tier_data.get("chain_count", 3) > 5:
+				stats_text += "★ Chain %d targets\n" % tier_data.get("chain_count")
+			if tier_data.get("lightning_storm", false):
+				stats_text += "★ ⚡ LIGHTNING STORM\n"
+			if tier_data.get("cluster_bombs", false):
+				stats_text += "★ 💥 CLUSTER BOMBS\n"
+			if tier_data.get("burn_effect", false):
+				stats_text += "★ 🔥 BURN EFFECT\n"
+			if tier_data.get("stun_chance", 0.0) > 0:
+				stats_text += "★ ⚡ %.0f%% STUN\n" % (tier_data.get("stun_chance") * 100)
+	
+	upgrade_stats.text = stats_text
+	
+	var upgrade_cost_value = 0
+	if building.has_method("get_upgrade_cost"):
+		upgrade_cost_value = building.get_upgrade_cost()
+	
+	upgrade_cost.text = "⚡ %d RESOURCES" % upgrade_cost_value
+	upgrade_panel.visible = true
+	
+	# Animate panel entrance
+	var tween = create_tween()
+	upgrade_panel.scale = Vector2(0.8, 0.8)
+	upgrade_panel.modulate = Color(1, 1, 1, 0)
+	tween.set_parallel(true)
+	tween.tween_property(upgrade_panel, "scale", Vector2(1, 1), 0.2).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(upgrade_panel, "modulate", Color(1, 1, 1, 1), 0.15)
+
+func hide_upgrade_panel() -> void:
+	if upgrade_panel != null and upgrade_panel.visible:
+		# Animate out
+		var tween = create_tween()
+		tween.tween_property(upgrade_panel, "scale", Vector2(0.8, 0.8), 0.15)
+		tween.parallel().tween_property(upgrade_panel, "modulate:a", 0.0, 0.1)
+		tween.tween_callback(func(): upgrade_panel.visible = false)
+
+func _get_next_tier_data(def: Dictionary, next_tier: int) -> Dictionary:
+	var tiers = def.get("tiers", [])
+	if tiers.is_empty() or next_tier >= tiers.size():
+		return {}
+	return tiers[next_tier]
 
 # =========================================================
 # BUILD PALETTE
@@ -476,3 +630,56 @@ func _set_start_option(label: Label, icon: TextureRect, options: Array, index: i
 			icon.modulate = Color.WHITE if is_selected else Color(0.6, 0.6, 0.6)
 		else:
 			icon.texture = null
+
+func show_upgrade_popup(upgrade_id: String, rarity: String = "common") -> void:
+	var rarity_colors = {
+		"common": Color(0.4, 0.9, 0.4),
+		"rare": Color(0.3, 0.6, 1.0),
+		"epic": Color(0.8, 0.3, 1.0),
+		"diamond": Color(0.2, 1.0, 1.0)
+	}
+	var color = rarity_colors.get(rarity, Color.WHITE)
+	
+	# Find or create upgrade popup container
+	var popup = get_node_or_null("UpgradePopup")
+	if popup == null:
+		popup = PanelContainer.new()
+		popup.name = "UpgradePopup"
+		popup.size = Vector2(200, 60)
+		popup.position = Vector2(get_viewport().get_visible_rect().size.x / 2 - 100, 120)
+		add_child(popup)
+		
+		var vbox = VBoxContainer.new()
+		vbox.name = "VBox"
+		vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+		popup.add_child(vbox)
+	
+	var vbox = popup.get_node("VBox")
+	
+	# Clear old entries if too many
+	while vbox.get_child_count() > 3:
+		vbox.get_child(0).queue_free()
+	
+	# Add new label
+	var label = Label.new()
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_color_override("font_color", color)
+	
+	var display_name = upgrade_id.replace("_", " ").capitalize()
+	if rarity == "diamond":
+		label.text = "💎 %s!" % display_name
+		label.add_theme_font_size_override("font_size", 20)
+	else:
+		label.text = "+%s" % display_name
+		label.add_theme_font_size_override("font_size", 16)
+	
+	vbox.add_child(label)
+	
+	# Auto-hide after delay
+	var timer = get_tree().create_timer(2.5)
+	timer.timeout.connect(func():
+		if is_instance_valid(label):
+			label.queue_free()
+		if is_instance_valid(popup) and vbox.get_child_count() == 0:
+			popup.queue_free()
+	)

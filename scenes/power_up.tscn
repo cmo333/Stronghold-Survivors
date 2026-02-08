@@ -1,0 +1,32 @@
+[gd_scene load_steps=5 format=3 uid="uid://b3q5vxm8l5gx5"]
+
+[ext_resource type="Script" path="res://scripts/power_up.gd" id="1_abc12"]
+[ext_resource type="Texture2D" uid="uid://caf0i0ns76qm1" path="res://assets/ui/ui_icon_gold_32_v001.png" id="2_def34"]
+[ext_resource type="Texture2D" uid="uid://diavvxduf8o8h" path="res://assets/ui/ui_selection_ring_64x64_v001.png" id="3_ghi56"]
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_abc12"]
+radius = 24.0
+
+[node name="PowerUp" type="Area2D"]
+z_index = 5
+collision_layer = 32
+collision_mask = 2
+script = ExtResource("1_abc12")
+
+[node name="Body" type="Sprite2D" parent="."]
+scale = Vector2(1.5, 1.5)
+texture = ExtResource("2_def34")
+
+[node name="Glow" type="Sprite2D" parent="."]
+modulate = Color(1, 1, 1, 0.5)
+scale = Vector2(1.8, 1.8)
+texture = ExtResource("3_ghi56")
+
+[node name="Beacon" type="Sprite2D" parent="."]
+modulate = Color(1, 1, 1, 0.3)
+position = Vector2(0, -40)
+scale = Vector2(0.5, 0.5)
+texture = ExtResource("3_ghi56")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("CircleShape2D_abc12")

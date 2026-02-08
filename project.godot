@@ -8,6 +8,10 @@
 
 config_version=5
 
+[autoload]
+
+AudioManager="*res://scripts/audio_manager.gd"
+
 [application]
 
 config/name="Stronghold Survivors"

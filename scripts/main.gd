@@ -11,15 +11,23 @@ const CHARGER_SCENE = preload("res://scenes/enemies/charger.tscn")
 const SPITTER_SCENE = preload("res://scenes/enemies/spitter.tscn")
 const HEALER_SCENE = preload("res://scenes/enemies/healer.tscn")
 const FX_SCENE = preload("res://scenes/fx/fx.tscn")
+const GLOW_PARTICLE_SCRIPT = preload("res://scripts/glow_particle.gd")
 const PROJECTILE_SCENE = preload("res://scenes/projectile.tscn")
 const ENEMY_PROJECTILE_SCENE = preload("res://scenes/enemy_projectile.tscn")
 const PICKUP_SCENE = preload("res://scenes/pickup.tscn")
 const BREAKABLE_SCENE = preload("res://scenes/breakable.tscn")
+const TREASURE_CHEST_SCENE = preload("res://scenes/treasure_chest.tscn")
+const POWER_UP_SCENE = preload("res://scenes/power_up.tscn")
+const DEATH_STATS_SCENE = preload("res://scenes/death_stats_screen.tscn")
 const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
+const GAME_OVER_SCENE = preload("res://scenes/game_over.tscn")
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
+const WaveManager = preload("res://scripts/wave_manager.gd")
+const DynamicCamera = preload("res://scripts/camera_controller.gd")
+const FXManager = preload("res://scripts/fx_manager.gd")
 
 @onready var player: CharacterBody2D = $World/Player
-@onready var camera: Camera2D = get_node_or_null("World/Player/Camera2D")
+@onready var camera: DynamicCamera = get_node_or_null("World/Player/Camera2D")
 @onready var enemies_root: Node2D = $World/Enemies
 @onready var allies_root: Node2D = get_node_or_null("World/Allies")
 @onready var projectiles_root: Node2D = $World/Projectiles
@@ -30,7 +38,12 @@ const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 @onready var breakables_root: Node2D = $World/Breakables
 @onready var ui: CanvasLayer = $UI
 @onready var build_manager: Node = $BuildManager
+@onready var game_over_ui: CanvasLayer = null
 
+# FX Manager
+var fx_manager: FXManager = null
+
+# Game state
 var resources: int = 0
 var elapsed: float = 0.0
 var spawn_accumulator: float = 0.0
@@ -41,10 +54,31 @@ var spawn_delay = 10.0
 var auto_start_delay = 2.0
 var _enemy_kill_count = 0
 var _time_scale_tween: Tween = null
-var _shake_timer = 0.0
-var _shake_duration = 0.0
-var _shake_strength = 0.0
-var _shake_base_offset = Vector2.ZERO
+
+# Stats tracking
+var _total_damage_dealt: float = 0.0
+var _towers_built: int = 0
+var _generators_lost: int = 0
+var _current_streak: int = 0
+var _best_streak: int = 0
+var _wave_reached: int = 1
+var _gold_earned: int = 0
+
+# History for charts
+var _damage_history: Array = []  # Damage dealt per 10-second interval
+var _enemy_kill_history: Array = []  # Kills per 10-second interval
+var _history_timer: float = 0.0
+var _history_interval: float = 10.0
+var _interval_damage: float = 0.0
+var _interval_kills: int = 0
+
+# Record tracking
+var _best_time: float = 0.0
+var _best_kills: int = 0
+var _is_new_record: bool = false
+
+# Death stats screen
+var death_stats_screen = null
 
 var xp = 0
 var level = 1
@@ -85,6 +119,42 @@ var tower_rate_mult = 1.0
 var player_damage_bonus = 0.0
 var tower_damage_bonus = 0.0
 var tower_range_mult = 1.0
+var chest_damage_bonus = 0.0
+var chest_speed_bonus = 0.0
+var chest_max_hp_bonus = 0.0
+var chest_tower_range_mult = 1.0
+var build_cost_mult = 1.0
+
+# Chest upgrade system - new stats
+var reload_speed_mult = 1.0
+var crit_chance_bonus = 0.0
+var crit_damage_mult = 1.0
+var pierce_bonus = 0
+var cooldown_mult = 1.0
+var pickup_range_mult = 1.0
+
+# Epic upgrades
+var has_multishot = false
+var multishot_count = 0
+var has_explosive = false
+var explosive_radius = 0.0
+var has_chain_lightning = false
+var chain_lightning_targets = 0
+var has_vampiric = false
+var vampiric_percent = 0.0
+
+# Diamond upgrades
+var has_multishot_split = false
+var multishot_split_count = 0
+var has_time_dilation = false
+var time_dilation_mult = 1.0
+var has_phoenix = false
+var phoenix_used_this_wave = false
+var has_fortress = false
+var tower_hp_mult = 1.0
+var towers_self_repair = false
+
+var wave_manager: Node = null
 
 var spawn_radius_min = 720.0
 var spawn_radius_max = 1050.0
@@ -92,6 +162,17 @@ var max_enemies_cap = 180
 var max_projectiles = 240
 var elite_health_mult = 2.2
 var max_allies = 16
+
+# Generator tracking
+var active_generators: Array = []
+var generators_destroyed = 0
+var total_generator_income = 0
+
+# Power-up spawn system
+var powerup_spawn_timer: float = 0.0
+var powerup_spawn_interval: float = randf_range(60.0, 90.0)  # 60-90 seconds
+var powerup_spawn_min_radius: float = 400.0  # Minimum distance from center
+var max_powerups: int = 3
 
 # Data-driven pacing curve (interpolated between points).
 const SPAWN_CURVE = [
@@ -449,6 +530,20 @@ var fx_defs = {
 		"z": 3,
 		"tint": Color(1.0, 0.85, 0.4)
 	},
+	"upgrade_burst": {
+		"paths": [
+			"res://assets/fx/fx_shockwave_ring_64_f001_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f002_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f003_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f004_v002.png"
+		],
+		"fps": 20.0,
+		"lifetime": 0.35,
+		"scale": 2.0,
+		"alpha": 0.8,
+		"z": 5,
+		"tint": Color(1.0, 0.9, 0.5)
+	},
 	"explosion": {
 		"paths": [
 			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
@@ -461,6 +556,34 @@ var fx_defs = {
 		"scale": 1.35,
 		"alpha": 0.85,
 		"z": -1
+	},
+	"fire_burst": {
+		"paths": [
+			"res://assets/fx/fx_hit_spark_16_f001_v001.png",
+			"res://assets/fx/fx_hit_spark_16_f002_v001.png",
+			"res://assets/fx/fx_hit_spark_16_f003_v001.png"
+		],
+		"fps": 18.0,
+		"lifetime": 0.2,
+		"scale": 1.0,
+		"alpha": 0.9,
+		"z": 1,
+		"tint": Color(1.0, 0.4, 0.1, 1.0)
+	},
+	"shockwave": {
+		"paths": [
+			"res://assets/fx/fx_shockwave_ring_64_f001_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f002_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f003_v002.png",
+			"res://assets/fx/fx_shockwave_ring_64_f004_v002.png"
+		],
+		"fps": 14.0,
+		"lifetime": 0.35,
+		"scale": 0.7,
+		"scale_to": 2.2,
+		"alpha": 0.75,
+		"fade_out": true,
+		"z": -2
 	},
 	"acid": {
 		"paths": [
@@ -642,13 +765,28 @@ func _ready() -> void:
 	add_to_group("game")
 	_ensure_input_map()
 	_load_damage_font()
+	
+	# Initialize audio system
 	if camera != null:
-		_shake_base_offset = camera.offset
+		AudioManager.set_camera(camera)
+		# Setup dynamic camera controller
+		if camera.has_method("setup"):
+			camera.setup(player, self)
+	
+	# Initialize FX Manager
+	fx_manager = FXManager.new()
+	fx_manager.name = "FXManager"
+	add_child(fx_manager)
+	fx_manager.setup(self, fx_root)
 	if allies_root == null:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
 		$World.add_child(allies_root)
 	resources = 60
+	
+	# Initialize game over UI (hidden initially)
+	_instantiate_game_over_ui()
+	
 	_update_ui()
 	if ui != null and ui.has_method("show_start"):
 		if ui.has_method("set_start_text"):
@@ -659,12 +797,18 @@ func _ready() -> void:
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
+	wave_manager = WaveManager.new()
+	add_child(wave_manager)
+	if wave_manager.has_method("setup"):
+		wave_manager.setup(self, ui)
 	_spawn_props()
 	_spawn_initial_breakables()
+	_spawn_environmental_particles()
+	_reset_run_stats()
 
 func _process(delta: float) -> void:
-	_update_screen_shake(delta)
 	if game_over:
+		_handle_game_over_input()
 		return
 	if not game_started:
 		_handle_start_input(delta)
@@ -675,8 +819,11 @@ func _process(delta: float) -> void:
 	if start_timer < spawn_delay:
 		return
 	elapsed += delta
+	if wave_manager != null and wave_manager.has_method("update"):
+		wave_manager.update(delta, elapsed)
 	_handle_spawning(delta)
 	_maintain_breakables()
+	_handle_powerup_spawning(delta)  # Power-up spawn logic
 	_update_ui()
 
 func _handle_start_input(delta: float) -> void:
@@ -695,6 +842,8 @@ func _start_game() -> void:
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(false)
 	_refresh_build_palette()
+	# Audio: Wave/Game start sound
+	AudioManager.play_ui_sound("wave_start")
 
 func _get_base_time_scale() -> float:
 	if not game_started:
@@ -722,6 +871,17 @@ func _trigger_kill_slow() -> void:
 	Engine.time_scale = FeedbackConfig.KILL_SLOW_TIME_SCALE
 	_time_scale_tween = create_tween()
 	_time_scale_tween.tween_property(Engine, "time_scale", base_scale, FeedbackConfig.KILL_SLOW_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func trigger_time_accent(slow_scale: float, duration: float) -> void:
+	"""Generic time dilation for gameplay accents (upgrades, critical hits, etc.)"""
+	var base_scale = _get_base_time_scale()
+	if base_scale <= 0.0 or base_scale <= slow_scale:
+		return
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+	Engine.time_scale = slow_scale
+	_time_scale_tween = create_tween()
+	_time_scale_tween.tween_property(Engine, "time_scale", base_scale, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 func is_tech_open() -> bool:
 	return tech_open
@@ -820,7 +980,9 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
-	var elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.2)
+	var base_elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.2)
+	var time_scalar = 1.0 + min(elapsed / 240.0, 1.0) * 0.5
+	var elite_chance = clamp(base_elite_chance * time_scalar, 0.0, 0.25)
 	if randf() < elite_chance and enemy.has_method("set_elite"):
 		enemy.set_elite(elite_health_mult)
 	enemies_root.add_child(enemy)
@@ -835,6 +997,21 @@ func spawn_minion(position: Vector2) -> void:
 		enemy.setup(self, difficulty)
 	enemies_root.add_child(enemy)
 
+func spawn_split_minions(position: Vector2, count: int) -> void:
+	if enemies_root == null:
+		return
+	var difficulty = float(_get_spawn_settings(elapsed).get("difficulty", 1.0))
+	for i in range(count):
+		if enemies_root.get_child_count() >= max_enemies_cap:
+			break
+		var enemy = ENEMY_SCENE.instantiate()
+		enemy.global_position = position + Vector2(randf_range(-14.0, 14.0), randf_range(-14.0, 14.0))
+		if enemy.has_method("setup"):
+			enemy.setup(self, difficulty)
+		if enemy.has_method("apply_split_child"):
+			enemy.apply_split_child()
+		enemies_root.add_child(enemy)
+
 func spawn_ally(config: Dictionary, position: Vector2) -> void:
 	if allies_root == null:
 		return
@@ -845,7 +1022,11 @@ func spawn_ally(config: Dictionary, position: Vector2) -> void:
 	var body = ally.get_node_or_null("Body")
 	if body != null:
 		if config.has("frame_paths"):
-			body.frame_paths = config.get("frame_paths", [])
+			var raw_paths = config.get("frame_paths", [])
+			var typed_paths: Array[String] = []
+			for path in raw_paths:
+				typed_paths.append(str(path))
+			body.frame_paths = typed_paths
 		if config.has("fps"):
 			body.fps = float(config.get("fps", 8.0))
 		body.loop = true
@@ -856,6 +1037,11 @@ func spawn_ally(config: Dictionary, position: Vector2) -> void:
 	var fx_kind = str(config.get("spawn_fx", ""))
 	if fx_kind != "" and has_method("spawn_fx"):
 		spawn_fx(fx_kind, position)
+
+func spawn_generator_smoke(generator_position: Vector2) -> void:
+	"""Spawn smoke trail from resource generator - call periodically"""
+	if fx_manager != null:
+		fx_manager.spawn_generator_smoke(generator_position)
 
 func _pick_enemy_scene() -> PackedScene:
 	var pool: Array = []
@@ -932,6 +1118,20 @@ func spawn_projectile(origin: Vector2, direction: Vector2, speed: float, damage:
 		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, pierce, slow_factor, slow_duration, damage_type)
 	projectiles_root.add_child(projectile)
 
+func spawn_cannonball(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, cluster_bombs: bool = false, burn_effect: bool = false) -> Node:
+	if projectiles_root.get_child_count() >= max_projectiles:
+		return null
+	var projectile = PROJECTILE_SCENE.instantiate()
+	projectile.global_position = origin
+	var damage_type = "fire" if burn_effect else "normal"
+	if projectile.has_method("setup"):
+		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, 0, 1.0, 0.0, damage_type)
+	# Store cluster bomb and burn data on the projectile
+	projectile.set_meta("cluster_bombs", cluster_bombs)
+	projectile.set_meta("burn_effect", burn_effect)
+	projectiles_root.add_child(projectile)
+	return projectile
+
 func spawn_enemy_projectile(origin: Vector2, direction: Vector2, proj_speed: float, damage: float, proj_range: float) -> void:
 	if projectiles_root.get_child_count() >= max_projectiles:
 		return
@@ -948,6 +1148,15 @@ func spawn_pickup(position: Vector2, value: int, kind: String = "gold") -> void:
 		pickup.setup(self, value, kind)
 	pickups_root.add_child(pickup)
 
+func spawn_treasure_chest(position: Vector2) -> void:
+	if pickups_root == null:
+		return
+	var chest = TREASURE_CHEST_SCENE.instantiate()
+	chest.global_position = position
+	if chest.has_method("setup"):
+		chest.setup(self)
+	pickups_root.add_child(chest)
+
 func spawn_fx(kind: String, position: Vector2) -> void:
 	if fx_root == null or not fx_defs.has(kind):
 		return
@@ -956,17 +1165,52 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 	var def = fx_defs[kind]
 	if fx.has_method("setup"):
 		var tint = def.get("tint", Color.WHITE)
+		var base_scale = float(def.get("scale", 1.0))
+		var base_alpha = float(def.get("alpha", 1.0))
 		fx.setup(
 			def.get("paths", []),
 			float(def.get("fps", 10.0)),
 			float(def.get("lifetime", 0.35)),
 			false,
-			float(def.get("scale", 1.0)),
-			float(def.get("alpha", 1.0)),
+			base_scale,
+			base_alpha,
 			int(def.get("z", 0)),
 			tint
 		)
 	fx_root.add_child(fx)
+	if kind == "explosion":
+		_spawn_glow_burst(position, Color(1.0, 0.55, 0.2), 10, 10.0, 0.5, 220.0, 1.9)
+	elif kind == "elite_kill":
+		_spawn_glow_burst(position, Color(1.0, 0.85, 0.35), 12, 12.0, 0.55, 250.0, 2.1)
+
+func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lifetime: float = 0.45, velocity: Vector2 = Vector2.ZERO, bloom: float = 1.6, trail_strength: float = 0.7, trail_length: float = 0.9, z: int = 1) -> Node:
+	if fx_root == null:
+		return null
+	var glow = GLOW_PARTICLE_SCRIPT.new()
+	glow.global_position = position
+	if glow.has_method("setup"):
+		glow.setup(color, size, lifetime, velocity, bloom, trail_strength, trail_length, z)
+	fx_root.add_child(glow)
+	return glow
+
+func _spawn_glow_burst(position: Vector2, base_color: Color, count: int, size: float, lifetime: float, speed: float, bloom: float) -> void:
+	if fx_root == null:
+		return
+	for i in count:
+		var dir = Vector2.RIGHT.rotated(randf() * TAU)
+		var vel = dir * randf_range(speed * 0.4, speed)
+		var tint = base_color.lerp(Color.WHITE, randf_range(0.05, 0.35))
+		spawn_glow_particle(
+			position + dir * randf_range(0.0, size * 0.4),
+			tint,
+			size * randf_range(0.6, 1.1),
+			lifetime * randf_range(0.7, 1.1),
+			vel,
+			bloom,
+			0.85,
+			1.05,
+			2
+		)
 
 func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0.0, is_crit: bool = false, is_kill: bool = false, is_elite: bool = false, damage_type: String = "normal") -> void:
 	if not FeedbackConfig.ENABLE_DAMAGE_NUMBERS:
@@ -1099,11 +1343,16 @@ func add_resources(amount: int) -> void:
 
 func add_xp(amount: int) -> void:
 	xp += amount
+	var leveled_up = false
 	while xp >= xp_next:
 		xp -= xp_next
 		xp_next = int(xp_next * 1.35 + 6)
 		level += 1
 		pending_picks += 1
+		leveled_up = true
+	if leveled_up:
+		# Audio: Level up sound
+		AudioManager.play_ui_sound("level_up")
 	if pending_picks > 0 and not tech_open:
 		_open_tech_menu()
 	_update_ui()
@@ -1188,6 +1437,89 @@ func _apply_tech(id: String) -> void:
 	if player != null and player.has_method("apply_gun_tech"):
 		player.apply_gun_tech(id, tech_levels[id])
 
+func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
+	var rarity = upgrade.get("rarity", "common") if not upgrade.is_empty() else "common"
+	
+	match id:
+		# Common upgrades
+		"gun_damage":
+			chest_damage_bonus += 2.0 if rarity == "common" else (3.0 if rarity == "rare" else 4.0)
+			_apply_player_damage_bonuses()
+		"tower_range":
+			var mult = 1.06 if rarity == "common" else (1.09 if rarity == "rare" else 1.12)
+			chest_tower_range_mult = min(1.8, chest_tower_range_mult * mult)
+		"speed":
+			chest_speed_bonus += 12.0 if rarity == "common" else (18.0 if rarity == "rare" else 25.0)
+			if player != null and player.has_method("apply_speed_bonus"):
+				player.apply_speed_bonus(chest_speed_bonus)
+		"max_hp":
+			chest_max_hp_bonus += 12.0 if rarity == "common" else (20.0 if rarity == "rare" else 30.0)
+			if player != null and player.has_method("apply_max_health_bonus"):
+				player.apply_max_health_bonus(chest_max_hp_bonus)
+		"build_cost":
+			var cost_mult = 0.92 if rarity == "common" else (0.88 if rarity == "rare" else 0.83)
+			build_cost_mult = max(0.55, build_cost_mult * cost_mult)
+		"reload_speed":
+			reload_speed_mult *= 0.90 if rarity == "common" else (0.85 if rarity == "rare" else 0.80)
+		
+		# Rare upgrades
+		"crit_chance":
+			crit_chance_bonus += 0.08
+		"crit_damage":
+			crit_damage_mult += 0.25
+		"pierce":
+			pierce_bonus += 1
+		"cooldown":
+			cooldown_mult *= 0.88 if rarity == "rare" else 0.82
+		"pickup_range":
+			pickup_range_mult *= 1.30
+		
+		# Epic upgrades
+		"multishot":
+			if not has_multishot:
+				has_multishot = true
+			multishot_count += 1
+			if player != null:
+				player.burst_level = multishot_count
+				player.burst_every = 3
+				player.burst_spread = 0.15
+		"explosive":
+			has_explosive = true
+			explosive_radius = max(explosive_radius, 60.0)
+			if player != null:
+				player.explosive_radius = explosive_radius
+		"chain":
+			has_chain_lightning = true
+			chain_lightning_targets = max(chain_lightning_targets, 3)
+		"vampiric":
+			has_vampiric = true
+			vampiric_percent = max(vampiric_percent, 0.08)
+		
+		# DIAMOND upgrades - game changers
+		"multishot_split":
+			has_multishot_split = true
+			multishot_split_count = 2
+		"vampiric_heart":
+			has_vampiric = true
+			vampiric_percent = max(vampiric_percent, 0.15)
+		"chain_master":
+			has_chain_lightning = true
+			chain_lightning_targets = max(chain_lightning_targets, 5)
+		"time_dilation":
+			has_time_dilation = true
+			time_dilation_mult = 2.0
+		"phoenix":
+			has_phoenix = true
+			phoenix_used_this_wave = false
+		"fortress":
+			has_fortress = true
+			tower_hp_mult = 1.5
+			towers_self_repair = true
+	
+	_update_ui()
+	if ui != null and ui.has_method("show_upgrade_popup"):
+		ui.show_upgrade_popup(id, rarity)
+
 func register_building_effect(effect: String, source_id: int, value: float) -> void:
 	if not building_effects.has(effect):
 		return
@@ -1209,8 +1541,11 @@ func _recalc_effects() -> void:
 	for value in building_effects["tech_rate"].values():
 		rate_bonus += float(value)
 	tower_rate_mult = 1.0 + rate_bonus
+	_apply_player_damage_bonuses()
+
+func _apply_player_damage_bonuses() -> void:
 	if player != null and player.has_method("apply_global_bonuses"):
-		player.apply_global_bonuses(player_damage_bonus)
+		player.apply_global_bonuses(player_damage_bonus + chest_damage_bonus)
 
 func get_tower_rate_mult() -> float:
 	return tower_rate_mult
@@ -1219,7 +1554,10 @@ func get_tower_damage_bonus() -> float:
 	return tower_damage_bonus
 
 func get_tower_range_mult() -> float:
-	return tower_range_mult
+	return tower_range_mult * chest_tower_range_mult
+
+func get_build_cost_mult() -> float:
+	return build_cost_mult
 
 func _get_available_tech_ids() -> Array:
 	var available: Array = []
@@ -1255,30 +1593,9 @@ func _update_ui() -> void:
 func shake_camera(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE_DURATION) -> void:
 	if camera == null:
 		return
-	_shake_strength = max(_shake_strength, strength)
-	_shake_duration = max(_shake_duration, duration)
-	_shake_timer = max(_shake_timer, duration)
-
-func _update_screen_shake(delta: float) -> void:
-	if camera == null:
-		return
-	if _shake_timer > 0.0:
-		_shake_timer = max(0.0, _shake_timer - delta)
-		var t = 0.0
-		if _shake_duration > 0.0:
-			t = _shake_timer / _shake_duration
-		var intensity = _shake_strength * t
-		var offset = Vector2(
-			randf_range(-1.0, 1.0),
-			randf_range(-1.0, 1.0)
-		) * intensity
-		camera.offset = _shake_base_offset + offset
-		if _shake_timer <= 0.0:
-			_shake_strength = 0.0
-			_shake_duration = 0.0
-	else:
-		if camera.offset != _shake_base_offset:
-			camera.offset = _shake_base_offset
+	# Use dynamic camera controller shake
+	if camera.has_method("shake"):
+		camera.shake(strength, duration)
 
 func _refresh_build_palette() -> void:
 	if ui == null:
@@ -1296,16 +1613,337 @@ func heal_player(amount: float) -> void:
 		player.heal(amount)
 	_update_ui()
 
+# ============================================
+# DEATH SEQUENCE & GAME OVER
+# ============================================
+
 func on_player_death() -> void:
+	"""Called when player health reaches 0 - starts death animation"""
 	if game_over:
 		return
+	# Don't set game_over yet - wait for animation
+	# game_over = true  # Set in on_death_animation_complete instead
+	
+	# Player.gd will handle its own death animation
+	# We just need to track that death is in progress
+
+func start_death_camera_zoom(player_position: Vector2) -> void:
+	"""Called by player.gd to start camera zoom effect"""
+	if camera == null:
+		return
+	
+	# Store original camera settings
+	_original_camera_zoom = camera.zoom
+	_original_camera_position = camera.global_position
+	
+	# Smoothly zoom in and move to player
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(camera, "zoom", Vector2(1.5, 1.5), 2.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+	tween.tween_property(camera, "global_position", player_position, 2.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN_OUT)
+
+func on_death_animation_complete() -> void:
+	"""Called by player.gd when death animation finishes"""
 	game_over = true
 	Engine.time_scale = 1.0
-	if FeedbackConfig.ENABLE_DEATH_FEEDBACK and player != null and has_method("spawn_fx"):
-		spawn_fx("ghost", player.global_position)
-		spawn_fx("blood", player.global_position)
-	if ui.has_method("set_selection"):
-		ui.set_selection("Game Over - Esc to exit")
+	
+	# Audio: Game over sound
+	AudioManager.play_one_shot("game_over", player.global_position, AudioManager.CRITICAL_PRIORITY)
+	AudioManager.stop_music(2.0)
+	
+	# Screen fade to black over 2 seconds
+	_fade_to_black()
+	
+	# Wait for fade then show game over screen
+	await get_tree().create_timer(2.0).timeout
+	
+	_show_game_over_screen()
+
+func _fade_to_black() -> void:
+	"""Create a black overlay that fades in"""
+	var fade = ColorRect.new()
+	fade.name = "DeathFade"
+	fade.color = Color.BLACK
+	fade.anchors_preset = Control.PRESET_FULL_RECT
+	fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fade.z_index = 100
+	fade.modulate = Color(1, 1, 1, 0)
+	add_child(fade)
+	
+	var tween = create_tween()
+	tween.tween_property(fade, "modulate", Color(1, 1, 1, 1), 2.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+func _show_game_over_screen() -> void:
+	"""Display the game over stats screen"""
+	if game_over_ui == null:
+		return
+	
+	# Update wave reached from wave_manager
+	if wave_manager != null and wave_manager.has_method("get_current_wave"):
+		_wave_reached = wave_manager.get_current_wave()
+	
+	# Compile stats
+	var stats = {
+		"time_survived": elapsed,
+		"enemies_killed": _enemy_kill_count,
+		"damage_dealt": _total_damage_dealt,
+		"towers_built": _towers_built,
+		"generators_lost": _generators_lost,
+		"best_streak": _best_streak,
+		"wave_reached": _wave_reached
+	}
+	
+	# Check for new records
+	var is_new_record = _check_and_save_record(stats)
+	
+	# Show the game over UI
+	if game_over_ui.has_method("show_game_over"):
+		game_over_ui.show_game_over(stats, is_new_record)
+
+func _instantiate_game_over_ui() -> void:
+	"""Create and setup the game over UI"""
+	if GAME_OVER_SCENE == null:
+		push_warning("Game over scene not loaded")
+		return
+	
+	game_over_ui = GAME_OVER_SCENE.instantiate()
+	add_child(game_over_ui)
+	game_over_ui.visible = false
+	
+	# Connect signals
+	if game_over_ui.has_signal("try_again_pressed"):
+		game_over_ui.try_again_pressed.connect(_on_try_again)
+	if game_over_ui.has_signal("main_menu_pressed"):
+		game_over_ui.main_menu_pressed.connect(_on_main_menu_pressed)
+	if game_over_ui.has_signal("stats_pressed"):
+		game_over_ui.stats_pressed.connect(_on_stats_pressed)
+
+func _on_try_again() -> void:
+	"""Restart the current run"""
+	_restart_game()
+
+func _on_main_menu_pressed() -> void:
+	"""Return to main menu"""
+	# Hide game over UI
+	if game_over_ui != null:
+		game_over_ui.hide_game_over()
+	
+	# Reset game state
+	_reset_game_state()
+	
+	# Show start screen
+	if ui != null and ui.has_method("show_start"):
+		ui.show_start(true)
+
+func _on_stats_pressed() -> void:
+	"""Show detailed stats (could expand to show charts)"""
+	# For now, just toggle the detailed view
+	# This could be expanded to show damage over time charts, etc.
+	print("Stats button pressed - detailed view coming soon!")
+
+func _handle_game_over_input() -> void:
+	"""Handle input during game over screen"""
+	# Allow quick restart with Enter/R keys
+	if Input.is_action_just_pressed("start_game"):
+		_on_try_again()
+	if Input.is_action_just_pressed("cancel"):
+		_on_main_menu_pressed()
+
+func _restart_game() -> void:
+	"""Restart the game while keeping meta-progress"""
+	# Hide game over UI
+	if game_over_ui != null:
+		game_over_ui.hide_game_over()
+	
+	# Remove fade overlay if exists
+	var fade = get_node_or_null("DeathFade")
+	if fade != null:
+		fade.queue_free()
+	
+	# Reset game state
+	_reset_game_state()
+	
+	# Reset player
+	if player != null and player.has_method("reset"):
+		player.reset()
+	
+	# Reset camera
+	if camera != null:
+		if _original_camera_zoom != Vector2.ZERO:
+			camera.zoom = _original_camera_zoom
+		camera.offset = _shake_base_offset
+	
+	# Start the game
+	_start_game()
+
+func _reset_game_state() -> void:
+	"""Reset all game state for a new run"""
+	game_over = false
+	game_started = false
+	elapsed = 0.0
+	spawn_accumulator = 0.0
+	start_timer = 0.0
+	resources = 60
+	
+	# Clear enemies
+	for enemy in enemies_root.get_children():
+		enemy.queue_free()
+	
+	# Clear projectiles
+	for proj in projectiles_root.get_children():
+		proj.queue_free()
+	
+	# Clear pickups
+	for pickup in pickups_root.get_children():
+		pickup.queue_free()
+	
+	# Clear allies
+	if allies_root != null:
+		for ally in allies_root.get_children():
+			ally.queue_free()
+	
+	# Reset stats
+	_reset_run_stats()
+	
+	# Reset wave manager
+	if wave_manager != null and wave_manager.has_method("reset"):
+		wave_manager.reset()
+	
+	Engine.time_scale = 1.0
+
+func _reset_run_stats() -> void:
+	"""Reset stats for a new run"""
+	_enemy_kill_count = 0
+	_total_damage_dealt = 0.0
+	_towers_built = 0
+	_generators_lost = 0
+	_current_streak = 0
+	_best_streak = 0
+	_wave_reached = 1
+
+# ============================================
+# STATS TRACKING & PERSISTENCE
+# ============================================
+
+func track_damage_dealt(amount: float) -> void:
+	"""Track damage dealt by player/towers"""
+	_total_damage_dealt += amount
+
+func track_tower_built() -> void:
+	"""Track tower construction"""
+	_towers_built += 1
+
+func track_generator_lost() -> void:
+	"""Track generator destruction"""
+	_generators_lost += 1
+
+func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
+	_enemy_kill_count += 1
+	_current_streak += 1
+	if _current_streak > _best_streak:
+		_best_streak = _current_streak
+	if _enemy_kill_count % 10 == 0:
+		_trigger_kill_slow()
+
+func reset_kill_streak() -> void:
+	"""Call when player takes damage to reset streak"""
+	_current_streak = 0
+
+func _check_and_save_record(stats: Dictionary) -> bool:
+	"""Check if this run is a new record and save to history"""
+	var run_history = _load_run_history()
+	var is_new_record = false
+	
+	# Check against best runs
+	var best_kills = run_history.get("best_kills", 0)
+	var best_time = run_history.get("best_time", 0.0)
+	var best_wave = run_history.get("best_wave", 0)
+	
+	if stats["enemies_killed"] > best_kills:
+		run_history["best_kills"] = stats["enemies_killed"]
+		is_new_record = true
+	if stats["time_survived"] > best_time:
+		run_history["best_time"] = stats["time_survived"]
+		is_new_record = true
+	if stats["wave_reached"] > best_wave:
+		run_history["best_wave"] = stats["wave_reached"]
+		is_new_record = true
+	
+	# Add to run history
+	var run_entry = {
+		"date": Time.get_datetime_string_from_system(),
+		"time_survived": stats["time_survived"],
+		"enemies_killed": stats["enemies_killed"],
+		"damage_dealt": stats["damage_dealt"],
+		"towers_built": stats["towers_built"],
+		"generators_lost": stats["generators_lost"],
+		"best_streak": stats["best_streak"],
+		"wave_reached": stats["wave_reached"]
+	}
+	
+	if not run_history.has("runs"):
+		run_history["runs"] = []
+	
+	run_history["runs"].append(run_entry)
+	
+	# Keep only last 50 runs
+	if run_history["runs"].size() > 50:
+		run_history["runs"].pop_front()
+	
+	_save_run_history(run_history)
+	
+	return is_new_record
+
+func _load_run_history() -> Dictionary:
+	"""Load run history from JSON file"""
+	var path = "user://run_history.json"
+	if not FileAccess.file_exists(path):
+		return {
+			"best_kills": 0,
+			"best_time": 0.0,
+			"best_wave": 0,
+			"runs": []
+		}
+	
+	var file = FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {
+			"best_kills": 0,
+			"best_time": 0.0,
+			"best_wave": 0,
+			"runs": []
+		}
+	
+	var json_text = file.get_as_text()
+	file.close()
+	
+	var json = JSON.new()
+	var error = json.parse(json_text)
+	if error == OK:
+		return json.get_data()
+	
+	return {
+		"best_kills": 0,
+		"best_time": 0.0,
+		"best_wave": 0,
+		"runs": []
+	}
+
+func _save_run_history(data: Dictionary) -> void:
+	"""Save run history to JSON file"""
+	var path = "user://run_history.json"
+	var file = FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		push_warning("Failed to open run history file for writing")
+		return
+	
+	var json_text = JSON.stringify(data, "\t")
+	file.store_string(json_text)
+	file.close()
+
+# Camera zoom storage for death animation
+var _original_camera_zoom: Vector2 = Vector2.ONE
+var _original_camera_position: Vector2 = Vector2.ZERO
 
 func _spawn_initial_breakables() -> void:
 	for i in range(breakable_target):
@@ -1356,6 +1994,15 @@ func _spawn_clusters() -> void:
 		sprite.global_position = pos
 		props_root.add_child(sprite)
 
+func _spawn_environmental_particles() -> void:
+	"""Spawn ambient environmental particles based on zone type"""
+	if fx_manager == null:
+		return
+	
+	# Determine zone type based on level/stage - currently using grass zone
+	var zone_type = "grass"
+	fx_manager.spawn_environmental_particles(zone_type)
+
 func _maintain_breakables() -> void:
 	if breakables_root == null:
 		return
@@ -1393,6 +2040,262 @@ func spawn_breakable() -> void:
 		breakable.setup(self, value, xp_amount, style, chest)
 	breakables_root.add_child(breakable)
 
+func spawn_powerup() -> void:
+	if player == null or pickups_root == null:
+		return
+	
+	# Get random power-up type
+	var type = PowerUp.get_random_type()
+	
+	# Get spawn distance for this type
+	var distance_config = PowerUp.get_spawn_distance(type)
+	var min_dist = distance_config.min
+	var max_dist = distance_config.max
+	
+	# Try to find valid spawn position
+	var spawn_pos: Vector2 = Vector2.ZERO
+	var valid_spawn = false
+	
+	for attempt in range(20):
+		var angle = randf() * TAU
+		var distance = randf_range(min_dist, max_dist)
+		var test_pos = player.global_position + Vector2.RIGHT.rotated(angle) * distance
+		
+		valid_spawn = _is_valid_powerup_position(test_pos)
+		
+		if valid_spawn:
+			spawn_pos = test_pos
+			break
+	
+	if not valid_spawn:
+		return
+	
+	# Spawn the power-up
+	var powerup = POWER_UP_SCENE.instantiate()
+	powerup.global_position = spawn_pos
+	
+	# Audio: Powerup spawn sound
+	AudioManager.play_one_shot("powerup_spawn", spawn_pos, AudioManager.HIGH_PRIORITY)
+	
+	if powerup.has_method("setup"):
+		powerup.setup(self, type, spawn_pos)
+	pickups_root.add_child(powerup)
+
+func _handle_powerup_spawning(delta: float) -> void:
+	if player == null or pickups_root == null:
+		return
+	
+	# Count existing power-ups
+	var current_powerups = 0
+	for child in pickups_root.get_children():
+		if child is PowerUp:
+			current_powerups += 1
+	
+	# Don't spawn if at max
+	if current_powerups >= max_powerups:
+		return
+	
+	# Update timer
+	powerup_spawn_timer += delta
+	if powerup_spawn_timer < powerup_spawn_interval:
+		return
+	
+	# Reset timer with random interval
+	powerup_spawn_timer = 0.0
+	powerup_spawn_interval = randf_range(60.0, 90.0)
+	
+	# Roll for spawn chance (75% chance to spawn when timer expires)
+	if randf() > 0.75:
+		return
+	
+	spawn_powerup()
+
+func _is_valid_powerup_position(pos: Vector2) -> bool:
+	# Check if position is too close to any building
+	if buildings_root != null:
+		for building in buildings_root.get_children():
+			if building.has_method("get_footprint_radius"):
+				var footprint = building.get_footprint_radius()
+				if pos.distance_to(building.global_position) < footprint + 30.0:
+					return false
+	
+	# Check if position is too close to any enemy
+	if enemies_root != null:
+		for enemy in enemies_root.get_children():
+			if pos.distance_to(enemy.global_position) < 40.0:
+				return false
+	
+	return true
+
+func show_floating_text(text: String, position: Vector2, color: Color = Color.WHITE) -> void:
+	if fx_root == null:
+		return
+	var label = Label.new()
+	label.text = text
+	label.modulate = color
+	label.position = Vector2.ZERO
+	fx_root.add_child(label)
+	label.global_position = position
+	
+	# Animate up and fade
+	var tween = create_tween()
+	tween.tween_property(label, "position", Vector2(0, -40), 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(label, "modulate:a", 0.0, 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.tween_callback(label.queue_free)
+
+func flash_screen(color: Color, duration: float = 0.3) -> void:
+	var flash = ColorRect.new()
+	flash.color = color
+	flash.anchors_preset = Control.PRESET_FULL_RECT
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(flash)
+	
+	var tween = create_tween()
+	tween.tween_property(flash, "modulate:a", 0.0, duration).from(color.a).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(flash.queue_free)
+
+# Generator management functions
+func register_generator(generator: Node) -> void:
+	if generator == null or not is_instance_valid(generator):
+		return
+	active_generators.append(generator)
+	print("Generator registered. Total active: ", active_generators.size())
+
+func on_generator_destroyed(generator: Node) -> void:
+	generators_destroyed += 1
+	
+	# Remove from active list
+	if generator in active_generators:
+		active_generators.erase(generator)
+	
+	# Flash red screen for emphasis
+	flash_screen(Color(1.0, 0.0, 0.0, 0.3), 0.4)
+	
+	# Camera shake
+	shake_camera(FeedbackConfig.SCREEN_SHAKE_BUILDING_DESTROY * 1.5, 0.5)
+	
+	print("Generator destroyed! Active: ", active_generators.size(), " | Destroyed: ", generators_destroyed)
+	
+	# Check if all generators are destroyed
+	if active_generators.size() == 0 and generators_destroyed > 0:
+		show_floating_text("WARNING: No resource generators!", player.global_position + Vector2(0, -60), Color(1.0, 0.3, 0.3, 1.0))
+
+func get_active_generator_count() -> int:
+	# Clean up destroyed generators from list
+	var valid_generators: Array = []
+	for gen in active_generators:
+		if gen != null and is_instance_valid(gen) and not gen.is_destroyed():
+			valid_generators.append(gen)
+	active_generators = valid_generators
+	return active_generators.size()
+
+# Hitstop - freeze frame effect for critical hits
+func trigger_hitstop() -> void:
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+	Engine.time_scale = FeedbackConfig.HITSTOP_TIME_SCALE
+	_time_scale_tween = create_tween()
+	_time_scale_tween.tween_property(Engine, "time_scale", 1.0, FeedbackConfig.HITSTOP_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+# Damage flash - chromatic aberration effect
+func trigger_damage_flash() -> void:
+	# Flash screen red briefly
+	flash_screen(Color(1.0, 0.0, 0.0, 0.3), FeedbackConfig.CHROMATIC_ABERRATION_DURATION)
+
+# Muzzle flash effect
+func spawn_muzzle_flash(position: Vector2, direction: Vector2) -> void:
+	if fx_root == null:
+		return
+	# Create a quick flash sprite
+	var flash = Sprite2D.new()
+	flash.texture = _get_muzzle_flash_texture()
+	flash.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	flash.global_position = position
+	flash.rotation = direction.angle()
+	flash.z_index = 5
+	fx_root.add_child(flash)
+	
+	# Animate flash
+	var tween = flash.create_tween()
+	flash.scale = Vector2.ONE * 0.8
+	tween.tween_property(flash, "scale", Vector2.ONE * 1.2, FeedbackConfig.MUZZLE_FLASH_DURATION * 0.3)
+	tween.tween_property(flash, "modulate:a", 0.0, FeedbackConfig.MUZZLE_FLASH_DURATION * 0.7)
+	tween.tween_callback(flash.queue_free)
+	
+	# Also spawn a quick glow particle
+	spawn_glow_particle(position, Color(1.0, 0.9, 0.5, 0.8), 10.0, 0.08, Vector2.ZERO, 2.5, 0.0, 0.5, 4)
+
+func _get_muzzle_flash_texture() -> Texture2D:
+	var path = "res://assets/fx/fx_hit_spark_16_f001_v001.png"
+	if ResourceLoader.exists(path):
+		return load(path)
+	return null
+
+# Shell casing ejection effect
+func spawn_shell_casing(position: Vector2, eject_direction: Vector2) -> void:
+	if fx_root == null:
+		return
+	var casing = _create_shell_casing()
+	if casing == null:
+		return
+	casing.global_position = position
+	fx_root.add_child(casing)
+	
+	# Animate casing ejection
+	var tween = casing.create_tween()
+	var end_pos = position + eject_direction * randf_range(30.0, 50.0)
+	end_pos += Vector2(0, randf_range(10.0, 25.0))  # Gravity arc
+	tween.tween_property(casing, "global_position", end_pos, FeedbackConfig.SHELL_CASING_LIFETIME).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(casing, "rotation", randf_range(-PI, PI), FeedbackConfig.SHELL_CASING_LIFETIME)
+	tween.parallel().tween_property(casing, "modulate:a", 0.0, FeedbackConfig.SHELL_CASING_LIFETIME * 0.5).set_delay(FeedbackConfig.SHELL_CASING_LIFETIME * 0.5)
+	tween.tween_callback(casing.queue_free)
+
+func _create_shell_casing() -> Sprite2D:
+	var casing = Sprite2D.new()
+	# Use a small square as shell casing (could be replaced with actual shell texture)
+	var img = Image.create(3, 2, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.8, 0.7, 0.3, 1.0))
+	var tex = ImageTexture.create_from_image(img)
+	casing.texture = tex
+	casing.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	casing.z_index = 1
+	return casing
+
+# Glow burst for death effects
+func spawn_glow_burst_death(position: Vector2, base_color: Color) -> void:
+	if fx_root == null:
+		return
+	# Spawn multiple glow particles in burst pattern
+	for i in range(8):
+		var angle = (TAU / 8.0) * i + randf_range(-0.2, 0.2)
+		var speed = randf_range(60.0, 120.0)
+		var vel = Vector2.RIGHT.rotated(angle) * speed
+		var size = randf_range(4.0, 8.0)
+		var color = base_color.lerp(Color.WHITE, randf_range(0.0, 0.4))
+		color.a = 0.8
+		spawn_glow_particle(position, color, size, 0.4, vel, 1.5, 0.7, 0.9, 2)
+
+# Death particle for player death sequence
+func spawn_death_particle(position: Vector2, velocity: Vector2) -> void:
+	"""Spawn a blood/death particle for player death animation"""
+	if fx_root == null:
+		return
+	
+	var color = Color(0.7, 0.1, 0.1)  # Dark red blood
+	color = color.lerp(Color(0.5, 0.05, 0.05), randf())
+	
+	var size = randf_range(3.0, 7.0)
+	var lifetime = randf_range(0.5, 1.2)
+	
+	spawn_glow_particle(position, color, size, lifetime, velocity, 1.2, 0.8, 0.95, 1)
+
+# Heartbeat sound effect for death sequence
+func play_heartbeat_sound() -> void:
+	"""Play slowing heartbeat sound during death sequence"""
+	# This is a placeholder - you would integrate with your audio system
+	# For now, we just print to indicate where sound would play
+	print("*THUMP*... *thump*... *thump*...")
+
 func _ensure_input_map() -> void:
 	_ensure_action("start_game", [KEY_ENTER, KEY_SPACE])
 	_ensure_action("move_up", [KEY_W, KEY_UP])
@@ -1415,6 +2318,7 @@ func _ensure_input_map() -> void:
 	_ensure_action("build_shrine", [KEY_T])
 	_ensure_action("upgrade", [KEY_U])
 	_ensure_action("toggle_gate", [KEY_G])
+	_ensure_action("interact", [KEY_F])
 	_ensure_action("cancel", [KEY_ESCAPE])
 
 func _ensure_action(name: String, keys: Array) -> void:

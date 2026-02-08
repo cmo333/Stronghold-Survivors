@@ -20,6 +20,10 @@ const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
 const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
 const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
 
+# Pathfinding constants
+const PATH_CHECK_RESOLUTION = 16.0  # Grid size for pathfinding check (smaller = more accurate)
+const PATH_CHECK_RADIUS_OFFSET = 4.0  # How much to shrink building radius for path checks
+
 var game: Node2D = null
 var buildings_root: Node2D = null
 var ui: CanvasLayer = null
@@ -150,14 +154,14 @@ func _update_preview_position() -> void:
 		var def = StructureDB.get_def(current_id)
 		if not def.is_empty():
 			var status = _evaluate_placement(snapped, def)
-			if status["clear"] and status["affordable"]:
+			if status["clear"] and status["path_clear"] and status["affordable"]:
 				preview.set_color(PREVIEW_COLOR_OK)
-			elif status["clear"] and not status["affordable"]:
+			elif status["clear"] and status["path_clear"] and not status["affordable"]:
 				preview.set_color(PREVIEW_COLOR_UNAFFORDABLE)
 			else:
 				preview.set_color(PREVIEW_COLOR_BLOCKED)
 			if preview.has_method("set_state"):
-				preview.set_state(status["clear"] and status["affordable"])
+				preview.set_state(status["clear"] and status["path_clear"] and status["affordable"])
 
 func _update_preview_visuals() -> void:
 	if preview == null or current_id == "":
@@ -205,6 +209,9 @@ func _try_place() -> void:
 		game.spend(cost)
 		if game.has_method("spawn_fx"):
 			game.spawn_fx("build", pos)
+		# Track tower built
+		if game.has_method("track_tower_built"):
+			game.track_tower_built()
 	_set_selection_text("Built %s" % def.get("name", current_id))
 
 func _try_select() -> void:
@@ -224,12 +231,14 @@ func _try_select() -> void:
 	if selected_building != null:
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
+		_show_upgrade_panel()
 	else:
 		_set_selection_text("")
 		if selection_ring != null:
 			selection_ring.visible = false
 		if range_ring != null:
 			range_ring.visible = false
+		_hide_upgrade_panel()
 
 func _try_upgrade_selected() -> void:
 	if selected_building == null:
@@ -239,18 +248,50 @@ func _try_upgrade_selected() -> void:
 	if not selected_building.can_upgrade():
 		_set_selection_text("No upgrade available")
 		return
-	var upgrade_cost = int(selected_building.get_upgrade_cost())
+	var upgrade_cost = _apply_cost_mult(int(selected_building.get_upgrade_cost()))
 	if game != null and not game.can_afford(upgrade_cost):
 		_set_selection_text("Not enough resources")
 		return
+	
+	# Store position before upgrade (in case building dies)
+	var building_pos = selected_building.global_position
+	
 	if selected_building.has_method("upgrade"):
+		# Play upgrade juice effects first
+		if selected_building.has_method("play_upgrade_juice"):
+			selected_building.play_upgrade_juice()
+		
+		# Apply the upgrade
 		selected_building.upgrade()
+		
 		if game != null:
 			game.spend(upgrade_cost)
+			# Premium upgrade FX
 			if game.has_method("spawn_fx"):
-				game.spawn_fx("build", selected_building.global_position)
+				game.spawn_fx("upgrade_burst", building_pos)
+			# Stronger screenshake for higher tiers
+			if game.has_method("shake_camera"):
+				var tier = 1
+				if selected_building.has_method("tier"):
+					tier = selected_building.tier
+				var shake = 4.0 + tier * 2.0
+				game.shake_camera(shake, 0.3)
+		
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
+		_show_upgrade_panel()
+
+func _show_upgrade_panel() -> void:
+	if ui == null:
+		return
+	if ui.has_method("show_upgrade_panel"):
+		ui.show_upgrade_panel(selected_building)
+
+func _hide_upgrade_panel() -> void:
+	if ui == null:
+		return
+	if ui.has_method("hide_upgrade_panel"):
+		ui.hide_upgrade_panel()
 
 func _try_toggle_selected() -> void:
 	if selected_building == null:
@@ -263,9 +304,19 @@ func _try_toggle_selected() -> void:
 func _describe_building(building: Node) -> String:
 	if building == null:
 		return ""
+	
+	var base_name = ""
 	if building.has_method("get_display_name"):
-		return building.get_display_name()
-	return building.name
+		base_name = building.get_display_name()
+	else:
+		base_name = building.name
+	
+	# Add upgrade info if available
+	if building.has_method("can_upgrade") and building.can_upgrade():
+		var cost = _apply_cost_mult(building.get_upgrade_cost())
+		base_name += " [U:%d]" % cost
+	
+	return base_name
 
 func _describe_current_build() -> String:
 	if current_id == "":
@@ -274,7 +325,7 @@ func _describe_current_build() -> String:
 	if def.is_empty():
 		return "Build: %s" % current_id
 	var tier_data = StructureDB.get_tier(def, 0)
-	var cost = int(tier_data.get("cost", 0))
+	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
 	return "Build: %s (Cost %d)" % [def.get("name", current_id), cost]
 
 func _set_controls_text() -> void:
@@ -389,6 +440,7 @@ func _clear_selection() -> void:
 		selection_ring.visible = false
 	if range_ring != null:
 		range_ring.visible = false
+	_hide_upgrade_panel()
 
 func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	var result = {
@@ -396,6 +448,7 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 		"reason": "",
 		"affordable": true,
 		"clear": true,
+		"path_clear": true,
 		"cost": 0,
 		"footprint": 12.0
 	}
@@ -403,7 +456,7 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 		result["reason"] = "Invalid build"
 		return result
 	var tier_data = StructureDB.get_tier(def, 0)
-	var cost = int(tier_data.get("cost", 0))
+	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
 	result["cost"] = cost
 	result["footprint"] = float(def.get("footprint_radius", 12))
 	if game != null and not game.can_afford(cost):
@@ -412,8 +465,126 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	result["clear"] = _is_clear(pos, result["footprint"])
 	if not result["clear"] and result["reason"] == "":
 		result["reason"] = "Blocked placement"
-	result["can_place"] = result["affordable"] and result["clear"]
+	
+	# Check path blocking - only for buildings that block path
+	var blocks_path = bool(def.get("blocks_path", true))
+	if blocks_path and result["clear"]:
+		result["path_clear"] = _check_path_validity(pos, result["footprint"])
+		if not result["path_clear"]:
+			result["reason"] = "Must leave path open!"
+	
+	result["can_place"] = result["affordable"] and result["clear"] and result["path_clear"]
 	return result
+
+func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
+	"""
+	Check if placing a building at proposed_pos would block ALL paths from enemy spawn points to player.
+	Uses flood-fill algorithm to check reachability.
+	"""
+	if game == null or game.player == null:
+		return true
+	
+	var player_pos = game.player.global_position
+	
+	# Get all potential spawn points (we check multiple directions around player)
+	var spawn_dist_min = 720.0
+	var spawn_dist_max = 1050.0
+	var spawn_points: Array[Vector2] = []
+	
+	# Sample spawn points in 8 directions
+	for i in range(8):
+		var angle = TAU * i / 8.0
+		var dist = (spawn_dist_min + spawn_dist_max) / 2.0
+		spawn_points.append(player_pos + Vector2.RIGHT.rotated(angle) * dist)
+	
+	# For each spawn point, check if there's still a valid path to player
+	for spawn_pos in spawn_points:
+		if not _can_reach_player(spawn_pos, player_pos, proposed_pos, proposed_radius):
+			return false
+	
+	return true
+
+func _can_reach_player(from_pos: Vector2, player_pos: Vector2, proposed_pos: Vector2, proposed_radius: float) -> bool:
+	"""
+	Flood-fill check from spawn point to player, treating proposed building as an obstacle.
+	Returns true if player is reachable.
+	"""
+	# Use a simplified grid-based flood fill
+	var check_radius = proposed_radius - PATH_CHECK_RADIUS_OFFSET
+	if check_radius < 4.0:
+		check_radius = proposed_radius * 0.7
+	
+	var open_set: Array[Vector2] = [from_pos]
+	var visited: Dictionary = {}
+	var max_checks = 2000  # Limit to prevent infinite loops
+	var checks = 0
+	
+	# Pre-collect all existing building obstacles
+	var obstacles: Array[Dictionary] = []
+	for building in get_tree().get_nodes_in_group("buildings"):
+		if building == null or not is_instance_valid(building):
+			continue
+		var b_radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			b_radius = building.get_footprint_radius()
+		# Skip if building doesn't block path
+		if building.has_meta("blocks_path") and not building.get_meta("blocks_path"):
+			continue
+		obstacles.append({"pos": building.global_position, "radius": b_radius - PATH_CHECK_RADIUS_OFFSET})
+	
+	# Add proposed building as obstacle
+	obstacles.append({"pos": proposed_pos, "radius": check_radius})
+	
+	while open_set.size() > 0 and checks < max_checks:
+		checks += 1
+		var current = open_set.pop_back()
+		
+		# Check if we've reached player
+		if current.distance_squared_to(player_pos) <= 60.0 * 60.0:
+			return true
+		
+		# Mark visited (use quantized position to handle floating point)
+		var key = Vector2i(int(current.x / PATH_CHECK_RESOLUTION), int(current.y / PATH_CHECK_RESOLUTION))
+		if visited.has(key):
+			continue
+		visited[key] = true
+		
+		# Check neighbors (8-directional)
+		var neighbors = [
+			current + Vector2(PATH_CHECK_RESOLUTION, 0),
+			current + Vector2(-PATH_CHECK_RESOLUTION, 0),
+			current + Vector2(0, PATH_CHECK_RESOLUTION),
+			current + Vector2(0, -PATH_CHECK_RESOLUTION),
+			current + Vector2(PATH_CHECK_RESOLUTION, PATH_CHECK_RESOLUTION),
+			current + Vector2(-PATH_CHECK_RESOLUTION, PATH_CHECK_RESOLUTION),
+			current + Vector2(PATH_CHECK_RESOLUTION, -PATH_CHECK_RESOLUTION),
+			current + Vector2(-PATH_CHECK_RESOLUTION, -PATH_CHECK_RESOLUTION)
+		]
+		
+		for neighbor in neighbors:
+			# Skip if already visited
+			var n_key = Vector2i(int(neighbor.x / PATH_CHECK_RESOLUTION), int(neighbor.y / PATH_CHECK_RESOLUTION))
+			if visited.has(n_key):
+				continue
+			
+			# Check collision with obstacles
+			var blocked = false
+			for obs in obstacles:
+				if neighbor.distance_squared_to(obs["pos"]) <= obs["radius"] * obs["radius"]:
+					blocked = true
+					break
+			
+			if not blocked:
+				open_set.append(neighbor)
+	
+	# If we've exhausted the search without finding player, path is blocked
+	return false
+
+func _apply_cost_mult(cost: int) -> int:
+	var final_cost = cost
+	if game != null and game.has_method("get_build_cost_mult"):
+		final_cost = int(round(final_cost * game.get_build_cost_mult()))
+	return max(0, final_cost)
 
 func _controls_text() -> String:
 	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | G: gate | B: build"

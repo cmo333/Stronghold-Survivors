@@ -38,7 +38,11 @@ func _on_body_entered(body: Node) -> void:
         sprite.play()
     await get_tree().create_timer(0.12).timeout
     if _game != null:
-        _game.damage_enemies_in_radius(global_position, explosion_radius, damage)
+        if _game.has_method("damage_enemies_in_radius"):
+            _game.damage_enemies_in_radius(global_position, explosion_radius, damage)
         if _game.has_method("spawn_fx"):
             _game.spawn_fx("explosion", global_position)
+            _game.spawn_fx("shockwave", global_position)
+        if _game.has_method("shake_camera"):
+            _game.shake_camera(FeedbackConfig.SCREEN_SHAKE_EXPLOSION)
     queue_free()

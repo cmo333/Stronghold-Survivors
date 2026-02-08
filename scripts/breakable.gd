@@ -12,6 +12,8 @@ var xp = 2
 var style = "small"
 var is_chest = false
 var _game: Node = null
+var _chest_glow_timer = 0.0
+var _chest_glow_interval = 0.24
 @onready var sprite: Sprite2D = $Body
 
 func setup(game_ref: Node, amount: int, xp_amount: int, style_name: String = "small", chest: bool = false) -> void:
@@ -27,6 +29,18 @@ func _ready() -> void:
 	collision_mask = GameLayers.PLAYER
 	body_entered.connect(_on_body_entered)
 	_apply_style()
+
+func _process(delta: float) -> void:
+	if not is_chest or _game == null or not _game.has_method("spawn_glow_particle"):
+		return
+	_chest_glow_timer += delta
+	if _chest_glow_timer < _chest_glow_interval:
+		return
+	_chest_glow_timer = 0.0
+	var glow_color = Color(1.0, 0.85, 0.35).lerp(Color.WHITE, randf_range(0.05, 0.25))
+	var offset = Vector2(randf_range(-10.0, 10.0), randf_range(-8.0, 8.0))
+	var vel = Vector2(randf_range(-14.0, 14.0), randf_range(-10.0, 10.0))
+	_game.spawn_glow_particle(global_position + offset, glow_color, randf_range(5.0, 7.5), 0.55, vel, 1.9, 0.55, 1.0, -1)
 
 func _on_body_entered(body: Node) -> void:
 	if body == null:

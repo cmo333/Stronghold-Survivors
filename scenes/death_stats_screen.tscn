@@ -1,0 +1,177 @@
+[gd_scene load_steps=4 format=3 uid="uid://deathstats12345"]
+
+[ext_resource type="Script" path="res://scripts/death_stats_screen.gd" id="1_death"]
+[ext_resource type="FontFile" uid="uid://c8j7y3r2j1q0w" path="res://assets/ui/pixel_font.ttf" id="2_font"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxDeath"]
+bg_color = Color(0.05, 0.05, 0.06, 0.98)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0.4, 0.1, 0.1, 1.0)
+corner_radius_top_left = 12
+corner_radius_top_right = 12
+corner_radius_bottom_left = 12
+corner_radius_bottom_right = 12
+
+[node name="DeathStatsScreen" type="CanvasLayer"]
+layer = 15
+script = ExtResource("1_death")
+
+[node name="Panel" type="Panel" parent="."]
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -400.0
+offset_top = -350.0
+offset_right = 400.0
+offset_bottom = 350.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_styles/panel = SubResource("StyleBoxDeath")
+
+[node name="TitleLabel" type="Label" parent="Panel"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 15.0
+offset_right = 200.0
+offset_bottom = 60.0
+grow_horizontal = 2
+theme_override_fonts/font = ExtResource("2_font")
+theme_override_font_sizes/font_size = 28
+text = "THE STRONGHOLD HAS FALLEN"
+horizontal_alignment = 1
+
+[node name="SubtitleLabel" type="Label" parent="Panel"]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -200.0
+offset_top = 62.0
+offset_right = 200.0
+offset_bottom = 85.0
+grow_horizontal = 2
+theme_override_fonts/font = ExtResource("2_font")
+theme_override_font_sizes/font_size = 12
+text = "The horde overran your position."
+horizontal_alignment = 1
+
+[node name="NewRecordContainer" type="Control" parent="Panel"]
+visible = false
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -150.0
+offset_top = 5.0
+offset_right = 150.0
+offset_bottom = 30.0
+grow_horizontal = 2
+
+[node name="NewRecordLabel" type="Label" parent="Panel/NewRecordContainer"]
+layout_mode = 0
+offset_left = -100.0
+offset_right = 100.0
+offset_bottom = 25.0
+theme_override_fonts/font = ExtResource("2_font")
+theme_override_font_sizes/font_size = 20
+text = "★ NEW RECORD! ★"
+horizontal_alignment = 1
+
+[node name="StatsContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -350.0
+offset_top = -120.0
+offset_right = -50.0
+offset_bottom = 80.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="ChartsContainer" type="Control" parent="Panel"]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = 50.0
+offset_top = -120.0
+offset_right = 350.0
+offset_bottom = 80.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="DamageChart" type="Control" parent="Panel/ChartsContainer"]
+anchors_preset = 9
+anchor_bottom = 1.0
+offset_right = 140.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="EnemyChart" type="Control" parent="Panel/ChartsContainer"]
+anchors_preset = 11
+anchor_left = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -140.0
+grow_horizontal = 0
+grow_vertical = 2
+
+[node name="LostContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 30.0
+offset_top = -140.0
+offset_right = 180.0
+offset_bottom = -50.0
+grow_vertical = 0
+
+[node name="KeptContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -180.0
+offset_top = -140.0
+offset_right = -30.0
+offset_bottom = -50.0
+grow_horizontal = 0
+grow_vertical = 0
+
+[node name="ContinueBtn" type="Button" parent="Panel"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -100.0
+offset_top = -50.0
+offset_right = 100.0
+offset_bottom = -15.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_fonts/font = ExtResource("2_font")
+theme_override_font_sizes/font_size = 16
+text = "CONTINUE"
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+
+[node name="ConfettiRoot" type="Node2D" parent="."]
