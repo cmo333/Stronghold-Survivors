@@ -162,6 +162,8 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			if is_elite:
 				xp_reward = 5
 			_game.add_xp(xp_reward)
+			if _game.has_method("on_enemy_killed"):
+				_game.on_enemy_killed(is_elite, is_siege)
 		queue_free()
 
 func _is_crit_hit(amount: float) -> bool:

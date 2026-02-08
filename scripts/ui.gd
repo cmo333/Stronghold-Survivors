@@ -58,6 +58,9 @@ var palette_active_id: String = ""
 # Tech rarity frames (ColorRects behind each option icon)
 var tech_frames: Array = []
 var _ui_font: Font = null
+var _last_level: int = -1
+var _xp_tween: Tween = null
+var _level_flash_tween: Tween = null
 
 func _ready() -> void:
 	_ui_font = _build_bitmap_font(UI_FONT_PATH) if USE_CUSTOM_FONT else null
@@ -193,7 +196,25 @@ func set_level(level: int, xp: int, xp_next: int) -> void:
 	level_label.text = "Level: %d (%d/%d)" % [level, xp, xp_next]
 	if xp_bar != null:
 		xp_bar.max_value = xp_next
-		xp_bar.value = xp
+		if _xp_tween != null:
+			_xp_tween.kill()
+		_xp_tween = create_tween()
+		_xp_tween.tween_property(xp_bar, "value", xp, 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	if _last_level >= 0 and level > _last_level:
+		if _level_flash_tween != null:
+			_level_flash_tween.kill()
+		var label_normal = level_label.modulate
+		level_label.modulate = Color.WHITE
+		var bar_normal = Color.WHITE
+		if xp_bar != null:
+			bar_normal = xp_bar.modulate
+			xp_bar.modulate = Color.WHITE
+		_level_flash_tween = create_tween()
+		_level_flash_tween.set_parallel(true)
+		_level_flash_tween.tween_property(level_label, "modulate", label_normal, 0.3)
+		if xp_bar != null:
+			_level_flash_tween.tween_property(xp_bar, "modulate", bar_normal, 0.3)
+	_last_level = level
 
 func set_health(current: float, maximum: float) -> void:
 	if health_bar == null:
