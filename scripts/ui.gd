@@ -1,5 +1,8 @@
 extends CanvasLayer
 
+const UI_FONT_PATH = "res://assets/ui/font_ui_gothic_ascii_12x16_v001.fnt"
+const USE_CUSTOM_FONT = true
+
 @onready var resources_label: Label = $HUD/Resources
 @onready var time_label: Label = $HUD/Time
 @onready var selection_label: Label = $HUD/Selection
@@ -54,8 +57,13 @@ var palette_active_id: String = ""
 
 # Tech rarity frames (ColorRects behind each option icon)
 var tech_frames: Array = []
+var _ui_font: Font = null
 
 func _ready() -> void:
+	_ui_font = _build_bitmap_font(UI_FONT_PATH) if USE_CUSTOM_FONT else null
+	_apply_ui_fonts()
+	_style_tech_panel()
+	_style_start_panel()
 	_build_palette()
 	_add_tech_rarity_frames()
 	_polish_start_panel()
@@ -233,7 +241,7 @@ func _format_option(number: int, options: Array, index: int) -> String:
 	if index >= options.size():
 		return "%d) --" % number
 	var option: Dictionary = options[index]
-	return "%d) %s - %s" % [number, option.get("name", ""), option.get("desc", "")]
+	return "%d) %s\n   %s" % [number, option.get("name", ""), option.get("desc", "")]
 
 func _set_icon(icon: TextureRect, options: Array, index: int) -> void:
 	if icon == null:
@@ -273,6 +281,115 @@ func _apply_tech_frames(options: Array) -> void:
 		var rarity = str(options[i].get("rarity", "common"))
 		var color: Color = rarity_colors.get(rarity, Color.WHITE)
 		frame.color = Color(color.r, color.g, color.b, 0.35)
+
+# =========================================================
+# FONT + LAYOUT POLISH
+# =========================================================
+
+func _build_bitmap_font(path: String) -> Font:
+	if not ResourceLoader.exists(path):
+		return null
+	var font = load(path)
+	if font is Font:
+		return font
+	return null
+
+func _apply_font(label: Label, size: int = 8) -> void:
+	if label == null:
+		return
+	if _ui_font != null:
+		label.add_theme_font_override("font", _ui_font)
+	label.add_theme_font_size_override("font_size", size)
+	label.add_theme_color_override("font_color", Color(0.98, 0.98, 0.95))
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.9))
+	label.add_theme_constant_override("outline_size", 1)
+	label.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+func _apply_ui_fonts() -> void:
+	_apply_font(resources_label, 10)
+	_apply_font(time_label, 10)
+	_apply_font(selection_label, 10)
+	_apply_font(controls_label, 10)
+	_apply_font(level_label, 10)
+	_apply_font(tech_option1, 12)
+	_apply_font(tech_option2, 12)
+	_apply_font(tech_option3, 12)
+	_apply_font(start_title, 12)
+	_apply_font(start_body, 10)
+	_apply_font(start_option1, 10)
+	_apply_font(start_option2, 10)
+	_apply_font(start_hint, 10)
+	var tech_title: Label = $HUD/TechPanel/Title
+	var tech_hint: Label = $HUD/TechPanel/Hint
+	_apply_font(tech_title, 12)
+	_apply_font(tech_hint, 10)
+
+func _style_label(label: Label, pos: Vector2, size: Vector2, wrap: bool = true) -> void:
+	if label == null:
+		return
+	label.position = pos
+	label.size = size
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap else TextServer.AUTOWRAP_OFF
+	label.clip_text = true
+	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+
+func _style_tech_panel() -> void:
+	if tech_panel == null:
+		return
+	var panel_w = 384.0
+	var panel_h = 192.0
+	tech_panel.anchor_left = 0.5
+	tech_panel.anchor_top = 0.5
+	tech_panel.anchor_right = 0.5
+	tech_panel.anchor_bottom = 0.5
+	tech_panel.offset_left = -panel_w / 2.0
+	tech_panel.offset_top = -panel_h / 2.0
+	tech_panel.offset_right = panel_w / 2.0
+	tech_panel.offset_bottom = panel_h / 2.0
+	tech_panel.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+	var tech_title: Label = $HUD/TechPanel/Title
+	var tech_hint: Label = $HUD/TechPanel/Hint
+
+	_style_label(tech_title, Vector2(16, 10), Vector2(352, 16), false)
+	_style_label(tech_option1, Vector2(52, 38), Vector2(312, 36), true)
+	_style_label(tech_option2, Vector2(52, 82), Vector2(312, 36), true)
+	_style_label(tech_option3, Vector2(52, 126), Vector2(312, 36), true)
+	_style_label(tech_hint, Vector2(16, 168), Vector2(352, 16), false)
+
+	for icon in [tech_icon1, tech_icon2, tech_icon3]:
+		if icon == null:
+			continue
+		icon.size = Vector2(24, 24)
+		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+	if tech_icon1 != null:
+		tech_icon1.position = Vector2(20, 44)
+	if tech_icon2 != null:
+		tech_icon2.position = Vector2(20, 88)
+	if tech_icon3 != null:
+		tech_icon3.position = Vector2(20, 132)
+
+func _style_start_panel() -> void:
+	if start_panel == null:
+		return
+	var panel_w = 384.0
+	var panel_h = 224.0
+	start_panel.anchor_left = 0.5
+	start_panel.anchor_top = 0.5
+	start_panel.anchor_right = 0.5
+	start_panel.anchor_bottom = 0.5
+	start_panel.offset_left = -panel_w / 2.0
+	start_panel.offset_top = -panel_h / 2.0
+	start_panel.offset_right = panel_w / 2.0
+	start_panel.offset_bottom = panel_h / 2.0
+	start_panel.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+	_style_label(start_title, Vector2(16, 12), Vector2(352, 18), false)
+	_style_label(start_body, Vector2(16, 36), Vector2(352, 44), true)
+	_style_label(start_option1, Vector2(64, 92), Vector2(280, 16), false)
+	_style_label(start_option2, Vector2(64, 128), Vector2(280, 16), false)
 
 # =========================================================
 # CHARACTER SELECT

@@ -1,10 +1,12 @@
 extends CharacterBody2D
 
-var speed = 110.0
+const FeedbackConfig = preload("res://scripts/feedback_config.gd")
+
+var speed = 92.0
 var max_health = 30.0
 var health = 30.0
-var attack_damage = 7.0
-var attack_rate = 0.9
+var attack_damage = 10.0
+var attack_rate = 1.05
 var attack_range = 20.0
 var aggro_range = 260.0
 var is_siege = false
@@ -17,6 +19,8 @@ var _stun_timer = 0.0
 var _was_stunned = false
 var _was_slowed = false
 var is_elite = false
+var _last_hit_fx_ms = -999999
+var _last_damage_number_ms = -999999
 
 # Elite modifier system: "", "aura", "speed_burst", "regen"
 var elite_modifier = ""
@@ -39,22 +43,26 @@ var _burst_base_speed = 0.0
 var _regen_rate = 3.0
 
 @onready var body: CanvasItem = $Body
+@onready var collision_shape: CollisionShape2D = $CollisionShape2D
 var _base_color: Color = Color.WHITE
 
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
 	max_health = max_health * difficulty
 	health = max_health
-	speed = speed * (1.0 + difficulty * 0.05)
+	speed = speed * (1.0 + difficulty * 0.03)
 
 func _ready() -> void:
 	add_to_group("enemies")
 	collision_layer = GameLayers.ENEMY
-	collision_mask = GameLayers.PLAYER | GameLayers.BUILDING
+	collision_mask = GameLayers.PLAYER | GameLayers.BUILDING | GameLayers.ALLY
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	if body != null:
 		_base_color = body.modulate
-		body.scale = Vector2.ONE * 1.4
+		body.scale = Vector2.ONE * 1.8
+	if collision_shape != null and collision_shape.shape is CircleShape2D:
+		var shape: CircleShape2D = collision_shape.shape
+		shape.radius = max(shape.radius, 12.0)
 
 func _physics_process(delta: float) -> void:
 	if _game == null:
@@ -83,17 +91,64 @@ func _physics_process(delta: float) -> void:
 	_update_status_visuals()
 
 func _find_target() -> Node2D:
+	if _game == null:
+		return null
 	var player: Node2D = _game.player as Node2D
+	var best: Node2D = null
+	var best_dist = INF
 	if player != null and is_instance_valid(player):
+		best = player
+		best_dist = global_position.distance_squared_to(player.global_position)
+	for ally in get_tree().get_nodes_in_group("allies"):
+		if ally == null or not is_instance_valid(ally):
+			continue
+		var dist = global_position.distance_squared_to(ally.global_position)
+		if dist < best_dist and dist <= aggro_range * aggro_range:
+			best = ally
+			best_dist = dist
+	if best == null:
 		return player
-	return null
+	if best_dist <= aggro_range * aggro_range:
+		return best
+	return player
 
-func take_damage(amount: float) -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+	if amount <= 0.0:
+		return
+	var hit_pos = hit_position
+	if hit_pos == Vector2.ZERO:
+		hit_pos = global_position
+	var now_ms = Time.get_ticks_msec()
+	var will_die = health - amount <= 0.0
+	var is_crit = _is_crit_hit(amount)
+
+	if show_hit_fx and FeedbackConfig.ENABLE_HIT_SPARKS and amount >= FeedbackConfig.HIT_SPARK_MIN_DAMAGE:
+		var elapsed = float(now_ms - _last_hit_fx_ms) / 1000.0
+		if elapsed >= FeedbackConfig.HIT_SPARK_COOLDOWN or is_crit or will_die:
+			if _game != null and _game.has_method("spawn_fx"):
+				var hit_kind = "hit"
+				if is_crit:
+					hit_kind = "crit"
+				_game.spawn_fx(hit_kind, hit_pos)
+			_last_hit_fx_ms = now_ms
+
+	if show_damage_number and FeedbackConfig.ENABLE_DAMAGE_NUMBERS:
+		var elapsed_num = float(now_ms - _last_damage_number_ms) / 1000.0
+		if elapsed_num >= FeedbackConfig.DAMAGE_NUMBER_COOLDOWN or is_crit or will_die:
+			if _game != null and _game.has_method("spawn_damage_number"):
+				_game.spawn_damage_number(amount, hit_pos, max_health, is_crit, will_die, is_elite, damage_type)
+			_last_damage_number_ms = now_ms
+
 	health -= amount
 	if health <= 0.0:
 		if _game != null:
 			if _game.has_method("spawn_fx"):
 				_game.spawn_fx("blood", global_position)
+				if FeedbackConfig.ENABLE_DEATH_FEEDBACK:
+					if is_elite or is_siege:
+						_game.spawn_fx("elite_kill", global_position)
+					else:
+						_game.spawn_fx("kill_pop", global_position)
 			if _game.has_method("spawn_pickup"):
 				var gold_amount = 1
 				if is_elite:
@@ -108,6 +163,15 @@ func take_damage(amount: float) -> void:
 				xp_reward = 5
 			_game.add_xp(xp_reward)
 		queue_free()
+
+func _is_crit_hit(amount: float) -> bool:
+	if not FeedbackConfig.ENABLE_CRIT_POP:
+		return false
+	var pct = FeedbackConfig.CRIT_PCT_MAX_HEALTH
+	if is_elite:
+		pct = FeedbackConfig.CRIT_PCT_ELITE
+	var threshold = max(FeedbackConfig.CRIT_MIN_DAMAGE, max_health * pct)
+	return amount >= threshold
 
 func apply_slow(source_id: int, factor: float, duration: float = 0.0) -> void:
 	_slow_sources[source_id] = clamp(factor, 0.1, 1.0)

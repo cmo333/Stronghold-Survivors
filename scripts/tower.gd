@@ -17,6 +17,7 @@ func _ready() -> void:
     if body_sprite != null:
         body_sprite.stop()
         body_sprite.frame = 0
+        body_sprite.scale = Vector2.ONE * 1.35
 
 func _process(delta: float) -> void:
     _cooldown = max(0.0, _cooldown - delta)
@@ -67,7 +68,16 @@ func get_range() -> float:
 func _fire_at(target: Node2D) -> void:
     if _game == null:
         return
-    var dir = (target.global_position - global_position).normalized()
+    var target_pos = target.global_position
+    var target_vel = Vector2.ZERO
+    if "velocity" in target:
+        target_vel = target.velocity
+    var to_target = target_pos - global_position
+    var distance = to_target.length()
+    var lead_time = distance / max(1.0, projectile_speed)
+    if target_vel.length() > 0.1:
+        target_pos += target_vel * lead_time
+    var dir = (target_pos - global_position).normalized()
     var dmg_bonus = 0.0
     if _game != null and _game.has_method("get_tower_damage_bonus"):
         dmg_bonus = _game.get_tower_damage_bonus()

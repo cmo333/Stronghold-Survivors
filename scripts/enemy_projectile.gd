@@ -19,7 +19,7 @@ func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, proj_ran
 
 func _ready() -> void:
 	collision_layer = GameLayers.PROJECTILE
-	collision_mask = GameLayers.PLAYER
+	collision_mask = GameLayers.PLAYER | GameLayers.ALLY
 	body_entered.connect(_on_body_entered)
 
 func _physics_process(delta: float) -> void:
@@ -30,10 +30,10 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 
 func _on_body_entered(body: Node) -> void:
-	if body == null or not body.is_in_group("player"):
+	if body == null:
+		return
+	if not (body.is_in_group("player") or body.is_in_group("allies")):
 		return
 	if body.has_method("take_damage"):
-		body.take_damage(damage)
-	if _game != null and _game.has_method("spawn_fx"):
-		_game.spawn_fx("hit", global_position)
+		body.take_damage(damage, global_position, true)
 	queue_free()

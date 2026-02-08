@@ -1,4 +1,4 @@
-[gd_scene load_steps=29 format=3 uid="uid://b3iccjuodukry"]
+[gd_scene load_steps=21 format=3 uid="uid://b3iccjuodukry"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2"]
@@ -17,16 +17,8 @@
 [ext_resource type="Texture2D" uid="uid://de0syghr6y8f2" path="res://assets/level1/level1_tiles/tile_graveyard_grass_varA_32_v001.png" id="16"]
 [ext_resource type="Texture2D" uid="uid://pwvw5kg4wuim" path="res://assets/level1/level1_tiles/tile_graveyard_grass_varB_32_v001.png" id="17"]
 [ext_resource type="Texture2D" uid="uid://fwvaw0doauus" path="res://assets/level1/level1_tiles_more/tile_graveyard_grass_mossy_32_v001.png" id="18"]
-[ext_resource type="Texture2D" uid="uid://6ypsfoxsupkk" path="res://assets/level1/level1_tiles_more/tile_graveyard_grass_deadflowers_32_v001.png" id="19"]
-[ext_resource type="Texture2D" uid="uid://cscmqek5p7lbv" path="res://assets/level1/level1_tiles_more/tile_graveyard_gravel_32_v001.png" id="20"]
 [ext_resource type="Texture2D" uid="uid://dtvmyjiyni8w7" path="res://assets/ui/ui_bar_health_256x24_v001.png" id="21"]
 [ext_resource type="Texture2D" uid="uid://c7060wefc781" path="res://assets/ui/ui_bar_health_empty_256x24_v001.png" id="22"]
-[ext_resource type="Texture2D" uid="uid://c4jhtlhwbusjy" path="res://assets/level1/level1_tiles_more/tile_graveyard_blood_dirt_varA_32_v001.png" id="23"]
-[ext_resource type="Texture2D" uid="uid://pn5qw60ddk7n" path="res://assets/level1/level1_tiles_more/tile_graveyard_blood_dirt_varB_32_v001.png" id="24"]
-[ext_resource type="Texture2D" uid="uid://wn487ko6akqv" path="res://assets/level1/level1_tiles_more/tile_graveyard_cracked_stone_varA_32_v001.png" id="25"]
-[ext_resource type="Texture2D" uid="uid://qq88yntimyir" path="res://assets/level1/level1_tiles_more/tile_graveyard_cracked_stone_varB_32_v001.png" id="26"]
-[ext_resource type="Texture2D" uid="uid://cf6dk8oqsf0m1" path="res://assets/level1/level1_tiles_more/tile_graveyard_dark_grass_clumps_varA_32_v001.png" id="27"]
-[ext_resource type="Texture2D" uid="uid://b60k0csgd3jbf" path="res://assets/level1/level1_tiles_more/tile_graveyard_dark_grass_clumps_varB_32_v001.png" id="28"]
 
 [sub_resource type="CircleShape2D" id="1"]
 
@@ -40,9 +32,12 @@ z_index = -10
 format = 2
 script = ExtResource("15")
 tile_texture = ExtResource("12")
-tile_textures = Array[Texture2D]([ExtResource("12"), ExtResource("16"), ExtResource("17"), ExtResource("18"), ExtResource("19"), ExtResource("20"), ExtResource("23"), ExtResource("24"), ExtResource("25"), ExtResource("26"), ExtResource("27"), ExtResource("28")])
+tile_textures = Array[Texture2D]([ExtResource("12"), ExtResource("16"), ExtResource("17"), ExtResource("18")])
 radius = 90
-base_weight = 0.65
+base_weight = 0.82
+terrain_folder = "res://assets/level1/level1_terrain_v002"
+noise_frequency = 0.02
+smooth_passes = 2
 
 [node name="Player" type="CharacterBody2D" parent="World"]
 position = Vector2(120, 0)
@@ -55,7 +50,7 @@ script = ExtResource("11")
 shape = SubResource("1")
 
 [node name="Camera2D" type="Camera2D" parent="World/Player"]
-zoom = Vector2(0.75, 0.75)
+zoom = Vector2(2, 2)
 
 [node name="Enemies" type="Node2D" parent="World"]
 

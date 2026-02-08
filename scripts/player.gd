@@ -1,14 +1,16 @@
 extends CharacterBody2D
 
-var speed = 210.0
-var attack_range = 420.0
-var attack_rate = 1.4
-var damage = 10.0
-var projectile_speed = 640.0
-var projectile_range = 360.0
+const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 
-var max_health = 100.0
-var health = 100.0
+var speed = 230.0
+var attack_range = 520.0
+var attack_rate = 2.1
+var damage = 10.0
+var projectile_speed = 720.0
+var projectile_range = 420.0
+
+var max_health = 80.0
+var health = 80.0
 
 var _attack_cooldown = 0.0
 var _game: Node = null
@@ -18,6 +20,7 @@ var _base_attack_rate = 1.2
 var _slow_timer = 0.0
 var _slow_factor = 1.0
 var _facing_dir = "S"
+var _last_hit_fx_ms = -999999
 
 @onready var sprite: Node = $Body
 
@@ -29,7 +32,7 @@ var slow_factor = 1.0
 var slow_duration = 0.0
 
 func _ready() -> void:
-    _game = get_tree().get_first_node_in_group("game")
+    _ensure_game_ref()
     add_to_group("player")
     collision_layer = GameLayers.PLAYER
     collision_mask = GameLayers.ENEMY | GameLayers.BUILDING
@@ -42,6 +45,7 @@ func set_character(base_path: String, prefix: String) -> void:
         sprite.configure(base_path, prefix)
 
 func _physics_process(delta: float) -> void:
+    _ensure_game_ref()
     if _slow_timer > 0.0:
         _slow_timer = max(0.0, _slow_timer - delta)
     else:
@@ -123,8 +127,20 @@ func _vector_from_dir(dir: String) -> Vector2:
             return Vector2(-1, -1).normalized()
     return Vector2(1, 0)
 
-func take_damage(amount: float) -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true) -> void:
+    if amount <= 0.0:
+        return
     health -= amount
+    if _game != null and show_hit_fx and FeedbackConfig.ENABLE_HIT_SPARKS and amount >= FeedbackConfig.HIT_SPARK_MIN_DAMAGE:
+        var now_ms = Time.get_ticks_msec()
+        var elapsed = float(now_ms - _last_hit_fx_ms) / 1000.0
+        if elapsed >= FeedbackConfig.PLAYER_HIT_SPARK_COOLDOWN:
+            var hit_pos = hit_position
+            if hit_pos == Vector2.ZERO:
+                hit_pos = global_position
+            if _game.has_method("spawn_fx"):
+                _game.spawn_fx("hit", hit_pos)
+            _last_hit_fx_ms = now_ms
     if health <= 0.0:
         health = 0.0
         if _game != null and _game.has_method("on_player_death"):
@@ -151,3 +167,7 @@ func apply_global_bonuses(damage_bonus: float) -> void:
 func apply_slow(factor: float, duration: float) -> void:
     _slow_factor = min(_slow_factor, factor)
     _slow_timer = max(_slow_timer, duration)
+
+func _ensure_game_ref() -> void:
+    if _game == null:
+        _game = get_tree().get_first_node_in_group("game")

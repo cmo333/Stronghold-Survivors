@@ -11,10 +11,11 @@ var pierce = 0
 var remaining_pierce = 0
 var slow_factor = 1.0
 var slow_duration = 0.0
+var damage_type: String = "normal"
 var _last_position = Vector2.ZERO
 @onready var sprite: AnimatedSprite2D = $Body
 
-func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: float, explode_radius: float, pierce_count: int = 0, slow_factor_in: float = 1.0, slow_duration_in: float = 0.0) -> void:
+func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: float, explode_radius: float, pierce_count: int = 0, slow_factor_in: float = 1.0, slow_duration_in: float = 0.0, damage_type_in: String = "normal") -> void:
 	_game = game_ref
 	direction = dir.normalized()
 	speed = proj_speed
@@ -25,13 +26,14 @@ func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: f
 	remaining_pierce = pierce
 	slow_factor = slow_factor_in
 	slow_duration = slow_duration_in
+	damage_type = damage_type_in
 
 func _ready() -> void:
 	collision_layer = GameLayers.PROJECTILE
 	collision_mask = GameLayers.ENEMY
 	_last_position = global_position
 	if sprite != null:
-		sprite.scale = Vector2.ONE * 1.2
+		sprite.scale = Vector2.ONE * 1.5
 
 func _physics_process(delta: float) -> void:
 	var step = speed * delta
@@ -61,9 +63,7 @@ func _handle_hit(body: Node) -> bool:
 		queue_free()
 		return false
 	if body.has_method("take_damage"):
-		body.take_damage(damage)
-	if _game != null and _game.has_method("spawn_fx"):
-		_game.spawn_fx("hit", global_position)
+		body.take_damage(damage, global_position, true, true, damage_type)
 	if slow_factor < 0.99 and body.has_method("apply_slow"):
 		body.apply_slow(get_instance_id(), slow_factor, slow_duration)
 	if remaining_pierce > 0:
@@ -76,7 +76,7 @@ func _explode_if_needed() -> void:
 	if explosion_radius <= 0.0:
 		return
 	if _game != null:
-		_game.damage_enemies_in_radius(global_position, explosion_radius, damage)
+		_game.damage_enemies_in_radius(global_position, explosion_radius, damage, 1.0, damage_type)
 
 func _raycast_hit(from: Vector2, to: Vector2) -> Dictionary:
 	var space: PhysicsDirectSpaceState2D = get_world_2d().direct_space_state

@@ -15,9 +15,12 @@ const PROJECTILE_SCENE = preload("res://scenes/projectile.tscn")
 const ENEMY_PROJECTILE_SCENE = preload("res://scenes/enemy_projectile.tscn")
 const PICKUP_SCENE = preload("res://scenes/pickup.tscn")
 const BREAKABLE_SCENE = preload("res://scenes/breakable.tscn")
+const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
+const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var enemies_root: Node2D = $World/Enemies
+@onready var allies_root: Node2D = get_node_or_null("World/Allies")
 @onready var projectiles_root: Node2D = $World/Projectiles
 @onready var fx_root: Node2D = $World/FX
 @onready var buildings_root: Node2D = $World/Buildings
@@ -78,13 +81,92 @@ var tower_range_mult = 1.0
 
 var spawn_radius_min = 720.0
 var spawn_radius_max = 1050.0
-var max_enemies_base = 12
-var max_enemies_growth = 0.6
 var max_enemies_cap = 180
 var max_projectiles = 240
-var elite_chance_base = 0.02
-var elite_chance_growth = 0.08
 var elite_health_mult = 2.2
+var max_allies = 16
+
+# Data-driven pacing curve (interpolated between points).
+const SPAWN_CURVE = [
+	{"time": 0.0, "interval": 1.6, "max_enemies": 8, "difficulty": 1.0, "elite": 0.01, "siege": 0.0},
+	{"time": 30.0, "interval": 1.35, "max_enemies": 12, "difficulty": 1.08, "elite": 0.015, "siege": 0.0},
+	{"time": 60.0, "interval": 1.15, "max_enemies": 18, "difficulty": 1.2, "elite": 0.02, "siege": 0.03},
+	{"time": 120.0, "interval": 0.9, "max_enemies": 28, "difficulty": 1.4, "elite": 0.03, "siege": 0.07},
+	{"time": 180.0, "interval": 0.74, "max_enemies": 42, "difficulty": 1.6, "elite": 0.045, "siege": 0.12},
+	{"time": 240.0, "interval": 0.62, "max_enemies": 58, "difficulty": 1.85, "elite": 0.06, "siege": 0.18},
+	{"time": 300.0, "interval": 0.54, "max_enemies": 78, "difficulty": 2.1, "elite": 0.075, "siege": 0.24},
+	{"time": 420.0, "interval": 0.48, "max_enemies": 110, "difficulty": 2.45, "elite": 0.095, "siege": 0.3},
+	{"time": 540.0, "interval": 0.44, "max_enemies": 145, "difficulty": 2.8, "elite": 0.12, "siege": 0.34},
+	{"time": 660.0, "interval": 0.41, "max_enemies": 170, "difficulty": 3.1, "elite": 0.14, "siege": 0.35}
+]
+
+const ENEMY_POOLS = [
+	{
+		"time": 0.0,
+		"weights": [
+			[ENEMY_SCENE, 100]
+		]
+	},
+	{
+		"time": 45.0,
+		"weights": [
+			[ENEMY_SCENE, 60],
+			[CHARGER_SCENE, 22],
+			[HELLHOUND_SCENE, 18]
+		]
+	},
+	{
+		"time": 90.0,
+		"weights": [
+			[ENEMY_SCENE, 40],
+			[CHARGER_SCENE, 16],
+			[HELLHOUND_SCENE, 14],
+			[SPITTER_SCENE, 16],
+			[BANSHEE_SCENE, 14]
+		]
+	},
+	{
+		"time": 150.0,
+		"weights": [
+			[ENEMY_SCENE, 28],
+			[CHARGER_SCENE, 12],
+			[HELLHOUND_SCENE, 10],
+			[SPITTER_SCENE, 14],
+			[BANSHEE_SCENE, 10],
+			[FIEND_DUELIST_SCENE, 10],
+			[HEALER_SCENE, 8],
+			[NECROMANCER_SCENE, 8]
+		]
+	},
+	{
+		"time": 210.0,
+		"weights": [
+			[ENEMY_SCENE, 20],
+			[CHARGER_SCENE, 10],
+			[HELLHOUND_SCENE, 8],
+			[SPITTER_SCENE, 12],
+			[BANSHEE_SCENE, 8],
+			[FIEND_DUELIST_SCENE, 10],
+			[HEALER_SCENE, 10],
+			[NECROMANCER_SCENE, 10],
+			[PLAGUE_ABOMINATION_SCENE, 12]
+		]
+	},
+	{
+		"time": 300.0,
+		"weights": [
+			[ENEMY_SCENE, 16],
+			[CHARGER_SCENE, 10],
+			[HELLHOUND_SCENE, 8],
+			[SPITTER_SCENE, 12],
+			[BANSHEE_SCENE, 8],
+			[FIEND_DUELIST_SCENE, 10],
+			[HEALER_SCENE, 12],
+			[NECROMANCER_SCENE, 12],
+			[PLAGUE_ABOMINATION_SCENE, 12]
+		]
+	}
+]
 
 var breakable_target = 18
 var breakable_spawn_min = 240.0
@@ -92,22 +174,33 @@ var breakable_spawn_max = 920.0
 
 var prop_spawn_radius = 1600.0
 var prop_min_distance = 120.0
-var prop_count = 180
+var prop_count = 90
+var cluster_count = 8
+var cluster_min_distance = 260.0
 
 const PROP_PATHS = [
-	"res://assets/level1/level1_props/prop_graveyard_broken_fence_32_v001.png",
+	"res://assets/level1/level1_props/prop_graveyard_broken_fence_32_v002.png",
 	"res://assets/level1/level1_props/prop_graveyard_bone_pile_32_v001.png",
 	"res://assets/level1/level1_props/prop_graveyard_broken_cart_48_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_broken_pillar_48_v001.png",
+	"res://assets/level1/level1_props/prop_graveyard_broken_pillar_48_v002.png",
 	"res://assets/level1/level1_props/prop_graveyard_crates_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_dead_tree_stump_48_v001.png",
+	"res://assets/level1/level1_props/prop_graveyard_dead_tree_stump_48_v002.png",
 	"res://assets/level1/level1_props/prop_graveyard_lantern_32_v001.png",
 	"res://assets/level1/level1_props/prop_graveyard_ruined_pillar_48_v001.png",
 	"res://assets/level1/level1_props/prop_graveyard_skull_cairn_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_skull_pile_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_tombstone_large_48_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_tombstone_small_32_v001.png",
+	"res://assets/level1/level1_props/prop_graveyard_skull_pile_32_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_tombstone_large_48_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_tombstone_small_32_v002.png",
 	"res://assets/level1/level1_props/prop_graveyard_tombstone_tall_48_v001.png"
+]
+
+const CLUSTER_PATHS = [
+	"res://assets/level1/level1_props/prop_graveyard_cluster_collapsed_crypt_96_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_cluster_fallen_angel_memorial_96_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_cluster_gravedigger_camp_96_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_cluster_ritual_circle_96_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_cluster_family_plot_96_v002.png",
+	"res://assets/level1/level1_props/prop_graveyard_cluster_mass_grave_96_v002.png"
 ]
 
 var tech_defs = {
@@ -277,18 +370,90 @@ var fx_defs = {
 			"res://assets/fx/fx_hit_spark_16_f003_v001.png",
 			"res://assets/fx/fx_hit_spark_16_f004_v001.png"
 		],
-		"fps": 12.0,
-		"lifetime": 0.3
+		"fps": 18.0,
+		"lifetime": 0.2,
+		"scale": 1.25,
+		"alpha": 0.9,
+		"z": 2
+	},
+	"crit": {
+		"paths": [
+			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
+		],
+		"fps": 20.0,
+		"lifetime": 0.24,
+		"scale": 1.6,
+		"alpha": 0.95,
+		"z": 3
+	},
+	"chain_hit": {
+		"paths": [
+			"res://assets/fx/fx_shock_ring_32_f001_v001.png",
+			"res://assets/fx/fx_shock_ring_32_f002_v001.png",
+			"res://assets/fx/fx_shock_ring_32_f003_v001.png",
+			"res://assets/fx/fx_shock_ring_32_f004_v001.png"
+		],
+		"fps": 16.0,
+		"lifetime": 0.22,
+		"scale": 1.1,
+		"alpha": 0.9,
+		"z": 2
+	},
+	"kill_pop": {
+		"paths": [
+			"res://assets/fx/fx_blood_splash_32_f001_v001.png",
+			"res://assets/fx/fx_blood_splash_32_f002_v001.png",
+			"res://assets/fx/fx_blood_splash_32_f003_v001.png",
+			"res://assets/fx/fx_blood_splash_32_f004_v001.png"
+		],
+		"fps": 16.0,
+		"lifetime": 0.28,
+		"scale": 1.7,
+		"alpha": 0.95,
+		"z": 2
+	},
+	"elite_kill": {
+		"paths": [
+			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
+		],
+		"fps": 16.0,
+		"lifetime": 0.3,
+		"scale": 2.1,
+		"alpha": 1.0,
+		"z": 3
+	},
+	"build": {
+		"paths": [
+			"res://assets/fx/fx_hit_spark_16_f001_v001.png",
+			"res://assets/fx/fx_hit_spark_16_f002_v001.png",
+			"res://assets/fx/fx_hit_spark_16_f003_v001.png",
+			"res://assets/fx/fx_hit_spark_16_f004_v001.png"
+		],
+		"fps": 16.0,
+		"lifetime": 0.25,
+		"scale": 1.4,
+		"alpha": 0.9,
+		"z": 3,
+		"tint": Color(1.0, 0.85, 0.4)
 	},
 	"explosion": {
 		"paths": [
-			"res://assets/fx/fx_explosion_small_32_f001_v001.png",
-			"res://assets/fx/fx_explosion_small_32_f002_v001.png",
-			"res://assets/fx/fx_explosion_small_32_f003_v001.png",
-			"res://assets/fx/fx_explosion_small_32_f004_v001.png"
+			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
+			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
 		],
-		"fps": 10.0,
-		"lifetime": 0.4
+		"fps": 16.0,
+		"lifetime": 0.28,
+		"scale": 1.35,
+		"alpha": 0.85,
+		"z": -1
 	},
 	"acid": {
 		"paths": [
@@ -297,8 +462,11 @@ var fx_defs = {
 			"res://assets/fx/fx_acid_burst_64_f003_v001.png",
 			"res://assets/fx/fx_acid_burst_64_f004_v001.png"
 		],
-		"fps": 9.0,
-		"lifetime": 0.45
+		"fps": 10.0,
+		"lifetime": 0.4,
+		"scale": 1.05,
+		"alpha": 0.55,
+		"z": -2
 	},
 	"ice": {
 		"paths": [
@@ -307,8 +475,11 @@ var fx_defs = {
 			"res://assets/fx/fx_ice_field_64_f003_v001.png",
 			"res://assets/fx/fx_ice_field_64_f004_v001.png"
 		],
-		"fps": 6.0,
-		"lifetime": 0.8
+		"fps": 8.0,
+		"lifetime": 0.6,
+		"scale": 1.0,
+		"alpha": 0.5,
+		"z": -2
 	},
 	"stun": {
 		"paths": [
@@ -317,18 +488,76 @@ var fx_defs = {
 			"res://assets/fx/fx_stun_star_16_f003_v001.png",
 			"res://assets/fx/fx_stun_star_16_f004_v001.png"
 		],
-		"fps": 10.0,
-		"lifetime": 0.35
+		"fps": 14.0,
+		"lifetime": 0.25,
+		"scale": 1.2,
+		"alpha": 0.9,
+		"z": 3
 	},
 	"tesla": {
 		"paths": [
-			"res://assets/fx/fx_tesla_arc_32_f001_v001.png",
-			"res://assets/fx/fx_tesla_arc_32_f002_v001.png",
-			"res://assets/fx/fx_tesla_arc_32_f003_v001.png",
-			"res://assets/fx/fx_tesla_arc_32_f004_v001.png"
+			"res://assets/fx/fx_tesla_arc_32_f001_v002.png",
+			"res://assets/fx/fx_tesla_arc_32_f002_v002.png",
+			"res://assets/fx/fx_tesla_arc_32_f003_v002.png",
+			"res://assets/fx/fx_tesla_arc_32_f004_v002.png"
+		],
+		"fps": 16.0,
+		"lifetime": 0.2,
+		"scale": 1.15,
+		"alpha": 0.85,
+		"z": 2
+	},
+	"summon_shadow": {
+		"paths": [
+			"res://assets/fx/fx_shadow_puff_64_f001_v002.png",
+			"res://assets/fx/fx_shadow_puff_64_f002_v002.png",
+			"res://assets/fx/fx_shadow_puff_64_f003_v002.png",
+			"res://assets/fx/fx_shadow_puff_64_f004_v002.png"
 		],
 		"fps": 12.0,
-		"lifetime": 0.25
+		"lifetime": 0.35,
+		"scale": 1.35,
+		"alpha": 0.9,
+		"z": 1
+	},
+	"summon_fire": {
+		"paths": [
+			"res://assets/fx/fx_fire_burst_64_f001_v002.png",
+			"res://assets/fx/fx_fire_burst_64_f002_v002.png",
+			"res://assets/fx/fx_fire_burst_64_f003_v002.png",
+			"res://assets/fx/fx_fire_burst_64_f004_v002.png"
+		],
+		"fps": 12.0,
+		"lifetime": 0.35,
+		"scale": 1.45,
+		"alpha": 0.95,
+		"z": 1
+	},
+	"ally_slash": {
+		"paths": [
+			"res://assets/fx/fx_slash_arc_32_f001_v002.png",
+			"res://assets/fx/fx_slash_arc_32_f002_v002.png",
+			"res://assets/fx/fx_slash_arc_32_f003_v002.png",
+			"res://assets/fx/fx_slash_arc_32_f004_v002.png"
+		],
+		"fps": 18.0,
+		"lifetime": 0.22,
+		"scale": 1.2,
+		"alpha": 0.9,
+		"z": 2
+	},
+	"ally_lightning": {
+		"paths": [
+			"res://assets/fx/fx_lightning_zap_32_f001_v002.png",
+			"res://assets/fx/fx_lightning_zap_32_f002_v002.png",
+			"res://assets/fx/fx_lightning_zap_32_f003_v002.png",
+			"res://assets/fx/fx_lightning_zap_32_f004_v002.png"
+		],
+		"fps": 18.0,
+		"lifetime": 0.22,
+		"scale": 1.2,
+		"alpha": 0.95,
+		"z": 2
 	},
 	"poison": {
 		"paths": [
@@ -337,8 +566,11 @@ var fx_defs = {
 			"res://assets/fx/fx_poison_cloud_64_f003_v001.png",
 			"res://assets/fx/fx_poison_cloud_64_f004_v001.png"
 		],
-		"fps": 8.0,
-		"lifetime": 0.6
+		"fps": 10.0,
+		"lifetime": 0.5,
+		"scale": 1.05,
+		"alpha": 0.55,
+		"z": -2
 	},
 	"necrotic": {
 		"paths": [
@@ -347,28 +579,37 @@ var fx_defs = {
 			"res://assets/fx/fx_necrotic_pulse_64_f003_v001.png",
 			"res://assets/fx/fx_necrotic_pulse_64_f004_v001.png"
 		],
-		"fps": 8.0,
-		"lifetime": 0.6
+		"fps": 10.0,
+		"lifetime": 0.5,
+		"scale": 1.05,
+		"alpha": 0.55,
+		"z": -2
 	},
 	"blood": {
 		"paths": [
-			"res://assets/fx/fx_blood_splash_32_f001_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f002_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f003_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f004_v001.png"
+			"res://assets/fx/fx_blood_splat_32_f001_v002.png",
+			"res://assets/fx/fx_blood_splat_32_f002_v002.png",
+			"res://assets/fx/fx_blood_splat_32_f003_v002.png",
+			"res://assets/fx/fx_blood_splat_32_f004_v002.png"
 		],
-		"fps": 10.0,
-		"lifetime": 0.4
+		"fps": 16.0,
+		"lifetime": 0.28,
+		"scale": 1.6,
+		"alpha": 0.95,
+		"z": 1
 	},
 	"fire": {
 		"paths": [
-			"res://assets/fx/fx_fire_burst_32_f001_v001.png",
-			"res://assets/fx/fx_fire_burst_32_f002_v001.png",
-			"res://assets/fx/fx_fire_burst_32_f003_v001.png",
-			"res://assets/fx/fx_fire_burst_32_f004_v001.png"
+			"res://assets/fx/fx_fire_burst_32_f001_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f002_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f003_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f004_v002.png"
 		],
-		"fps": 10.0,
-		"lifetime": 0.4
+		"fps": 14.0,
+		"lifetime": 0.3,
+		"scale": 1.2,
+		"alpha": 0.8,
+		"z": 1
 	},
 	"ghost": {
 		"paths": [
@@ -377,15 +618,27 @@ var fx_defs = {
 			"res://assets/fx/fx_ghost_trail_32_f003_v001.png",
 			"res://assets/fx/fx_ghost_trail_32_f004_v001.png"
 		],
-		"fps": 8.0,
-		"lifetime": 0.5
+		"fps": 12.0,
+		"lifetime": 0.4,
+		"scale": 1.1,
+		"alpha": 0.65,
+		"z": -1
 	}
 }
+
+var _damage_number_window_ms = 0
+var _damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
+var _damage_font: Font = null
 
 func _ready() -> void:
 	randomize()
 	add_to_group("game")
 	_ensure_input_map()
+	_load_damage_font()
+	if allies_root == null:
+		allies_root = Node2D.new()
+		allies_root.name = "Allies"
+		$World.add_child(allies_root)
 	resources = 60
 	_update_ui()
 	if ui != null and ui.has_method("show_start"):
@@ -459,24 +712,68 @@ func _handle_tech_input() -> void:
 	elif Input.is_action_just_pressed("build_3"):
 		_choose_tech(2)
 
+func _get_spawn_settings(time_sec: float) -> Dictionary:
+	if SPAWN_CURVE.is_empty():
+		return {
+			"interval": 1.2,
+			"max_enemies": 12,
+			"difficulty": 1.0,
+			"elite": 0.02,
+			"siege": 0.0
+		}
+	var prev = SPAWN_CURVE[0]
+	var prev_time = float(prev.get("time", 0.0))
+	if time_sec <= prev_time:
+		return {
+			"interval": float(prev.get("interval", 1.2)),
+			"max_enemies": int(prev.get("max_enemies", 12)),
+			"difficulty": float(prev.get("difficulty", 1.0)),
+			"elite": float(prev.get("elite", 0.02)),
+			"siege": float(prev.get("siege", 0.0))
+		}
+	for i in range(1, SPAWN_CURVE.size()):
+		var next = SPAWN_CURVE[i]
+		var next_time = float(next.get("time", 0.0))
+		if time_sec <= next_time:
+			var t = 0.0
+			if next_time > prev_time:
+				t = clamp((time_sec - prev_time) / (next_time - prev_time), 0.0, 1.0)
+			return {
+				"interval": lerp(float(prev.get("interval", 1.2)), float(next.get("interval", 1.2)), t),
+				"max_enemies": int(round(lerp(float(prev.get("max_enemies", 12)), float(next.get("max_enemies", 12)), t))),
+				"difficulty": lerp(float(prev.get("difficulty", 1.0)), float(next.get("difficulty", 1.0)), t),
+				"elite": lerp(float(prev.get("elite", 0.02)), float(next.get("elite", 0.02)), t),
+				"siege": lerp(float(prev.get("siege", 0.0)), float(next.get("siege", 0.0)), t)
+			}
+		prev = next
+		prev_time = next_time
+	var last = SPAWN_CURVE[SPAWN_CURVE.size() - 1]
+	return {
+		"interval": float(last.get("interval", 1.2)),
+		"max_enemies": int(last.get("max_enemies", 12)),
+		"difficulty": float(last.get("difficulty", 1.0)),
+		"elite": float(last.get("elite", 0.02)),
+		"siege": float(last.get("siege", 0.0))
+	}
+
 func _handle_spawning(delta: float) -> void:
-	var interval = max(0.45, 1.6 - (elapsed / 200.0))
+	var settings = _get_spawn_settings(elapsed)
+	var interval = max(0.35, float(settings.get("interval", 1.2)))
 	spawn_accumulator += delta
 	while spawn_accumulator >= interval:
 		spawn_accumulator -= interval
-		var max_enemies = min(max_enemies_cap, max_enemies_base + int(elapsed * max_enemies_growth))
-		if elapsed < 30.0:
-			max_enemies = min(max_enemies, 8)
+		var max_enemies = min(max_enemies_cap, int(settings.get("max_enemies", max_enemies_cap)))
 		if enemies_root.get_child_count() >= max_enemies:
 			break
-		spawn_enemy()
+		spawn_enemy(settings)
 
-func spawn_enemy() -> void:
+func spawn_enemy(settings: Dictionary = {}) -> void:
 	if player == null:
 		return
-	var siege_chance = 0.0
-	if elapsed > 90.0:
-		siege_chance = clamp(0.05 + (elapsed - 90.0) / 300.0, 0.0, 0.35)
+	var spawn_settings = settings
+	if spawn_settings.is_empty():
+		spawn_settings = _get_spawn_settings(elapsed)
+	var siege_chance = clamp(float(spawn_settings.get("siege", 0.0)), 0.0, 0.35)
 	var scene = _pick_enemy_scene()
 	if randf() < siege_chance:
 		scene = SIEGE_ENEMY_SCENE
@@ -484,12 +781,10 @@ func spawn_enemy() -> void:
 	var angle = randf() * TAU
 	var distance = randf_range(spawn_radius_min, spawn_radius_max)
 	enemy.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
-	var difficulty = 1.0 + (elapsed / 60.0) * 0.25
+	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
-	var elite_chance = elite_chance_base
-	if elapsed > 60.0:
-		elite_chance += clamp((elapsed - 60.0) / 600.0, 0.0, elite_chance_growth)
+	var elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.2)
 	if randf() < elite_chance and enemy.has_method("set_elite"):
 		enemy.set_elite(elite_health_mult)
 	enemies_root.add_child(enemy)
@@ -499,65 +794,43 @@ func spawn_minion(position: Vector2) -> void:
 		return
 	var enemy = ENEMY_SCENE.instantiate()
 	enemy.global_position = position + Vector2(randf_range(-12.0, 12.0), randf_range(-12.0, 12.0))
-	var difficulty = 1.0 + (elapsed / 60.0) * 0.25
+	var difficulty = float(_get_spawn_settings(elapsed).get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
 	enemies_root.add_child(enemy)
 
+func spawn_ally(config: Dictionary, position: Vector2) -> void:
+	if allies_root == null:
+		return
+	if allies_root.get_child_count() >= max_allies:
+		return
+	var ally = ALLY_SCENE.instantiate()
+	ally.global_position = position
+	var body = ally.get_node_or_null("Body")
+	if body != null:
+		if config.has("frame_paths"):
+			body.frame_paths = config.get("frame_paths", [])
+		if config.has("fps"):
+			body.fps = float(config.get("fps", 8.0))
+		body.loop = true
+		body.auto_play = true
+	allies_root.add_child(ally)
+	if ally.has_method("setup"):
+		ally.setup(self, config)
+	var fx_kind = str(config.get("spawn_fx", ""))
+	if fx_kind != "" and has_method("spawn_fx"):
+		spawn_fx(fx_kind, position)
+
 func _pick_enemy_scene() -> PackedScene:
-	# Weighted spawn pools by time phase.
-	# Format: [[scene, weight], ...]
-	# New enemies unlock progressively; weights shift toward specials over time.
-	if elapsed < 30.0:
+	var pool: Array = []
+	for entry in ENEMY_POOLS:
+		if elapsed >= float(entry.get("time", 0.0)):
+			pool = entry.get("weights", pool)
+		else:
+			break
+	if pool.is_empty():
 		return ENEMY_SCENE
-	if elapsed < 60.0:
-		return _weighted_pick([
-			[ENEMY_SCENE, 55],
-			[CHARGER_SCENE, 25],
-			[HELLHOUND_SCENE, 20]
-		])
-	if elapsed < 120.0:
-		return _weighted_pick([
-			[ENEMY_SCENE, 35],
-			[CHARGER_SCENE, 15],
-			[HELLHOUND_SCENE, 15],
-			[SPITTER_SCENE, 20],
-			[BANSHEE_SCENE, 15]
-		])
-	if elapsed < 180.0:
-		return _weighted_pick([
-			[ENEMY_SCENE, 22],
-			[CHARGER_SCENE, 12],
-			[HELLHOUND_SCENE, 10],
-			[SPITTER_SCENE, 15],
-			[BANSHEE_SCENE, 10],
-			[FIEND_DUELIST_SCENE, 11],
-			[HEALER_SCENE, 8],
-			[NECROMANCER_SCENE, 8]
-		])
-	if elapsed < 270.0:
-		return _weighted_pick([
-			[ENEMY_SCENE, 18],
-			[CHARGER_SCENE, 10],
-			[HELLHOUND_SCENE, 8],
-			[SPITTER_SCENE, 12],
-			[BANSHEE_SCENE, 8],
-			[FIEND_DUELIST_SCENE, 10],
-			[HEALER_SCENE, 10],
-			[NECROMANCER_SCENE, 10],
-			[PLAGUE_ABOMINATION_SCENE, 14]
-		])
-	return _weighted_pick([
-		[ENEMY_SCENE, 14],
-		[CHARGER_SCENE, 10],
-		[HELLHOUND_SCENE, 8],
-		[SPITTER_SCENE, 12],
-		[BANSHEE_SCENE, 8],
-		[FIEND_DUELIST_SCENE, 10],
-		[HEALER_SCENE, 12],
-		[NECROMANCER_SCENE, 12],
-		[PLAGUE_ABOMINATION_SCENE, 14]
-	])
+	return _weighted_pick(pool)
 
 func _weighted_pick(pool: Array) -> PackedScene:
 	var total = 0.0
@@ -614,13 +887,13 @@ func _rarity_weight_for(id: String) -> float:
 	var rarity = str(def.get("rarity", "common"))
 	return float(rarity_weights.get(rarity, 1.0))
 
-func spawn_projectile(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, pierce: int = 0, slow_factor: float = 1.0, slow_duration: float = 0.0) -> void:
+func spawn_projectile(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, pierce: int = 0, slow_factor: float = 1.0, slow_duration: float = 0.0, damage_type: String = "normal") -> void:
 	if projectiles_root.get_child_count() >= max_projectiles:
 		return
 	var projectile = PROJECTILE_SCENE.instantiate()
 	projectile.global_position = origin
 	if projectile.has_method("setup"):
-		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, pierce, slow_factor, slow_duration)
+		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, pierce, slow_factor, slow_duration, damage_type)
 	projectiles_root.add_child(projectile)
 
 func spawn_enemy_projectile(origin: Vector2, direction: Vector2, proj_speed: float, damage: float, proj_range: float) -> void:
@@ -646,10 +919,123 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 	fx.global_position = position
 	var def = fx_defs[kind]
 	if fx.has_method("setup"):
-		fx.setup(def.get("paths", []), float(def.get("fps", 10.0)), float(def.get("lifetime", 0.35)), false)
+		var tint = def.get("tint", Color.WHITE)
+		fx.setup(
+			def.get("paths", []),
+			float(def.get("fps", 10.0)),
+			float(def.get("lifetime", 0.35)),
+			false,
+			float(def.get("scale", 1.0)),
+			float(def.get("alpha", 1.0)),
+			int(def.get("z", 0)),
+			tint
+		)
 	fx_root.add_child(fx)
 
-func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, siege_bonus: float = 1.0) -> void:
+func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0.0, is_crit: bool = false, is_kill: bool = false, is_elite: bool = false, damage_type: String = "normal") -> void:
+	if not FeedbackConfig.ENABLE_DAMAGE_NUMBERS:
+		return
+	if amount < FeedbackConfig.DAMAGE_NUMBER_MIN:
+		return
+	if fx_root == null:
+		return
+	if not _consume_damage_number_budget():
+		return
+
+	var label = Label.new()
+	label.text = str(int(round(amount)))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.z_index = 30
+	_apply_damage_label_style(label, is_crit, is_kill, damage_type)
+	label.size = label.get_minimum_size()
+	label.position = -label.size * 0.5
+
+	var container = Node2D.new()
+	var jitter = Vector2(
+		randf_range(-FeedbackConfig.DAMAGE_NUMBER_JITTER_X, FeedbackConfig.DAMAGE_NUMBER_JITTER_X),
+		randf_range(-FeedbackConfig.DAMAGE_NUMBER_JITTER_Y, FeedbackConfig.DAMAGE_NUMBER_JITTER_Y)
+	)
+	container.position = position + jitter
+	container.z_index = 30
+	fx_root.add_child(container)
+	container.add_child(label)
+
+	var health_ratio = 0.0
+	if target_max > 0.0:
+		health_ratio = clamp(amount / target_max, 0.0, 1.0)
+	var base_scale = lerp(FeedbackConfig.DAMAGE_NUMBER_SCALE_MIN, FeedbackConfig.DAMAGE_NUMBER_SCALE_MAX, health_ratio)
+	if is_elite:
+		base_scale += FeedbackConfig.DAMAGE_NUMBER_ELITE_SCALE_BONUS
+	if is_crit:
+		base_scale += FeedbackConfig.DAMAGE_NUMBER_CRIT_SCALE_BONUS
+	if is_kill:
+		base_scale += FeedbackConfig.DAMAGE_NUMBER_KILL_SCALE_BONUS
+
+	var rise = FeedbackConfig.DAMAGE_NUMBER_RISE
+	var lifetime = FeedbackConfig.DAMAGE_NUMBER_LIFETIME
+	var pop_start = FeedbackConfig.DAMAGE_NUMBER_POP_START
+	var pop_time = FeedbackConfig.DAMAGE_NUMBER_POP_TIME
+	if damage_type == "dot":
+		rise = FeedbackConfig.DAMAGE_NUMBER_DOT_RISE
+		lifetime = FeedbackConfig.DAMAGE_NUMBER_DOT_LIFETIME
+		pop_start = FeedbackConfig.DAMAGE_NUMBER_DOT_POP_START
+		pop_time = FeedbackConfig.DAMAGE_NUMBER_DOT_POP_TIME
+	if is_crit:
+		rise = FeedbackConfig.DAMAGE_NUMBER_CRIT_RISE
+		lifetime = FeedbackConfig.DAMAGE_NUMBER_CRIT_LIFETIME
+		pop_start = FeedbackConfig.DAMAGE_NUMBER_CRIT_POP_START
+		pop_time = FeedbackConfig.DAMAGE_NUMBER_CRIT_POP_TIME
+	container.scale = Vector2.ONE * base_scale * pop_start
+	if is_crit:
+		container.rotation = randf_range(-FeedbackConfig.DAMAGE_NUMBER_ROTATION_MAX, FeedbackConfig.DAMAGE_NUMBER_ROTATION_MAX)
+
+	var tween = container.create_tween()
+	tween.tween_property(container, "scale", Vector2.ONE * base_scale, pop_time).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(container, "position", container.position + Vector2(0, -rise), lifetime).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(label, "modulate", Color(1.0, 1.0, 1.0, 0.0), lifetime)
+	if is_crit:
+		tween.parallel().tween_property(container, "rotation", 0.0, lifetime).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	tween.tween_callback(container.queue_free)
+
+func _load_damage_font() -> void:
+	var path = FeedbackConfig.DAMAGE_NUMBER_FONT_PATH
+	if path == "":
+		return
+	if not ResourceLoader.exists(path):
+		return
+	var font = load(path)
+	if font is Font:
+		_damage_font = font
+
+func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, damage_type: String) -> void:
+	if label == null:
+		return
+	if _damage_font != null:
+		label.add_theme_font_override("font", _damage_font)
+	label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_FONT_SIZE)
+	label.add_theme_color_override("font_outline_color", FeedbackConfig.DAMAGE_NUMBER_OUTLINE_COLOR)
+	label.add_theme_constant_override("outline_size", FeedbackConfig.DAMAGE_NUMBER_OUTLINE_SIZE)
+	label.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+
+	var color = FeedbackConfig.DAMAGE_TYPE_COLORS.get(damage_type, FeedbackConfig.DAMAGE_COLOR_NORMAL)
+	if is_kill:
+		color = FeedbackConfig.DAMAGE_COLOR_KILL
+	if is_crit:
+		color = FeedbackConfig.DAMAGE_COLOR_CRIT
+		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
+	label.add_theme_color_override("font_color", color)
+
+func _consume_damage_number_budget() -> bool:
+	var now_ms = Time.get_ticks_msec()
+	if now_ms - _damage_number_window_ms > 1000:
+		_damage_number_window_ms = now_ms
+		_damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
+	if _damage_number_budget <= 0:
+		return false
+	_damage_number_budget -= 1
+	return true
+
+func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, siege_bonus: float = 1.0, damage_type: String = "normal") -> void:
 	var radius_sq = radius * radius
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if enemy == null or not is_instance_valid(enemy):
@@ -659,7 +1045,7 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 			if siege_bonus != 1.0 and enemy.has_method("is_siege_unit") and enemy.is_siege_unit():
 				final_damage = damage * siege_bonus
 			if enemy.has_method("take_damage"):
-				enemy.take_damage(final_damage)
+				enemy.take_damage(final_damage, enemy.global_position, false, true, damage_type)
 
 func add_resources(amount: int) -> void:
 	resources += amount
@@ -837,6 +1223,9 @@ func on_player_death() -> void:
 		return
 	game_over = true
 	Engine.time_scale = 1.0
+	if FeedbackConfig.ENABLE_DEATH_FEEDBACK and player != null and has_method("spawn_fx"):
+		spawn_fx("ghost", player.global_position)
+		spawn_fx("blood", player.global_position)
 	if ui.has_method("set_selection"):
 		ui.set_selection("Game Over - Esc to exit")
 
@@ -865,6 +1254,29 @@ func _spawn_props() -> void:
 			pos = Vector2.RIGHT.rotated(angle) * distance
 		sprite.global_position = pos
 		props_root.add_child(sprite)
+	_spawn_clusters()
+
+func _spawn_clusters() -> void:
+	if props_root == null:
+		return
+	var textures: Array = []
+	for path in CLUSTER_PATHS:
+		if ResourceLoader.exists(path):
+			textures.append(load(path))
+	if textures.is_empty():
+		return
+	for i in range(cluster_count):
+		var sprite = Sprite2D.new()
+		sprite.texture = textures[randi_range(0, textures.size() - 1)]
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		sprite.z_index = -2
+		var pos = Vector2.ZERO
+		for attempt in range(8):
+			var angle = randf() * TAU
+			var distance = randf_range(cluster_min_distance, prop_spawn_radius)
+			pos = Vector2.RIGHT.rotated(angle) * distance
+		sprite.global_position = pos
+		props_root.add_child(sprite)
 
 func _maintain_breakables() -> void:
 	if breakables_root == null:
@@ -881,13 +1293,13 @@ func spawn_breakable() -> void:
 	var angle = randf() * TAU
 	var distance = randf_range(breakable_spawn_min, breakable_spawn_max)
 	breakable.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
-	var chest = randf() < 0.18
+	var chest = randf() < 0.28
 	var value = 0
 	var xp_amount = 0
 	var style = "small"
 	if chest:
-		value = randi_range(14, 22)
-		xp_amount = randi_range(6, 10)
+		value = randi_range(18, 28)
+		xp_amount = randi_range(8, 12)
 		style = "large"
 	else:
 		value = randi_range(4, 8)

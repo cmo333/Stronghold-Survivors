@@ -16,6 +16,10 @@ const BUILD_BINDINGS = {
 	"build_shrine": "shrine"
 }
 
+const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
+const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
+const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
+
 var game: Node2D = null
 var buildings_root: Node2D = null
 var ui: CanvasLayer = null
@@ -62,8 +66,11 @@ func _process(delta: float) -> void:
 	if Input.is_action_just_pressed("toggle_gate"):
 		_try_toggle_selected()
 	if Input.is_action_just_pressed("cancel"):
-		build_mode = false
-		_update_preview_state()
+		if build_mode:
+			_set_build_mode(false)
+		else:
+			_clear_selection()
+			_set_selection_text("")
 	_update_preview_position()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -71,16 +78,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		if build_mode and current_id != "":
-			_try_place()
-		else:
-			_try_select()
+	if event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			if build_mode:
+				_set_build_mode(false)
+			else:
+				_clear_selection()
+				_set_selection_text("")
+			return
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if build_mode and current_id != "":
+				_try_place()
+			else:
+				_try_select()
 
 func _handle_hotkeys() -> void:
 	if Input.is_action_just_pressed("build_toggle"):
-		build_mode = not build_mode
-		_update_preview_state()
+		_set_build_mode(not build_mode)
 	for action in BUILD_BINDINGS.keys():
 		if Input.is_action_just_pressed(action):
 			var candidate = BUILD_BINDINGS[action]
@@ -88,8 +102,7 @@ func _handle_hotkeys() -> void:
 				_set_selection_text("Locked: earn tech picks to unlock")
 				continue
 			current_id = candidate
-			build_mode = true
-			_update_preview_state()
+			_set_build_mode(true)
 			_set_selection_text(_describe_current_build())
 			_notify_palette_active()
 
@@ -122,6 +135,10 @@ func _update_preview_state() -> void:
 	_update_preview_visuals()
 	if build_mode and current_id != "":
 		_set_selection_text(_describe_current_build())
+	elif selected_building != null:
+		_set_selection_text(_describe_building(selected_building))
+	else:
+		_set_selection_text("")
 
 func _update_preview_position() -> void:
 	if preview == null or not preview.visible:
@@ -132,14 +149,15 @@ func _update_preview_position() -> void:
 	if current_id != "" and preview.has_method("set_color"):
 		var def = StructureDB.get_def(current_id)
 		if not def.is_empty():
-			var radius = float(def.get("footprint_radius", 12))
-			var clear = _is_clear(snapped, radius)
-			if clear:
-				preview.set_color(Color(0.2, 0.9, 0.8, 0.35))
+			var status = _evaluate_placement(snapped, def)
+			if status["clear"] and status["affordable"]:
+				preview.set_color(PREVIEW_COLOR_OK)
+			elif status["clear"] and not status["affordable"]:
+				preview.set_color(PREVIEW_COLOR_UNAFFORDABLE)
 			else:
-				preview.set_color(Color(0.95, 0.2, 0.2, 0.35))
+				preview.set_color(PREVIEW_COLOR_BLOCKED)
 			if preview.has_method("set_state"):
-				preview.set_state(clear)
+				preview.set_state(status["clear"] and status["affordable"])
 
 func _update_preview_visuals() -> void:
 	if preview == null or current_id == "":
@@ -153,7 +171,7 @@ func _update_preview_visuals() -> void:
 	if preview.has_method("set_radius"):
 		preview.set_radius(radius)
 	if preview.has_method("set_color"):
-		preview.set_color(Color(0.2, 0.9, 0.8, 0.35))
+		preview.set_color(PREVIEW_COLOR_OK)
 	if preview.has_method("set_ghost_texture"):
 		var path = str(def.get("preview", ""))
 		preview.set_ghost_texture(path)
@@ -166,16 +184,12 @@ func _try_place() -> void:
 		_set_selection_text("Locked: earn tech picks to unlock")
 		return
 	var tier = 0
-	var tier_data = StructureDB.get_tier(def, tier)
-	var cost = int(tier_data.get("cost", 0))
-	if game != null and not game.can_afford(cost):
-		_set_selection_text("Not enough resources")
-		return
 	var pos = _snap_to_grid(_get_mouse_world_position())
-	var footprint = float(def.get("footprint_radius", 12))
-	if not _is_clear(pos, footprint):
-		_set_selection_text("Blocked placement")
+	var status = _evaluate_placement(pos, def)
+	if not status["can_place"]:
+		_set_selection_text(status["reason"])
 		return
+	var cost = int(status["cost"])
 	var scene_path: String = str(def.get("scene", ""))
 	if scene_path == "":
 		return
@@ -189,6 +203,8 @@ func _try_place() -> void:
 		building.configure(current_id, def, tier)
 	if game != null:
 		game.spend(cost)
+		if game.has_method("spawn_fx"):
+			game.spawn_fx("build", pos)
 	_set_selection_text("Built %s" % def.get("name", current_id))
 
 func _try_select() -> void:
@@ -231,6 +247,8 @@ func _try_upgrade_selected() -> void:
 		selected_building.upgrade()
 		if game != null:
 			game.spend(upgrade_cost)
+			if game.has_method("spawn_fx"):
+				game.spawn_fx("build", selected_building.global_position)
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 
@@ -319,6 +337,8 @@ func _update_range_ring() -> void:
 	range_ring.visible = true
 
 func _is_clear(position: Vector2, radius: float) -> bool:
+	if game == null:
+		return true
 	var space: PhysicsDirectSpaceState2D = game.get_world_2d().direct_space_state
 	var shape = CircleShape2D.new()
 	shape.radius = radius
@@ -329,7 +349,18 @@ func _is_clear(position: Vector2, radius: float) -> bool:
 	params.collide_with_areas = true
 	params.collide_with_bodies = true
 	var hits: Array = space.intersect_shape(params, 1)
-	return hits.is_empty()
+	if not hits.is_empty():
+		return false
+	for building: Node2D in get_tree().get_nodes_in_group("buildings"):
+		if building == null or not is_instance_valid(building):
+			continue
+		var other_radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			other_radius = building.get_footprint_radius()
+		var min_dist = radius + other_radius
+		if position.distance_squared_to(building.global_position) < min_dist * min_dist:
+			return false
+	return true
 
 func _snap_to_grid(position: Vector2) -> Vector2:
 	if grid_size <= 0.0:
@@ -348,5 +379,41 @@ func _is_unlocked(id: String) -> bool:
 		return game.is_build_unlocked(id)
 	return true
 
+func _set_build_mode(active: bool) -> void:
+	build_mode = active
+	_update_preview_state()
+
+func _clear_selection() -> void:
+	selected_building = null
+	if selection_ring != null:
+		selection_ring.visible = false
+	if range_ring != null:
+		range_ring.visible = false
+
+func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
+	var result = {
+		"can_place": false,
+		"reason": "",
+		"affordable": true,
+		"clear": true,
+		"cost": 0,
+		"footprint": 12.0
+	}
+	if def.is_empty():
+		result["reason"] = "Invalid build"
+		return result
+	var tier_data = StructureDB.get_tier(def, 0)
+	var cost = int(tier_data.get("cost", 0))
+	result["cost"] = cost
+	result["footprint"] = float(def.get("footprint_radius", 12))
+	if game != null and not game.can_afford(cost):
+		result["affordable"] = false
+		result["reason"] = "Not enough resources"
+	result["clear"] = _is_clear(pos, result["footprint"])
+	if not result["clear"] and result["reason"] == "":
+		result["reason"] = "Blocked placement"
+	result["can_place"] = result["affordable"] and result["clear"]
+	return result
+
 func _controls_text() -> String:
-	return "Click: place | U: upgrade | G: gate | B: toggle build"
+	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | G: gate | B: build"

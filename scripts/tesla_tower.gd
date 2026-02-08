@@ -24,9 +24,11 @@ func _fire_at(target: Node) -> void:
         if global_position.distance_squared_to(enemy.global_position) > range * range:
             continue
         if enemy.has_method("take_damage"):
-            enemy.take_damage(damage + dmg_bonus)
+            enemy.take_damage(damage + dmg_bonus, enemy.global_position, false, true)
         if _game != null and _game.has_method("spawn_fx"):
             _game.spawn_fx("tesla", enemy.global_position)
+            if hits > 0:
+                _game.spawn_fx("chain_hit", enemy.global_position)
         if emp_level > 0 and enemy.has_method("apply_slow"):
             var slow_factor = max(0.45, 0.8 - emp_level * 0.12)
             var slow_duration = 0.6 + 0.2 * emp_level

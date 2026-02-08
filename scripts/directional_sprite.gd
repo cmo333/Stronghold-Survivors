@@ -6,7 +6,7 @@ extends AnimatedSprite2D
 @export var frames_per_dir = 4
 @export var fps = 8.0
 @export var loop = true
-@export var sprite_scale = 1.6
+@export var sprite_scale = 2.2
 
 var _last_dir = "S"
 
