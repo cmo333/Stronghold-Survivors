@@ -288,10 +288,13 @@ func _apply_tech_frames(options: Array) -> void:
 
 func _build_bitmap_font(path: String) -> Font:
 	if not ResourceLoader.exists(path):
+		push_warning("UI font resource not found: " + path)
 		return null
 	var font = load(path)
 	if font is Font:
+		print("UI font loaded successfully: " + path)
 		return font
+	push_warning("Loaded resource is not a Font: " + path + " (type: " + str(typeof(font)) + ")")
 	return null
 
 func _apply_font(label: Label, size: int = 8) -> void:

@@ -19,6 +19,7 @@ const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 
 @onready var player: CharacterBody2D = $World/Player
+@onready var camera: Camera2D = get_node_or_null("World/Player/Camera2D")
 @onready var enemies_root: Node2D = $World/Enemies
 @onready var allies_root: Node2D = get_node_or_null("World/Allies")
 @onready var projectiles_root: Node2D = $World/Projectiles
@@ -38,6 +39,12 @@ var game_started = false
 var start_timer = 0.0
 var spawn_delay = 10.0
 var auto_start_delay = 2.0
+var _enemy_kill_count = 0
+var _time_scale_tween: Tween = null
+var _shake_timer = 0.0
+var _shake_duration = 0.0
+var _shake_strength = 0.0
+var _shake_base_offset = Vector2.ZERO
 
 var xp = 0
 var level = 1
@@ -635,6 +642,8 @@ func _ready() -> void:
 	add_to_group("game")
 	_ensure_input_map()
 	_load_damage_font()
+	if camera != null:
+		_shake_base_offset = camera.offset
 	if allies_root == null:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
@@ -647,13 +656,14 @@ func _ready() -> void:
 		if ui.has_method("set_start_options"):
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
-	Engine.time_scale = 0.0
+	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
 	_spawn_props()
 	_spawn_initial_breakables()
 
 func _process(delta: float) -> void:
+	_update_screen_shake(delta)
 	if game_over:
 		return
 	if not game_started:
@@ -661,7 +671,6 @@ func _process(delta: float) -> void:
 		return
 	if tech_open:
 		_handle_tech_input()
-		return
 	start_timer += delta
 	if start_timer < spawn_delay:
 		return
@@ -681,11 +690,38 @@ func _handle_start_input(delta: float) -> void:
 func _start_game() -> void:
 	game_started = true
 	start_timer = 0.0
-	Engine.time_scale = 1.0
+	_apply_base_time_scale()
 	_apply_selected_character()
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(false)
 	_refresh_build_palette()
+
+func _get_base_time_scale() -> float:
+	if not game_started:
+		return 0.0
+	if game_over:
+		return 1.0
+	if tech_open:
+		return FeedbackConfig.TECH_SLOW_TIME_SCALE
+	return 1.0
+
+func _apply_base_time_scale() -> void:
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+		_time_scale_tween = null
+	Engine.time_scale = _get_base_time_scale()
+
+func _trigger_kill_slow() -> void:
+	var base_scale = _get_base_time_scale()
+	if base_scale <= 0.0:
+		return
+	if base_scale <= FeedbackConfig.KILL_SLOW_TIME_SCALE:
+		return
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+	Engine.time_scale = FeedbackConfig.KILL_SLOW_TIME_SCALE
+	_time_scale_tween = create_tween()
+	_time_scale_tween.tween_property(Engine, "time_scale", base_scale, FeedbackConfig.KILL_SLOW_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 func is_tech_open() -> bool:
 	return tech_open
@@ -1000,12 +1036,17 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 func _load_damage_font() -> void:
 	var path = FeedbackConfig.DAMAGE_NUMBER_FONT_PATH
 	if path == "":
+		push_warning("Damage font path is empty")
 		return
 	if not ResourceLoader.exists(path):
+		push_warning("Damage font resource not found: " + path)
 		return
 	var font = load(path)
 	if font is Font:
 		_damage_font = font
+		print("Damage font loaded successfully: " + path)
+	else:
+		push_warning("Loaded resource is not a Font: " + path + " (type: " + str(typeof(font)) + ")")
 
 func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, damage_type: String) -> void:
 	if label == null:
@@ -1046,6 +1087,11 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 				final_damage = damage * siege_bonus
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(final_damage, enemy.global_position, false, true, damage_type)
+
+func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
+	_enemy_kill_count += 1
+	if _enemy_kill_count % 10 == 0:
+		_trigger_kill_slow()
 
 func add_resources(amount: int) -> void:
 	resources += amount
@@ -1104,7 +1150,7 @@ func _open_tech_menu() -> void:
 	tech_open = true
 	if ui.has_method("show_tech"):
 		ui.show_tech(tech_choices)
-	Engine.time_scale = 0.0
+	_apply_base_time_scale()
 
 func _choose_tech(index: int) -> void:
 	if index < 0 or index >= tech_choices.size():
@@ -1117,7 +1163,7 @@ func _choose_tech(index: int) -> void:
 	tech_open = false
 	if ui.has_method("hide_tech"):
 		ui.hide_tech()
-	Engine.time_scale = 1.0
+	_apply_base_time_scale()
 	pending_picks = max(0, pending_picks - 1)
 	if pending_picks > 0:
 		_open_tech_menu()
@@ -1201,6 +1247,34 @@ func _update_ui() -> void:
 		ui.set_level(level, xp, xp_next)
 	if player != null and ui.has_method("set_health"):
 		ui.set_health(player.health, player.max_health)
+
+func shake_camera(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE_DURATION) -> void:
+	if camera == null:
+		return
+	_shake_strength = max(_shake_strength, strength)
+	_shake_duration = max(_shake_duration, duration)
+	_shake_timer = max(_shake_timer, duration)
+
+func _update_screen_shake(delta: float) -> void:
+	if camera == null:
+		return
+	if _shake_timer > 0.0:
+		_shake_timer = max(0.0, _shake_timer - delta)
+		var t = 0.0
+		if _shake_duration > 0.0:
+			t = _shake_timer / _shake_duration
+		var intensity = _shake_strength * t
+		var offset = Vector2(
+			randf_range(-1.0, 1.0),
+			randf_range(-1.0, 1.0)
+		) * intensity
+		camera.offset = _shake_base_offset + offset
+		if _shake_timer <= 0.0:
+			_shake_strength = 0.0
+			_shake_duration = 0.0
+	else:
+		if camera.offset != _shake_base_offset:
+			camera.offset = _shake_base_offset
 
 func _refresh_build_palette() -> void:
 	if ui == null:
