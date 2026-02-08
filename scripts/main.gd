@@ -1163,7 +1163,11 @@ func _choose_tech(index: int) -> void:
 	tech_open = false
 	if ui.has_method("hide_tech"):
 		ui.hide_tech()
-	_apply_base_time_scale()
+	# Tween time_scale back to 1.0 smoothly instead of instant
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+	_time_scale_tween = create_tween()
+	_time_scale_tween.tween_property(Engine, "time_scale", 1.0, 0.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	pending_picks = max(0, pending_picks - 1)
 	if pending_picks > 0:
 		_open_tech_menu()

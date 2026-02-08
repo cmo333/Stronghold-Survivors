@@ -131,6 +131,9 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
     if amount <= 0.0:
         return
     health -= amount
+    # Screen shake on player damage
+    if _game != null and _game.has_method("shake_camera"):
+        _game.shake_camera(FeedbackConfig.SCREEN_SHAKE_PLAYER_HIT)
     if _game != null and show_hit_fx and FeedbackConfig.ENABLE_HIT_SPARKS and amount >= FeedbackConfig.HIT_SPARK_MIN_DAMAGE:
         var now_ms = Time.get_ticks_msec()
         var elapsed = float(now_ms - _last_hit_fx_ms) / 1000.0

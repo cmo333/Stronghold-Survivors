@@ -41,6 +41,10 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 func take_damage(amount: float) -> void:
     health -= amount
     if health <= 0.0:
+        # Screen shake on building destruction
+        var game = get_tree().get_first_node_in_group("game")
+        if game != null and game.has_method("shake_camera"):
+            game.shake_camera(FeedbackConfig.SCREEN_SHAKE_BUILDING_DESTROY)
         queue_free()
 
 func heal(amount: float) -> void:
