@@ -1332,11 +1332,6 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(final_damage, enemy.global_position, false, true, damage_type)
 
-func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
-	_enemy_kill_count += 1
-	if _enemy_kill_count % 10 == 0:
-		_trigger_kill_slow()
-
 func add_resources(amount: int) -> void:
 	resources += amount
 	_update_ui()

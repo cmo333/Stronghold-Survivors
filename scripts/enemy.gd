@@ -23,6 +23,7 @@ var _was_slowed = false
 var is_elite = false
 var is_split_child = false
 var _last_hit_fx_ms = -999999
+var _last_damage_number_ms = -999999
 var _is_dying = false
 var _death_timer = 0.0
 var _corpse_fade_timer = 0.0

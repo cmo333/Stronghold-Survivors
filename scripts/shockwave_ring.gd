@@ -1,0 +1,66 @@
+extends Sprite2D
+class_name ShockwaveRing
+
+# Expanding shockwave ring for explosions
+# Creates a ripple effect that expands outward
+
+var _max_radius: float = 100.0
+var _expand_duration: float = 0.4
+var _elapsed: float = 0.0
+var _base_color: Color = Color.ORANGE
+
+func setup(max_radius: float, shockwave_color: Color, duration: float = 0.4) -> void:
+    _max_radius = max_radius
+    _base_color = shockwave_color
+    _expand_duration = duration
+    
+    # Create ring texture
+    texture = _create_ring_texture()
+    
+    # Configure
+    modulate = shockwave_color
+    scale = Vector2.ZERO
+    texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+    z_index = -2
+    
+    # Start expansion
+    var tween = create_tween()
+    var target_scale = Vector2.ONE * (max_radius / 32.0)  # Texture is 64x64
+    tween.tween_property(self, "scale", target_scale, duration)
+    tween.parallel().tween_property(self, "modulate:a", 0.0, duration)
+    tween.tween_callback(queue_free)
+
+func _create_ring_texture() -> Texture2D:
+    var size = 64
+    var img = Image.create(size, size, false, Image.FORMAT_RGBA8)
+    img.fill(Color.TRANSPARENT)
+    
+    var center = Vector2i(size / 2, size / 2)
+    var inner_radius = 20
+    var outer_radius = 30
+    var thickness = 4
+    
+    for y in range(size):
+        for x in range(size):
+            var pos = Vector2i(x, y)
+            var dist = pos.distance_to(center)
+            
+            # Create ring
+            if dist >= inner_radius and dist <= outer_radius:
+                var alpha = 1.0
+                # Smooth edges
+                if dist < inner_radius + 2:
+                    alpha = (dist - inner_radius) / 2.0
+                elif dist > outer_radius - 2:
+                    alpha = (outer_radius - dist) / 2.0
+                
+                var col = Color.WHITE
+                col.a = alpha
+                img.set_pixel(x, y, col)
+    
+    return ImageTexture.create_from_image(img)
+
+func _ready() -> void:
+    # Fallback texture
+    if texture == null:
+        texture = _create_ring_texture()

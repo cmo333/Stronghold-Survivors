@@ -1,0 +1,518 @@
+[gd_scene load_steps=2 format=3 uid="uid://c8x3k8x3k8x3k"]
+
+[ext_resource type="Script" path="res://scripts/settings_menu.gd" id="1_settings"]
+
+[node name="SettingsMenu" type="CanvasLayer"]
+layer = 101
+script = ExtResource("1_settings")
+
+[node name="Background" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.85)
+
+[node name="Panel" type="Panel" parent="."]
+custom_minimum_size = Vector2(700, 550)
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -350.0
+offset_top = -275.0
+offset_right = 350.0
+offset_bottom = 275.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="Panel"]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 20.0
+offset_bottom = 60.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 32
+text = "Settings"
+horizontal_alignment = 1
+
+[node name="CloseButton" type="Button" parent="Panel"]
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -50.0
+offset_top = 10.0
+offset_right = -10.0
+offset_bottom = 40.0
+grow_horizontal = 0
+text = "X"
+
+[node name="TabContainer" type="TabContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = 70.0
+offset_right = -20.0
+offset_bottom = -70.0
+grow_horizontal = 2
+grow_vertical = 2
+current_tab = 0
+
+# ===== AUDIO TAB =====
+[node name="Audio" type="VBoxContainer" parent="Panel/TabContainer"]
+layout_mode = 2
+offset_left = 4.0
+offset_top = 31.0
+offset_right = 656.0
+offset_bottom = 384.0
+theme_override_constants/separation = 20
+
+[node name="MasterVolume" type="VBoxContainer" parent="Panel/TabContainer/Audio"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Audio/MasterVolume"]
+layout_mode = 2
+text = "Master Volume"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Audio/MasterVolume"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="MasterSlider" type="HSlider" parent="Panel/TabContainer/Audio/MasterVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 0.8
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/MasterVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "80%"
+
+[node name="SFXVolume" type="VBoxContainer" parent="Panel/TabContainer/Audio"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Audio/SFXVolume"]
+layout_mode = 2
+text = "SFX Volume"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Audio/SFXVolume"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="SFXSlider" type="HSlider" parent="Panel/TabContainer/Audio/SFXVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 1.0
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/SFXVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "100%"
+
+[node name="MusicVolume" type="VBoxContainer" parent="Panel/TabContainer/Audio"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Audio/MusicVolume"]
+layout_mode = 2
+text = "Music Volume"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Audio/MusicVolume"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="MusicSlider" type="HSlider" parent="Panel/TabContainer/Audio/MusicVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 0.7
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/MusicVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "70%"
+
+[node name="UIVolume" type="VBoxContainer" parent="Panel/TabContainer/Audio"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Audio/UIVolume"]
+layout_mode = 2
+text = "UI Volume"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Audio/UIVolume"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="UISlider" type="HSlider" parent="Panel/TabContainer/Audio/UIVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.05
+value = 0.9
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/UIVolume/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "90%"
+
+# ===== GRAPHICS TAB =====
+[node name="Graphics" type="VBoxContainer" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+offset_left = 4.0
+offset_top = 31.0
+offset_right = 656.0
+offset_bottom = 384.0
+theme_override_constants/separation = 20
+
+[node name="Fullscreen" type="HBoxContainer" parent="Panel/TabContainer/Graphics"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Graphics/Fullscreen"]
+layout_mode = 2
+text = "Fullscreen"
+
+[node name="FullscreenCheck" type="CheckBox" parent="Panel/TabContainer/Graphics/Fullscreen"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="VSync" type="HBoxContainer" parent="Panel/TabContainer/Graphics"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Graphics/VSync"]
+layout_mode = 2
+text = "VSync"
+
+[node name="VSyncCheck" type="CheckBox" parent="Panel/TabContainer/Graphics/VSync"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+
+[node name="Quality" type="VBoxContainer" parent="Panel/TabContainer/Graphics"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Graphics/Quality"]
+layout_mode = 2
+text = "Quality"
+
+[node name="QualityDropdown" type="OptionButton" parent="Panel/TabContainer/Graphics/Quality"]
+unique_name_in_owner = true
+layout_mode = 2
+item_count = 4
+selected = 2
+popup/item_0/text = "Low"
+popup/item_1/text = "Medium"
+popup/item_2/text = "High"
+popup/item_3/text = "Ultra"
+
+# ===== CONTROLS TAB =====
+[node name="Controls" type="VBoxContainer" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+offset_left = 4.0
+offset_top = 31.0
+offset_right = 656.0
+offset_bottom = 384.0
+theme_override_constants/separation = 15
+
+[node name="InfoLabel" type="Label" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+text = "Key bindings can be customized below:"
+
+[node name="MoveUp" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/MoveUp"]
+layout_mode = 2
+text = "Move Up"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveUp"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "W"
+
+[node name="MoveDown" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/MoveDown"]
+layout_mode = 2
+text = "Move Down"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveDown"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "S"
+
+[node name="MoveLeft" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/MoveLeft"]
+layout_mode = 2
+text = "Move Left"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveLeft"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "A"
+
+[node name="MoveRight" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/MoveRight"]
+layout_mode = 2
+text = "Move Right"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveRight"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "D"
+
+[node name="Build" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/Build"]
+layout_mode = 2
+text = "Build / Interact"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/Build"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "LMB"
+
+[node name="Pause" type="HBoxContainer" parent="Panel/TabContainer/Controls"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Controls/Pause"]
+layout_mode = 2
+text = "Pause"
+
+[node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/Pause"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Escape"
+
+# ===== GAMEPLAY TAB =====
+[node name="Gameplay" type="VBoxContainer" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+offset_left = 4.0
+offset_top = 31.0
+offset_right = 656.0
+offset_bottom = 384.0
+theme_override_constants/separation = 20
+
+[node name="Screenshake" type="VBoxContainer" parent="Panel/TabContainer/Gameplay"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Gameplay/Screenshake"]
+layout_mode = 2
+text = "Screenshake Intensity"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Gameplay/Screenshake"]
+layout_mode = 2
+
+[node name="ScreenshakeSlider" type="HSlider" parent="Panel/TabContainer/Gameplay/Screenshake/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 2.0
+step = 0.1
+value = 1.0
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Gameplay/Screenshake/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "1.0x"
+
+[node name="DamageNumbers" type="HBoxContainer" parent="Panel/TabContainer/Gameplay"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Gameplay/DamageNumbers"]
+layout_mode = 2
+text = "Show Damage Numbers"
+
+[node name="DamageNumbersCheck" type="CheckBox" parent="Panel/TabContainer/Gameplay/DamageNumbers"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+
+[node name="TowerRange" type="HBoxContainer" parent="Panel/TabContainer/Gameplay"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Gameplay/TowerRange"]
+layout_mode = 2
+text = "Show Tower Range Indicator"
+
+[node name="TowerRangeCheck" type="CheckBox" parent="Panel/TabContainer/Gameplay/TowerRange"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+
+[node name="AutoCollect" type="HBoxContainer" parent="Panel/TabContainer/Gameplay"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Gameplay/AutoCollect"]
+layout_mode = 2
+text = "Auto-Collect Gold"
+
+[node name="AutoCollectCheck" type="CheckBox" parent="Panel/TabContainer/Gameplay/AutoCollect"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="WavePreview" type="HBoxContainer" parent="Panel/TabContainer/Gameplay"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Gameplay/WavePreview"]
+layout_mode = 2
+text = "Show Wave Preview"
+
+[node name="WavePreviewCheck" type="CheckBox" parent="Panel/TabContainer/Gameplay/WavePreview"]
+unique_name_in_owner = true
+layout_mode = 2
+button_pressed = true
+
+# ===== ACCESSIBILITY TAB =====
+[node name="Accessibility" type="VBoxContainer" parent="Panel/TabContainer"]
+visible = false
+layout_mode = 2
+offset_left = 4.0
+offset_top = 31.0
+offset_right = 656.0
+offset_bottom = 384.0
+theme_override_constants/separation = 20
+
+[node name="Colorblind" type="VBoxContainer" parent="Panel/TabContainer/Accessibility"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Accessibility/Colorblind"]
+layout_mode = 2
+text = "Colorblind Mode"
+
+[node name="ColorblindDropdown" type="OptionButton" parent="Panel/TabContainer/Accessibility/Colorblind"]
+unique_name_in_owner = true
+layout_mode = 2
+item_count = 4
+selected = 0
+popup/item_0/text = "None"
+popup/item_1/text = "Deuteranopia (Green-Blind)"
+popup/item_2/text = "Protanopia (Red-Blind)"
+popup/item_3/text = "Tritanopia (Blue-Blind)"
+
+[node name="FontSize" type="VBoxContainer" parent="Panel/TabContainer/Accessibility"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Accessibility/FontSize"]
+layout_mode = 2
+text = "Font Size"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Accessibility/FontSize"]
+layout_mode = 2
+
+[node name="FontSlider" type="HSlider" parent="Panel/TabContainer/Accessibility/FontSize/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+min_value = 12.0
+max_value = 32.0
+step = 1.0
+value = 16.0
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Accessibility/FontSize/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "16"
+
+[node name="ScreenFlash" type="VBoxContainer" parent="Panel/TabContainer/Accessibility"]
+layout_mode = 2
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Accessibility/ScreenFlash"]
+layout_mode = 2
+text = "Screen Flash Reduction"
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Panel/TabContainer/Accessibility/ScreenFlash"]
+layout_mode = 2
+
+[node name="FlashSlider" type="HSlider" parent="Panel/TabContainer/Accessibility/ScreenFlash/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+step = 0.1
+value = 0.0
+
+[node name="ValueLabel" type="Label" parent="Panel/TabContainer/Accessibility/ScreenFlash/HBoxContainer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "0%"
+
+[node name="ReducedMotion" type="HBoxContainer" parent="Panel/TabContainer/Accessibility"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Accessibility/ReducedMotion"]
+layout_mode = 2
+text = "Reduced Motion"
+
+[node name="ReducedMotionCheck" type="CheckBox" parent="Panel/TabContainer/Accessibility/ReducedMotion"]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="HighContrast" type="HBoxContainer" parent="Panel/TabContainer/Accessibility"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="Label" type="Label" parent="Panel/TabContainer/Accessibility/HighContrast"]
+layout_mode = 2
+text = "High Contrast"
+
+[node name="HighContrastCheck" type="CheckBox" parent="Panel/TabContainer/Accessibility/HighContrast"]
+unique_name_in_owner = true
+layout_mode = 2
+
+# ===== BOTTOM BUTTONS =====
+[node name="BottomButtons" type="HBoxContainer" parent="Panel"]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 20.0
+offset_top = -60.0
+offset_right = -20.0
+offset_bottom = -20.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_constants/separation = 20
+alignment = 2
+
+[node name="ResetButton" type="Button" parent="Panel/BottomButtons"]
+layout_mode = 2
+text = "Reset to Defaults"
+
+[node name="ApplyButton" type="Button" parent="Panel/BottomButtons"]
+layout_mode = 2
+text = "Apply"
+
+[node name="CancelButton" type="Button" parent="Panel/BottomButtons"]
+layout_mode = 2
+text = "Cancel"

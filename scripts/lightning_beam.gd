@@ -1,0 +1,83 @@
+extends Line2D
+class_name LightningBeam
+
+# Arcing lightning beam effect for Tesla towers
+# Draws jagged lightning between points with flicker
+
+var _from_pos: Vector2
+var _to_positions: Array[Vector2]
+var _beam_color: Color = Color(0.3, 0.8, 1.0)
+var _lifetime: float = 0.15
+var _flicker_count: int = 3
+var _current_flicker: int = 0
+var _elapsed: float = 0.0
+
+func setup(p_from_pos: Vector2, p_to_positions: Array[Vector2], p_color: Color = Color(0.3, 0.8, 1.0), p_lifetime: float = 0.15) -> void:
+    _from_pos = p_from_pos
+    _to_positions = p_to_positions
+    _beam_color = p_color
+    _lifetime = p_lifetime
+    
+    # Configure Line2D
+    default_color = p_color
+    width = 3.0
+    width_curve = _create_width_curve()
+    texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+    z_index = 10
+    
+    # Generate initial lightning path
+    _generate_lightning_path()
+
+func _create_width_curve() -> Curve:
+    var curve = Curve.new()
+    curve.add_point(Vector2(0, 1.0))
+    curve.add_point(Vector2(0.5, 0.8))
+    curve.add_point(Vector2(1.0, 0.3))
+    return curve
+
+func _generate_lightning_path() -> void:
+    clear_points()
+    
+    if _to_positions.is_empty():
+        return
+    
+    var current_pos = _from_pos
+    add_point(to_local(current_pos))
+    
+    for target_pos in _to_positions:
+        # Generate jagged segments between current and target
+        var segments = randi_range(3, 5)
+        var total_dist = current_pos.distance_to(target_pos)
+        var dir = (target_pos - current_pos).normalized()
+        
+        for i in range(segments):
+            var t = float(i + 1) / segments
+            var base_pos = current_pos.lerp(target_pos, t)
+            
+            # Add jitter for lightning effect
+            var jitter_amount = total_dist * 0.08 * (1.0 - abs(t - 0.5) * 2.0)  # More jitter in middle
+            var perp = dir.orthogonal()
+            var jitter = perp * randf_range(-jitter_amount, jitter_amount)
+            
+            add_point(to_local(base_pos + jitter))
+        
+        add_point(to_local(target_pos))
+        current_pos = target_pos
+
+func _process(delta: float) -> void:
+    _elapsed += delta
+    
+    # Flicker effect - regenerate path occasionally
+    var flicker_interval = _lifetime / _flicker_count
+    if int(_elapsed / flicker_interval) > _current_flicker:
+        _current_flicker += 1
+        _generate_lightning_path()
+        modulate.a = randf_range(0.5, 1.0)  # Flicker opacity
+    
+    # Fade out near end
+    if _elapsed > _lifetime * 0.7:
+        modulate.a = lerp(modulate.a, 0.0, delta * 10.0)
+    
+    # Cleanup
+    if _elapsed >= _lifetime:
+        queue_free()
