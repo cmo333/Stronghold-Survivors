@@ -476,24 +476,10 @@ func _spawn_blood_burst() -> void:
 func _finish_death_animation() -> void:
 	"""Called when death animation completes"""
 	_is_dying = false
-	
+
 	# Reset time scale
 	Engine.time_scale = 1.0
-	
-	# Notify game
-	if _game != null and _game.has_method("on_death_animation_complete"):
-		_game.on_death_animation_complete()"
-	if _game == null or randf() > 0.3:
-		return
-	
-	var offset = Vector2(randf_range(-15, 15), randf_range(-15, 15))
-	if _game.has_method("spawn_fx"):
-		_game.spawn_fx("blood", global_position + offset)
 
-func _finish_death_animation() -> void:
-	"""Called when death animation completes"""
-	_is_dying = false
-	
 	# Notify game that animation is done
 	if _game != null and _game.has_method("on_death_animation_complete"):
 		_game.on_death_animation_complete()

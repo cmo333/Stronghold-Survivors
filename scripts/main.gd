@@ -1939,6 +1939,7 @@ func _save_run_history(data: Dictionary) -> void:
 # Camera zoom storage for death animation
 var _original_camera_zoom: Vector2 = Vector2.ONE
 var _original_camera_position: Vector2 = Vector2.ZERO
+var _shake_base_offset: Vector2 = Vector2.ZERO
 
 func _spawn_initial_breakables() -> void:
 	for i in range(breakable_target):
