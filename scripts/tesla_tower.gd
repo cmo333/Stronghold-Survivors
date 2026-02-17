@@ -373,7 +373,7 @@ func _fire_at(target: Node2D) -> void:
 		_fire_arc_conduit(target)
 		return
 
-	var enemies = _get_enemies()
+	var enemies = _get_enemies().duplicate()  # Copy before sorting — don't mutate shared cache
 	enemies.sort_custom(func(a, b):
 		return global_position.distance_squared_to(a.global_position) < global_position.distance_squared_to(b.global_position)
 	)

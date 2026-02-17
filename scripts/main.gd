@@ -161,9 +161,9 @@ var wave_manager: Node = null
 
 var spawn_radius_min = 720.0
 var spawn_radius_max = 1050.0
-var max_enemies_cap = 180
-var max_projectiles = 240
-var max_particles = 250  # Cap glow particles to prevent memory issues
+var max_enemies_cap = 120
+var max_projectiles = 150
+var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
 var max_allies = 16
 
@@ -1187,6 +1187,9 @@ func spawn_treasure_chest(position: Vector2) -> void:
 
 func spawn_fx(kind: String, position: Vector2) -> void:
 	if fx_root == null or not fx_defs.has(kind):
+		return
+	# Cap FX nodes to prevent runaway memory/crash
+	if fx_root.get_child_count() >= max_particles:
 		return
 	var fx = FX_SCENE.instantiate()
 	fx.global_position = position

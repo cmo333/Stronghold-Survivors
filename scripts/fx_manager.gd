@@ -32,7 +32,7 @@ var _trail_pool: Array[Node2D] = []
 var _spark_pool: Array[Node2D] = []
 var _shockwave_pool: Array[Node2D] = []
 const MAX_POOL_SIZE = 20
-const MAX_FX_CHILDREN = 300  # Global cap on FX to prevent memory issues
+const MAX_FX_CHILDREN = 150  # Global cap on FX to prevent memory issues
 
 func setup(game: Node, fx_root: Node2D) -> void:
     _game = game
@@ -185,7 +185,7 @@ func spawn_death_burst(position: Vector2, base_color: Color, particle_count: int
 
 func spawn_corpse_fade(position: Vector2, texture: Texture2D, color: Color, scale: Vector2, rotation: float) -> void:
     """Create a fading corpse that stays for 1 second"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var corpse = CORPSE_FADE_SCENE.instantiate()
@@ -299,7 +299,7 @@ func spawn_generator_smoke(generator_position: Vector2) -> void:
 
 func spawn_tesla_lightning(from_pos: Vector2, to_positions: Array[Vector2], color: Color = COLOR_LIGHTNING) -> void:
     """Arcing lightning beams between tower and targets"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var beam = LIGHTNING_BEAM_SCENE.instantiate()
@@ -311,7 +311,7 @@ func spawn_tesla_lightning(from_pos: Vector2, to_positions: Array[Vector2], colo
 
 func spawn_cannon_shockwave(position: Vector2, radius: float, damage_type: String = "fire") -> void:
     """Expanding shockwave ring for cannon explosions"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var shockwave = _get_pooled_shockwave()
@@ -328,7 +328,7 @@ func spawn_cannon_shockwave(position: Vector2, radius: float, damage_type: Strin
 
 func spawn_multishot_indicator(position: Vector2, direction: Vector2, spread_angles: Array[float]) -> void:
     """Visual fan pattern showing multishot spread"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var indicator = MULTISHOT_INDICATOR_SCENE.instantiate()
