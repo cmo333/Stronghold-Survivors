@@ -344,6 +344,8 @@ func _fire_at(target: Node2D) -> void:
 				)
 
 func _apply_shockwave_at(pos: Vector2) -> void:
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(0.3).timeout  # Delay for projectile travel
 	if not is_inside_tree():
 		return
@@ -366,6 +368,8 @@ func _apply_shockwave_at(pos: Vector2) -> void:
 		_game.spawn_fx("shockwave", pos)
 
 func _spawn_fire_pool(pos: Vector2) -> void:
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(0.3).timeout  # Delay for projectile travel
 	if not is_inside_tree() or _game == null:
 		return
@@ -399,17 +403,22 @@ func _spawn_fire_pool(pos: Vector2) -> void:
 	sprite.scale = Vector2.ONE * (explosion_radius / 32.0)
 	pool.add_child(sprite)
 
-	# Damage tick timer
+	# Damage tick timer — use pool's tree since pool outlives the tower
 	var tick_count = 0
 	var tick_interval = 0.5
 	var max_ticks = int(hellfire_pool_duration / tick_interval)
 	var fade_start_tick = int(max_ticks * 0.6)
+	var game_ref = _game  # Capture reference since tower may be freed
 	while tick_count < max_ticks and is_instance_valid(pool) and pool.is_inside_tree():
-		await get_tree().create_timer(tick_interval).timeout
+		await pool.get_tree().create_timer(tick_interval).timeout
 		tick_count += 1
 		if not is_instance_valid(pool) or not pool.is_inside_tree():
 			break
-		var enemies = _get_enemies()
+		var enemies: Array = []
+		if game_ref != null and is_instance_valid(game_ref) and "cached_enemies" in game_ref:
+			enemies = game_ref.cached_enemies
+		elif pool.is_inside_tree():
+			enemies = pool.get_tree().get_nodes_in_group("enemies")
 		for enemy in enemies:
 			if enemy == null or not is_instance_valid(enemy):
 				continue
