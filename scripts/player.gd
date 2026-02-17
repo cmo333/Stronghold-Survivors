@@ -554,6 +554,8 @@ func _create_berserk_glow() -> void:
 	
 	add_child(_berserk_glow)
 	
+	if not is_instance_valid(_berserk_glow) or not _berserk_glow.is_inside_tree():
+		return
 	var tween = _berserk_glow.create_tween()
 	tween.set_loops()
 	tween.tween_property(_berserk_glow, "scale", Vector2.ONE * 2.3, 0.4).set_trans(Tween.TRANS_SINE)

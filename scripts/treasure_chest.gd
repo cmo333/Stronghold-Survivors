@@ -107,6 +107,8 @@ func _play_vs_opening_sequence() -> void:
 	
 	# PHASE 1: Build anticipation - chest glows brighter
 	if glow != null:
+		if not is_inside_tree():
+			return
 		var bright_tween = create_tween()
 		bright_tween.set_speed_scale(1.0 / Engine.time_scale)  # Compensate for slow-mo
 		bright_tween.tween_property(glow, "modulate", Color(1.0, 0.9, 0.4, 0.9), 0.3)
@@ -122,13 +124,19 @@ func _play_vs_opening_sequence() -> void:
 			_game.spawn_glow_particle(global_position, color, randf_range(12.0, 20.0), 1.2, vel, 3.0, 0.8, 1.3, 5)
 	
 	# Wait for anticipation
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(0.4 * Engine.time_scale).timeout
+	if not is_inside_tree():
+		return
 	
 	# PHASE 2: Chest bursts open with screen shake
 	# Audio: Chest open sound
 	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
 	
 	if body != null:
+		if not is_inside_tree():
+			return
 		var open_tween = create_tween()
 		open_tween.set_speed_scale(1.0 / Engine.time_scale)
 		# Lid flies open
@@ -144,7 +152,11 @@ func _play_vs_opening_sequence() -> void:
 		_game.flash_screen(Color(1.0, 0.9, 0.4, 0.4), 0.2)
 	
 	# Wait for open animation
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(0.3 * Engine.time_scale).timeout
+	if not is_inside_tree():
+		return
 	
 	# PHASE 3: Items fly out one by one (VS style)
 	await _reveal_items_vs_style()
@@ -178,7 +190,11 @@ func _reveal_items_vs_style() -> void:
 		await _spawn_floating_item(upgrade, target_pos, color, i)
 		
 		# Pause between items for drama
+		if not is_inside_tree():
+			return
 		await get_tree().create_timer(0.5 * Engine.time_scale).timeout
+		if not is_inside_tree():
+			return
 	
 	# Final burst after all items
 	if _game != null and _game.has_method("spawn_glow_particle"):
@@ -296,6 +312,8 @@ func _roll_regular_upgrade() -> Dictionary:
 
 func _start_glow_pulse() -> void:
 	if glow == null:
+		return
+	if not is_inside_tree():
 		return
 	var mat = CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD

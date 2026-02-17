@@ -29,6 +29,8 @@ func _create_fan_pattern() -> void:
         add_child(line)
         
         # Fade out animation
+        if not is_instance_valid(line) or not line.is_inside_tree():
+            continue
         var tween = line.create_tween()
         tween.tween_property(line, "modulate:a", 0.0, _lifetime)
     
@@ -57,6 +59,8 @@ func _create_fan_arc() -> void:
     add_child(arc)
     
     # Fade out
+    if not is_instance_valid(arc) or not arc.is_inside_tree():
+        return
     var tween = arc.create_tween()
     tween.tween_property(arc, "modulate:a", 0.0, _lifetime)
 

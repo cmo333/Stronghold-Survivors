@@ -199,7 +199,11 @@ func _trigger_explosion() -> void:
 							elif enemy.has_method("take_damage"):
 								# Fallback: apply damage over time manually
 								for j in range(3):
+									if not is_inside_tree():
+										return
 									await get_tree().create_timer(1.0).timeout
+									if not is_inside_tree():
+										return
 									if is_instance_valid(enemy) and enemy.has_method("take_damage"):
 										enemy.take_damage(burn_damage * 0.5, cluster_pos, false, false, "fire")
 					

@@ -202,6 +202,8 @@ func _animate_entrance() -> void:
 	panel.modulate = Color(1, 1, 1, 0)
 	panel.scale = Vector2(0.9, 0.9)
 	
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	tween.tween_property(panel, "modulate", Color(1, 1, 1, 1), 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(panel, "scale", Vector2(1, 1), 0.8).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -218,6 +220,8 @@ func _animate_stats() -> void:
 	if grid == null:
 		return
 	
+	if not is_inside_tree():
+		return
 	for i in range(grid.get_child_count()):
 		var child = grid.get_child(i)
 		child.modulate = Color(1, 1, 1, 0)
@@ -259,6 +263,9 @@ func _spawn_confetti_piece() -> void:
 	var target_x = confetti.position.x + randf_range(-200, 200)
 	var target_y = 800
 	
+	if not is_inside_tree():
+		confetti.queue_free()
+		return
 	var tween = create_tween()
 	tween.tween_property(confetti, "position", Vector2(target_x, target_y), duration).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.parallel().tween_property(confetti, "rotation", randf_range(-TAU, TAU), duration)

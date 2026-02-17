@@ -297,6 +297,8 @@ func _blink_warning(time_remaining: float, delta: float) -> void:
 
 func _despawn() -> void:
 	# Fade out and despawn
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	if body != null:
 		tween.tween_property(body, "modulate:a", 0.0, 0.5)
@@ -324,6 +326,8 @@ func _apply_visuals() -> void:
 
 func _start_glow_pulse() -> void:
 	if glow == null:
+		return
+	if not is_inside_tree():
 		return
 	
 	# Add additive blend mode for glow effect

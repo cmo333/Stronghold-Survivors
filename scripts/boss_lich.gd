@@ -112,6 +112,8 @@ func _enter_phase_2() -> void:
 	
 	# Visual transformation
 	if body != null:
+		if not is_inside_tree():
+			return
 		var tween = create_tween()
 		tween.tween_property(body, "modulate", Color(1.0, 0.3, 0.5), 0.5)
 		tween.tween_property(body, "scale", body.scale * 1.1, 0.3)
@@ -154,6 +156,9 @@ func _teleport_away() -> void:
 	AudioManager.play_sound("teleport", global_position, 0.8)
 	
 	# Fade out
+	if not is_inside_tree():
+		_is_teleporting = false
+		return
 	var tween = create_tween()
 	if body != null:
 		tween.tween_property(body, "modulate:a", 0.0, 0.2)
@@ -200,6 +205,8 @@ func _cast_death_nova() -> void:
 	
 	# Windup animation
 	if body != null:
+		if not is_inside_tree():
+			return
 		var tween = create_tween()
 		tween.tween_property(body, "scale", body.scale * 1.2, 0.5)
 		tween.tween_interval(0.5)
@@ -221,6 +228,9 @@ func _create_nova_indicator() -> void:
 	indicator.z_index = -5
 	add_child(indicator)
 	
+	if not is_inside_tree():
+		indicator.queue_free()
+		return
 	var tween = create_tween()
 	tween.tween_property(indicator, "scale", Vector2.ONE * (death_nova_radius / 32.0), 1.0)
 	tween.parallel().tween_property(indicator, "modulate:a", 0.0, 1.0)
@@ -249,6 +259,9 @@ func _execute_nova() -> void:
 			_game.get_node_or_null("World/FX").add_child(ring) if _game.has_node("World/FX") else _game.add_child(ring)
 			ring.global_position = global_position
 			
+			if not is_inside_tree():
+				ring.queue_free()
+				continue
 			var tween = create_tween()
 			tween.tween_property(ring, "scale", Vector2.ONE * (death_nova_radius / 32.0) * (1.0 + i * 0.3), 0.5)
 			tween.parallel().tween_property(ring, "modulate:a", 0.0, 0.5)

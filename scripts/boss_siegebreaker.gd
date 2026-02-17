@@ -74,7 +74,9 @@ func _create_shield_visual() -> void:
 	_start_shield_pulse()
 
 func _start_shield_pulse() -> void:
-	if _shield_visual == null:
+	if _shield_visual == null or not is_instance_valid(_shield_visual):
+		return
+	if not is_inside_tree() or not _shield_visual.is_inside_tree():
 		return
 	
 	var tween = create_tween()

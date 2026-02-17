@@ -186,6 +186,8 @@ func _drop_poison_cloud() -> void:
 
 func _create_poison_cloud(pos: Vector2) -> Node:
 	"""Create poison cloud effect and damage zone"""
+	if not is_inside_tree():
+		return null
 	var cloud = Node2D.new()
 	cloud.global_position = pos
 	cloud.z_index = -3

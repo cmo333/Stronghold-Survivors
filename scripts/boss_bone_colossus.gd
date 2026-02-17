@@ -90,6 +90,8 @@ func _start_slam_windup() -> void:
 	
 	# Visual windup - raise arms (scale pulse)
 	if body != null:
+		if not is_inside_tree():
+			return
 		var tween = create_tween()
 		tween.tween_property(body, "scale", body.scale * 1.15, slam_windup * 0.5).set_trans(Tween.TRANS_SINE)
 		tween.tween_property(body, "scale", body.scale, slam_windup * 0.5).set_trans(Tween.TRANS_BACK)
@@ -111,6 +113,9 @@ func _create_slam_indicator() -> void:
 		add_child(indicator)
 		
 		# Fade out indicator
+		if not is_inside_tree():
+			indicator.queue_free()
+			continue
 		var tween = create_tween()
 		tween.tween_property(indicator, "modulate:a", 0.0, slam_windup)
 		tween.tween_callback(indicator.queue_free)

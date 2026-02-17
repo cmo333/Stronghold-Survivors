@@ -54,6 +54,8 @@ func show_game_over(stats: Dictionary, is_new_record: bool = false) -> void:
 	visible = true
 	$Panel.modulate = Color(1, 1, 1, 0)
 	
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	tween.tween_property($Panel, "modulate", Color(1, 1, 1, 1), 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	
@@ -122,6 +124,8 @@ func _add_stat_row(label_text: String, value_text: String) -> void:
 
 func _animate_stats_appear() -> void:
 	var children = stats_container.get_children()
+	if not is_inside_tree():
+		return
 	for i in range(children.size()):
 		var child = children[i]
 		var tween = create_tween()

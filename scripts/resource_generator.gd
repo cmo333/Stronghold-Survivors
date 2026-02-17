@@ -202,6 +202,8 @@ func _update_health_bar() -> void:
 func _flash_damage() -> void:
     if body == null:
         return
+    if not is_inside_tree():
+        return
     body.modulate = Color(1.0, 0.3, 0.3, 1.0)  # Flash red
     var tween = create_tween()
     tween.tween_property(body, "modulate", base_modulate, 0.15).set_trans(Tween.TRANS_SINE)
@@ -214,6 +216,8 @@ func _start_low_hp_pulse() -> void:
     if _pulse_tween != null:
         _pulse_tween.kill()
     
+    if not is_inside_tree():
+        return
     _pulse_tween = create_tween()
     _pulse_tween.set_loops()
     # Pulse between normal and bright red
@@ -228,6 +232,8 @@ func _stop_low_hp_pulse() -> void:
         _pulse_tween.kill()
         _pulse_tween = null
     if body != null:
+        if not is_inside_tree():
+            return
         var tween = create_tween()
         tween.tween_property(body, "modulate", base_modulate, 0.3).set_trans(Tween.TRANS_SINE)
 

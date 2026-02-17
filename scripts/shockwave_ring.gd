@@ -24,6 +24,8 @@ func setup(max_radius: float, shockwave_color: Color, duration: float = 0.4) -> 
     z_index = -2
     
     # Start expansion
+    if not is_inside_tree():
+        return
     var tween = create_tween()
     var target_scale = Vector2.ONE * (max_radius / 32.0)  # Texture is 64x64
     tween.tween_property(self, "scale", target_scale, duration)

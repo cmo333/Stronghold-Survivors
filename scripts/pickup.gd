@@ -56,6 +56,8 @@ func _apply_visual() -> void:
         sprite.texture = HEAL_TEX  # Reuse crystal texture
         sprite.modulate = Color(0.7, 0.3, 1.0, 1.0)  # Purple tint
         # Add pulsing glow
+        if not is_inside_tree():
+            return
         var tween = create_tween()
         tween.set_loops()
         tween.tween_property(sprite, "modulate:a", 0.6, 0.4).set_trans(Tween.TRANS_SINE)

@@ -36,7 +36,11 @@ func _on_body_entered(body: Node) -> void:
     if sprite != null:
         sprite.frame = 0
         sprite.play()
+    if not is_inside_tree():
+        return
     await get_tree().create_timer(0.12).timeout
+    if not is_inside_tree():
+        return
     if _game != null:
         if _game.has_method("damage_enemies_in_radius"):
             _game.damage_enemies_in_radius(global_position, explosion_radius, damage)

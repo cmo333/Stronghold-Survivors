@@ -224,6 +224,8 @@ func show_upgrade_panel(building: Node) -> void:
 	upgrade_panel.visible = true
 	
 	# Animate panel entrance
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	upgrade_panel.scale = Vector2(0.8, 0.8)
 	upgrade_panel.modulate = Color(1, 1, 1, 0)
@@ -234,6 +236,8 @@ func show_upgrade_panel(building: Node) -> void:
 func hide_upgrade_panel() -> void:
 	if upgrade_panel != null and upgrade_panel.visible:
 		# Animate out
+		if not is_inside_tree():
+			return
 		var tween = create_tween()
 		tween.tween_property(upgrade_panel, "scale", Vector2(0.8, 0.8), 0.15)
 		tween.parallel().tween_property(upgrade_panel, "modulate:a", 0.0, 0.1)
@@ -404,6 +408,8 @@ func show_evolution_panel(options: Array, current_essence: int) -> void:
 	# Animate entrance
 	evolution_panel.scale = Vector2(0.7, 0.7)
 	evolution_panel.modulate = Color(1, 1, 1, 0)
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(evolution_panel, "scale", Vector2(1, 1), 0.25).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
@@ -411,6 +417,8 @@ func show_evolution_panel(options: Array, current_essence: int) -> void:
 
 func hide_evolution_panel() -> void:
 	if evolution_panel != null and evolution_panel.visible:
+		if not is_inside_tree():
+			return
 		var tween = create_tween()
 		tween.tween_property(evolution_panel, "scale", Vector2(0.7, 0.7), 0.15)
 		tween.parallel().tween_property(evolution_panel, "modulate:a", 0.0, 0.1)
@@ -569,8 +577,9 @@ func set_level(level: int, xp: int, xp_next: int) -> void:
 		xp_bar.max_value = xp_next
 		if _xp_tween != null:
 			_xp_tween.kill()
-		_xp_tween = create_tween()
-		_xp_tween.tween_property(xp_bar, "value", xp, 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		if is_inside_tree():
+			_xp_tween = create_tween()
+			_xp_tween.tween_property(xp_bar, "value", xp, 0.25).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	if _last_level >= 0 and level > _last_level:
 		if _level_flash_tween != null:
 			_level_flash_tween.kill()
@@ -580,11 +589,12 @@ func set_level(level: int, xp: int, xp_next: int) -> void:
 		if xp_bar != null:
 			bar_normal = xp_bar.modulate
 			xp_bar.modulate = Color.WHITE
-		_level_flash_tween = create_tween()
-		_level_flash_tween.set_parallel(true)
-		_level_flash_tween.tween_property(level_label, "modulate", label_normal, 0.3)
-		if xp_bar != null:
-			_level_flash_tween.tween_property(xp_bar, "modulate", bar_normal, 0.3)
+		if is_inside_tree():
+			_level_flash_tween = create_tween()
+			_level_flash_tween.set_parallel(true)
+			_level_flash_tween.tween_property(level_label, "modulate", label_normal, 0.3)
+			if xp_bar != null:
+				_level_flash_tween.tween_property(xp_bar, "modulate", bar_normal, 0.3)
 	_last_level = level
 
 func set_health(current: float, maximum: float) -> void:

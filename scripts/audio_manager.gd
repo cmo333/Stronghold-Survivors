@@ -46,6 +46,7 @@ var _viewport_size: Vector2 = Vector2(1280, 720)
 
 # Preloaded sounds cache
 var _sound_cache: Dictionary = {}
+var _warned_sounds: Dictionary = {}
 
 # SFX pool for one-shot sounds
 var _sfx_pool: Array[AudioStreamPlayer2D] = []
@@ -179,7 +180,9 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 	"""
 	if not _sound_cache.has(sound_name):
 		# Try to load on-the-fly or use placeholder
-		push_warning("Sound not cached: %s" % sound_name)
+		if not _warned_sounds.has(sound_name):
+			push_warning("Sound not cached: %s" % sound_name)
+			_warned_sounds[sound_name] = true
 		return
 	
 	var stream = _sound_cache[sound_name]
@@ -276,6 +279,8 @@ func play_music(music_name: String, crossfade_duration: float = 2.0) -> void:
 	next_player.volume_db = -80.0  # Start silent
 	next_player.play()
 	
+	if not is_inside_tree():
+		return
 	_is_crossfading = true
 	
 	# Create crossfade tween
@@ -301,6 +306,8 @@ func stop_music(fade_duration: float = 1.0) -> void:
 	if not _current_music_player.playing:
 		return
 	
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	tween.tween_property(_current_music_player, "volume_db", -80.0, fade_duration)
 	tween.tween_callback(func():
@@ -327,6 +334,8 @@ func play_ambient(ambient_name: String, fade_in: float = 3.0) -> void:
 	ambient_player.volume_db = -80.0
 	ambient_player.play()
 	
+	if not is_inside_tree():
+		return
 	var tween = create_tween()
 	tween.tween_property(ambient_player, "volume_db", 0.0, fade_in)
 
