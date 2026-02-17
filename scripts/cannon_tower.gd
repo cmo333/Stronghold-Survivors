@@ -217,6 +217,8 @@ func _animate_floating_elements(delta: float) -> void:
 		_smoke_trails.modulate = Color(0.3, 0.3, 0.3, 0.4)
 
 func _update_tower_specific_visuals() -> void:
+	if not is_inside_tree():
+		return
 	# T2: Show reinforced barrel and steam vents
 	if _reinforced_barrel != null:
 		var tween = create_tween()
@@ -261,6 +263,8 @@ func _update_tower_specific_visuals() -> void:
 			_smoke_trails.modulate = Color(0.3, 0.3, 0.3, 0.0)
 
 func _play_tower_specific_upgrade_effects() -> void:
+	if not is_inside_tree():
+		return
 	if upgrade_level == 2:
 		# Reinforced barrel clangs in
 		if _reinforced_barrel != null:
@@ -329,12 +333,12 @@ func _fire_at(target: Node2D) -> void:
 		_spawn_fire_pool(target_pos)
 
 	# Puff steam when firing (if T2+)
-	if upgrade_level >= 2:
+	if upgrade_level >= 2 and is_inside_tree():
 		for vent in _steam_vents:
 			if vent != null and vent.emitting:
 				vent.amount = 12  # Burst of steam
-				var timer = get_tree().create_timer(0.1)
-				timer.timeout.connect(func():
+				var t = get_tree().create_timer(0.1)
+				t.timeout.connect(func():
 					if is_instance_valid(vent):
 						vent.amount = 8  # Back to normal
 				)
@@ -396,15 +400,16 @@ func _spawn_fire_pool(pos: Vector2) -> void:
 	pool.add_child(sprite)
 
 	# Damage tick timer
-	var timer = 0.0
+	var tick_count = 0
 	var tick_interval = 0.5
-	var total_time = hellfire_pool_duration
-	while timer < total_time and is_instance_valid(pool):
-		await pool.get_tree().create_timer(tick_interval).timeout
-		timer += tick_interval
-		if not is_instance_valid(pool):
+	var max_ticks = int(hellfire_pool_duration / tick_interval)
+	var fade_start_tick = int(max_ticks * 0.6)
+	while tick_count < max_ticks and is_instance_valid(pool) and pool.is_inside_tree():
+		await get_tree().create_timer(tick_interval).timeout
+		tick_count += 1
+		if not is_instance_valid(pool) or not pool.is_inside_tree():
 			break
-		var enemies = pool.get_tree().get_nodes_in_group("enemies")
+		var enemies = _get_enemies()
 		for enemy in enemies:
 			if enemy == null or not is_instance_valid(enemy):
 				continue
@@ -412,7 +417,7 @@ func _spawn_fire_pool(pos: Vector2) -> void:
 				if enemy.has_method("take_damage"):
 					enemy.take_damage(hellfire_pool_damage, enemy.global_position, false, false)
 		# Fade out near end
-		if timer > total_time * 0.6:
+		if tick_count > fade_start_tick and is_instance_valid(sprite):
 			sprite.modulate.a = lerpf(sprite.modulate.a, 0.0, 0.3)
 	if is_instance_valid(pool):
 		pool.queue_free()

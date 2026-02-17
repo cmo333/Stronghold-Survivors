@@ -1,11 +1,12 @@
 extends Node2D
 
 @export var sprite_path: NodePath = NodePath("Sprite")
-@onready var sprite: AnimatedSprite2D = get_node_or_null(sprite_path) as AnimatedSprite2D
+var sprite: AnimatedSprite2D = null
 
 func setup(frame_paths: Array, fps: float = 10.0, lifetime: float = 0.35, loop: bool = false, scale: float = 1.0, alpha: float = 1.0, z: int = 0, tint: Color = Color.WHITE) -> void:
 	if sprite == null:
-		push_warning("FX missing AnimatedSprite2D at path: %s" % [str(sprite_path)])
+		sprite = get_node_or_null(sprite_path) as AnimatedSprite2D
+	if sprite == null:
 		queue_free()
 		return
 	if frame_paths.is_empty():

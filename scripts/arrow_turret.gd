@@ -199,6 +199,8 @@ func _animate_floating_elements(delta: float) -> void:
 		_crystal_core.modulate = Color(0.2, 0.9, 0.3, 0.8 * pulse)
 
 func _update_tower_specific_visuals() -> void:
+	if not is_inside_tree():
+		return
 	# T2: Show metal bands
 	if _metal_bands != null:
 		var tween = create_tween()
@@ -225,6 +227,8 @@ func _update_tower_specific_visuals() -> void:
 				arrow.modulate = Color(0.3, 0.9, 0.4, 0.0)
 
 func _play_tower_specific_upgrade_effects() -> void:
+	if not is_inside_tree():
+		return
 	if upgrade_level == 2:
 		# Metal bands shimmer in
 		if _metal_bands != null:
@@ -362,7 +366,7 @@ func _fire_sniper(target: Node2D) -> void:
 			hit_count += 1
 
 	# Visual: bright line flash
-	if _sniper_laser_line != null:
+	if _sniper_laser_line != null and is_inside_tree():
 		_sniper_laser_line.default_color = Color(1.0, 0.3, 0.2, 0.9)
 		_sniper_laser_line.width = 3.0
 		_sniper_laser_line.points = [Vector2.ZERO, dir * range]

@@ -229,6 +229,8 @@ func _generate_arc_points(from: Vector2, to: Vector2, segments: int) -> PackedVe
 	return points
 
 func _update_tower_specific_visuals() -> void:
+	if not is_inside_tree():
+		return
 	# T2: Show secondary coil with arcing
 	if _secondary_coil != null:
 		var tween = create_tween()
@@ -262,6 +264,8 @@ func _update_tower_specific_visuals() -> void:
 			_crackle_particles.modulate = Color(0.4, 0.9, 1.0, 0.0)
 
 func _play_tower_specific_upgrade_effects() -> void:
+	if not is_inside_tree():
+		return
 	if upgrade_level == 2:
 		# Secondary coil fades in with electric flash
 		if _secondary_coil != null:
@@ -505,6 +509,8 @@ func _fire_arc_conduit(target: Node2D) -> void:
 	_line.modulate.a = 1.0
 	if _game != null and _game.fx_manager != null and hit_positions.size() > 0:
 		_game.fx_manager.spawn_tesla_lightning(global_position, hit_positions)
+	if not is_inside_tree():
+		return
 	var arc_tween = create_tween()
 	arc_tween.tween_property(_line, "modulate:a", 0.0, 0.12)
 	arc_tween.tween_callback(func(): _line.visible = false)

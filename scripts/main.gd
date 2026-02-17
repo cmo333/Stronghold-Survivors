@@ -764,6 +764,21 @@ var _damage_number_window_ms = 0
 var _damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
 var _damage_font: Font = null
 
+func _validate_fx_defs() -> void:
+	var invalid_kinds: Array[String] = []
+	for kind in fx_defs:
+		var def = fx_defs[kind]
+		var paths = def.get("paths", [])
+		var has_valid = false
+		for path in paths:
+			if ResourceLoader.exists(path):
+				has_valid = true
+				break
+		if not has_valid:
+			invalid_kinds.append(kind)
+	for kind in invalid_kinds:
+		fx_defs.erase(kind)
+
 func _ready() -> void:
 	randomize()
 	add_to_group("game")
@@ -782,6 +797,7 @@ func _ready() -> void:
 	fx_manager.name = "FXManager"
 	add_child(fx_manager)
 	fx_manager.setup(self, fx_root)
+	_validate_fx_defs()
 	if allies_root == null:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
@@ -2304,13 +2320,15 @@ func spawn_shell_casing(position: Vector2, eject_direction: Vector2) -> void:
 	tween.parallel().tween_property(casing, "modulate:a", 0.0, FeedbackConfig.SHELL_CASING_LIFETIME * 0.5).set_delay(FeedbackConfig.SHELL_CASING_LIFETIME * 0.5)
 	tween.tween_callback(casing.queue_free)
 
+var _cached_shell_casing_tex: ImageTexture = null
+
 func _create_shell_casing() -> Sprite2D:
 	var casing = Sprite2D.new()
-	# Use a small square as shell casing (could be replaced with actual shell texture)
-	var img = Image.create(3, 2, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0.8, 0.7, 0.3, 1.0))
-	var tex = ImageTexture.create_from_image(img)
-	casing.texture = tex
+	if _cached_shell_casing_tex == null:
+		var img = Image.create(3, 2, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0.8, 0.7, 0.3, 1.0))
+		_cached_shell_casing_tex = ImageTexture.create_from_image(img)
+	casing.texture = _cached_shell_casing_tex
 	casing.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	casing.z_index = 1
 	return casing

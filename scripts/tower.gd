@@ -347,11 +347,14 @@ func _update_tower_specific_visuals() -> void:
 
 func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 	_is_upgrading = true
-	
+	if not is_inside_tree():
+		_is_upgrading = false
+		return
+
 	# Flash white
 	if body_sprite != null:
 		body_sprite.modulate = Color(2.0, 2.0, 2.0, 1.0)
-	
+
 	# Scale pop effect
 	if body_sprite != null:
 		var tween = create_tween()
@@ -359,22 +362,22 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 		tween.set_trans(Tween.TRANS_ELASTIC)
 		tween.tween_property(body_sprite, "scale", Vector2.ONE * target_scale * 1.2, 0.15)
 		tween.tween_property(body_sprite, "scale", Vector2.ONE * target_scale, 0.4)
-		
+
 		# Return to normal brightness
 		var mod_tween = create_tween()
 		mod_tween.tween_property(body_sprite, "modulate", Color(2.0, 2.0, 2.0, 1.0), 0.0)
 		mod_tween.tween_property(body_sprite, "modulate", Color(1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0), 0.3)
-	
+
 	# Glow fade in
-	if _glow_sprite != null:
+	if _glow_sprite != null and is_inside_tree():
 		var glow_tween = create_tween()
 		if upgrade_level == 2:
 			glow_tween.tween_property(_glow_sprite, "modulate", Color(1.0, 1.0, 1.0, 0.4), 0.5)
 		else:  # T3
 			glow_tween.tween_property(_glow_sprite, "modulate", element_color, 0.5)
-	
+
 	# Aura ring animation
-	if _aura_ring != null and upgrade_level >= 2:
+	if _aura_ring != null and upgrade_level >= 2 and is_inside_tree():
 		var aura_tween = create_tween()
 		aura_tween.set_parallel(true)
 		if upgrade_level == 2:
@@ -406,7 +409,8 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 	# Update tier badge
 	_update_tier_badge()
 
-	await get_tree().create_timer(0.5).timeout
+	if is_inside_tree():
+		await get_tree().create_timer(0.5).timeout
 	_is_upgrading = false
 
 # Override in subclasses for tower-specific upgrade effects
@@ -414,13 +418,15 @@ func _play_tower_specific_upgrade_effects() -> void:
 	pass
 
 func _spawn_upgrade_pulse(color: Color) -> void:
+	if not is_inside_tree():
+		return
 	var pulse = Sprite2D.new()
 	pulse.z_index = -3
 	pulse.texture = _aura_ring.texture if _aura_ring != null else null
 	pulse.modulate = Color(color.r, color.g, color.b, 0.5)
 	pulse.scale = Vector2.ONE * 0.5
 	add_child(pulse)
-	
+
 	var tween = create_tween()
 	tween.set_parallel(true)
 	tween.tween_property(pulse, "scale", Vector2.ONE * 3.0, 0.8)
@@ -462,9 +468,9 @@ func play_upgrade_juice() -> void:
 
 func _play_levitation_effect() -> void:
 	"""Make the tower float up slightly during upgrade"""
-	if body_sprite == null:
+	if body_sprite == null or not is_inside_tree():
 		return
-	
+
 	var original_y = body_sprite.position.y
 	var tween = create_tween()
 	tween.set_ease(Tween.EASE_IN_OUT)
@@ -479,6 +485,8 @@ func _play_levitation_effect() -> void:
 
 func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	"""Create swirling particle effect around tower during upgrade"""
+	if not is_inside_tree():
+		return
 	var swirl = CPUParticles2D.new()
 	swirl.name = "UpgradeSwirl"
 	swirl.amount = 16
@@ -504,6 +512,8 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 
 func _spawn_upgrade_flash() -> void:
 	"""Bright flash when upgrade completes"""
+	if not is_inside_tree():
+		return
 	var flash = ColorRect.new()
 	flash.name = "UpgradeFlash"
 	flash.color = Color(1.0, 1.0, 1.0, 0.0)
@@ -606,7 +616,7 @@ func can_upgrade() -> bool:
 
 func take_damage(amount: float) -> void:
 	# Flash red on damage
-	if body_sprite != null:
+	if body_sprite != null and is_inside_tree():
 		var tween = create_tween()
 		tween.tween_property(body_sprite, "modulate", Color(1.5, 0.5, 0.5, 1.0), 0.0)
 		tween.tween_property(body_sprite, "modulate", Color(1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0), 0.2)
