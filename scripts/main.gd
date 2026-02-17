@@ -55,6 +55,9 @@ var auto_start_delay = 2.0
 var _enemy_kill_count = 0
 var _time_scale_tween: Tween = null
 
+# Cached enemy list — updated once per frame, used by all towers
+var cached_enemies: Array = []
+
 # Stats tracking
 var _total_damage_dealt: float = 0.0
 var _towers_built: int = 0
@@ -822,6 +825,8 @@ func _process(delta: float) -> void:
 	if start_timer < spawn_delay:
 		return
 	elapsed += delta
+	# Update cached enemy list once per frame (used by all towers)
+	cached_enemies = get_tree().get_nodes_in_group("enemies")
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
 	_handle_spawning(delta)

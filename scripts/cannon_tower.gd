@@ -5,6 +5,10 @@ var burn_effect = false
 var burn_damage = 5.0
 var burn_duration = 3.0
 
+# Shared static textures
+static var _shared_barrel_tex: ImageTexture = null
+static var _shared_rune_texes: Array[ImageTexture] = []
+
 # Cannon tower specific visuals (note: _steam_vents and _rune_glows inherited from Tower)
 var _reinforced_barrel: Sprite2D = null
 var _multi_barrels: Array[Sprite2D] = []
@@ -14,6 +18,9 @@ var _barrel_rotation: float = 0.0
 # Evolution: Hellfire
 var hellfire_pool_damage: float = 8.0
 var hellfire_pool_duration: float = 3.0
+
+# Shared fire pool texture
+static var _shared_fire_pool_tex: ImageTexture = null
 
 # Evolution: Shockwave
 var shockwave_knockback: float = 120.0
@@ -67,117 +74,114 @@ func _apply_evolution_visuals() -> void:
 				if rune != null:
 					rune.modulate = Color(0.3, 0.6, 1.0, 0.9)
 
+static func _get_barrel_tex() -> ImageTexture:
+	if _shared_barrel_tex != null:
+		return _shared_barrel_tex
+	var img = Image.create(16, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for x in range(16):
+		for y in range(24):
+			var dx = abs(x - 8)
+			if dx < 5 and y > 2 and y < 22:
+				var shade = 0.3 + 0.2 * sin(y * 0.3)
+				img.set_pixel(x, y, Color(shade + 0.3, shade, shade, 1.0))
+			if y >= 20 and dx < 6:
+				img.set_pixel(x, y, Color(0.2, 0.1, 0.1, 1.0))
+	_shared_barrel_tex = ImageTexture.create_from_image(img)
+	return _shared_barrel_tex
+
+static func _get_rune_texes() -> Array[ImageTexture]:
+	if not _shared_rune_texes.is_empty():
+		return _shared_rune_texes
+	var patterns = [
+		[" XX ", "X  X", " XX ", "X  X"],
+		["XXXX", "  X ", " X  ", "XXXX"],
+		["X  X", "X  X", "XXXX", "X  X"],
+		["XXXX", "X   ", "XXXX", "   X"],
+	]
+	for i in range(4):
+		var img = Image.create(12, 12, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 0))
+		var pattern = patterns[i]
+		for y in range(4):
+			for x in range(4):
+				if pattern[y][x] == "X":
+					img.set_pixel(x * 3 + 1, y * 3 + 1, Color(1.0, 0.5, 0.2, 1.0))
+					img.set_pixel(x * 3 + 2, y * 3 + 1, Color(1.0, 0.5, 0.2, 1.0))
+					img.set_pixel(x * 3 + 1, y * 3 + 2, Color(1.0, 0.5, 0.2, 1.0))
+					img.set_pixel(x * 3 + 2, y * 3 + 2, Color(1.0, 0.5, 0.2, 1.0))
+		_shared_rune_texes.append(ImageTexture.create_from_image(img))
+	return _shared_rune_texes
+
 func _setup_tower_specific_visuals() -> void:
-	# Create reinforced barrel overlay for T2 (initially hidden)
+	# Reinforced barrel overlay for T2 (initially hidden)
 	_reinforced_barrel = Sprite2D.new()
 	_reinforced_barrel.name = "ReinforcedBarrel"
 	_reinforced_barrel.z_index = 1
-	_reinforced_barrel.modulate = Color(0.8, 0.3, 0.2, 0.0)  # Red-tinted metal, hidden
-	
-	# Create barrel texture - darker, heavier look
+	_reinforced_barrel.modulate = Color(0.8, 0.3, 0.2, 0.0)
 	if body_sprite != null and body_sprite.sprite_frames != null:
 		_reinforced_barrel.texture = body_sprite.sprite_frames.get_frame_texture("default", 0)
-	
 	add_child(_reinforced_barrel)
-	
-	# Create steam vents for T2 (initially hidden)
-	for i in range(2):
-		var vent = CPUParticles2D.new()
-		vent.name = "SteamVent%d" % i
-		vent.z_index = 2
-		vent.position = Vector2(-6 + i * 12, -8)
-		vent.amount = 8
-		vent.lifetime = 0.8
-		vent.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINT
-		vent.gravity = Vector2(0, -30)
-		vent.initial_velocity_min = 5.0
-		vent.initial_velocity_max = 15.0
-		vent.scale_amount_min = 0.5
-		vent.scale_amount_max = 1.5
-		vent.color = Color(0.9, 0.9, 0.95, 0.0)  # Steam color, hidden
-		vent.emitting = false
-		add_child(vent)
-		_steam_vents.append(vent)
-	
-	# Create multi-barrel assembly for T3 (initially hidden)
+
+	# Steam vents for T2 — reduced to 1 vent, lower particle count
+	var vent = CPUParticles2D.new()
+	vent.name = "SteamVent"
+	vent.z_index = 2
+	vent.position = Vector2(0, -8)
+	vent.amount = 4
+	vent.lifetime = 0.6
+	vent.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINT
+	vent.gravity = Vector2(0, -30)
+	vent.initial_velocity_min = 5.0
+	vent.initial_velocity_max = 15.0
+	vent.scale_amount_min = 0.5
+	vent.scale_amount_max = 1.0
+	vent.color = Color(0.9, 0.9, 0.95, 0.0)
+	vent.emitting = false
+	add_child(vent)
+	_steam_vents.append(vent)
+
+	# Multi-barrel assembly for T3 — shared texture
+	var barrel_tex = _get_barrel_tex()
 	for i in range(3):
 		var barrel = Sprite2D.new()
 		barrel.name = "MultiBarrel%d" % i
 		barrel.z_index = 3
-		barrel.modulate = Color(0.6, 0.2, 0.2, 0.0)  # Dark red, hidden
-		
-		# Create smaller barrel texture
-		var barrel_img = Image.create(16, 24, false, Image.FORMAT_RGBA8)
-		barrel_img.fill(Color(0, 0, 0, 0))
-		# Draw cylindrical barrel
-		for x in range(16):
-			for y in range(24):
-				var dx = abs(x - 8)
-				if dx < 5 and y > 2 and y < 22:
-					var shade = 0.3 + 0.2 * sin(y * 0.3)
-					barrel_img.set_pixel(x, y, Color(shade + 0.3, shade, shade, 1.0))
-				# Barrel rim
-				if y >= 20 and dx < 6:
-					barrel_img.set_pixel(x, y, Color(0.2, 0.1, 0.1, 1.0))
-		var barrel_tex = ImageTexture.create_from_image(barrel_img)
+		barrel.modulate = Color(0.6, 0.2, 0.2, 0.0)
 		barrel.texture = barrel_tex
-		
 		add_child(barrel)
 		_multi_barrels.append(barrel)
-	
-	# Create glowing runes for T3 (initially hidden)
+
+	# Glowing runes for T3 — shared textures
+	var rune_texes = _get_rune_texes()
 	for i in range(4):
 		var rune = Sprite2D.new()
 		rune.name = "RuneGlow%d" % i
 		rune.z_index = 4
-		rune.modulate = Color(1.0, 0.3, 0.1, 0.0)  # Orange-red glow
-		
-		# Create rune symbol texture
-		var rune_img = Image.create(12, 12, false, Image.FORMAT_RGBA8)
-		rune_img.fill(Color(0, 0, 0, 0))
-		# Draw simple rune pattern
-		var patterns = [
-			[" XX ", "X  X", " XX ", "X  X"],  # Rune 1
-			["XXXX", "  X ", " X  ", "XXXX"],  # Rune 2
-			["X  X", "X  X", "XXXX", "X  X"],  # Rune 3
-			["XXXX", "X   ", "XXXX", "   X"],  # Rune 4
-		]
-		var pattern = patterns[i % patterns.size()]
-		for y in range(4):
-			for x in range(4):
-				if pattern[y][x] == "X":
-					rune_img.set_pixel(x * 3 + 1, y * 3 + 1, Color(1.0, 0.5, 0.2, 1.0))
-					rune_img.set_pixel(x * 3 + 2, y * 3 + 1, Color(1.0, 0.5, 0.2, 1.0))
-					rune_img.set_pixel(x * 3 + 1, y * 3 + 2, Color(1.0, 0.5, 0.2, 1.0))
-					rune_img.set_pixel(x * 3 + 2, y * 3 + 2, Color(1.0, 0.5, 0.2, 1.0))
-		var rune_tex = ImageTexture.create_from_image(rune_img)
-		rune.texture = rune_tex
-		
+		rune.modulate = Color(1.0, 0.3, 0.1, 0.0)
+		rune.texture = rune_texes[i]
 		var rune_material = CanvasItemMaterial.new()
 		rune_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 		rune.material = rune_material
-		
-		# Position runes around the base
 		var angle = (i / 4.0) * TAU
 		rune.position = Vector2(cos(angle) * 12, sin(angle) * 8 + 5)
-		
 		add_child(rune)
 		_rune_glows.append(rune)
-	
-	# Create smoke trails for T3
+
+	# Smoke trails for T3 — reduced amount
 	_smoke_trails = CPUParticles2D.new()
 	_smoke_trails.name = "SmokeTrails"
 	_smoke_trails.z_index = -1
-	_smoke_trails.amount = 20
-	_smoke_trails.lifetime = 2.0
+	_smoke_trails.amount = 8
+	_smoke_trails.lifetime = 1.5
 	_smoke_trails.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	_smoke_trails.emission_sphere_radius = 10.0
+	_smoke_trails.emission_sphere_radius = 8.0
 	_smoke_trails.gravity = Vector2(0, -10)
 	_smoke_trails.initial_velocity_min = 5.0
-	_smoke_trails.initial_velocity_max = 20.0
-	_smoke_trails.scale_amount_min = 1.0
-	_smoke_trails.scale_amount_max = 3.0
-	_smoke_trails.color = Color(0.3, 0.3, 0.3, 0.0)  # Dark smoke, hidden
+	_smoke_trails.initial_velocity_max = 15.0
+	_smoke_trails.scale_amount_min = 0.8
+	_smoke_trails.scale_amount_max = 2.0
+	_smoke_trails.color = Color(0.3, 0.3, 0.3, 0.0)
 	_smoke_trails.emitting = false
 	add_child(_smoke_trails)
 
@@ -292,7 +296,7 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	cluster_bombs = bool(tier_data.get("cluster_bombs", false))
 	burn_effect = bool(tier_data.get("burn_effect", false))
 
-func _fire_at(target: Node) -> void:
+func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
 	var target_pos = target.global_position
@@ -329,15 +333,17 @@ func _fire_at(target: Node) -> void:
 		for vent in _steam_vents:
 			if vent != null and vent.emitting:
 				vent.amount = 12  # Burst of steam
-				await get_tree().create_timer(0.1).timeout
-				if is_instance_valid(vent):
-					vent.amount = 8  # Back to normal
+				var timer = get_tree().create_timer(0.1)
+				timer.timeout.connect(func():
+					if is_instance_valid(vent):
+						vent.amount = 8  # Back to normal
+				)
 
 func _apply_shockwave_at(pos: Vector2) -> void:
 	await get_tree().create_timer(0.3).timeout  # Delay for projectile travel
 	if not is_inside_tree():
 		return
-	var enemies = get_tree().get_nodes_in_group("enemies")
+	var enemies = _get_enemies()
 	for enemy in enemies:
 		if enemy == null or not is_instance_valid(enemy):
 			continue
@@ -363,20 +369,26 @@ func _spawn_fire_pool(pos: Vector2) -> void:
 	var pool = Node2D.new()
 	pool.global_position = pos
 	pool.z_index = -2
-	_game.get_node("World/FX").add_child(pool)
+	var fx_parent = _game.get_node_or_null("World/FX")
+	if fx_parent != null:
+		fx_parent.add_child(pool)
+	else:
+		_game.add_child(pool)
 
-	# Visual: orange circle
+	# Visual: orange circle — shared texture
 	var sprite = Sprite2D.new()
-	var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
-	var center = Vector2(32, 32)
-	for x in range(64):
-		for y in range(64):
-			var d = Vector2(x, y).distance_to(center)
-			if d < 28:
-				var a = (1.0 - d / 28.0) * 0.5
-				img.set_pixel(x, y, Color(1.0, 0.4, 0.1, a))
-	sprite.texture = ImageTexture.create_from_image(img)
+	if _shared_fire_pool_tex == null:
+		var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
+		img.fill(Color(0, 0, 0, 0))
+		var center = Vector2(32, 32)
+		for x in range(64):
+			for y in range(64):
+				var d = Vector2(x, y).distance_to(center)
+				if d < 28:
+					var a = (1.0 - d / 28.0) * 0.5
+					img.set_pixel(x, y, Color(1.0, 0.4, 0.1, a))
+		_shared_fire_pool_tex = ImageTexture.create_from_image(img)
+	sprite.texture = _shared_fire_pool_tex
 	var mat = CanvasItemMaterial.new()
 	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	sprite.material = mat

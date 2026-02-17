@@ -1,5 +1,9 @@
 extends Tower
 
+# Shared static textures
+static var _shared_orb_tex: ImageTexture = null
+static var _shared_storm_field_tex: ImageTexture = null
+
 var chain_count = 3
 var lightning_storm = false
 var stun_chance = 0.0
@@ -60,20 +64,22 @@ func _apply_evolution_visuals() -> void:
 		"storm_spire":
 			if body_sprite != null:
 				body_sprite.modulate = Color(0.8, 0.9, 1.3, 1.0)
-			# Create field circle visual
+			# Create field circle visual — shared texture
 			_storm_field_circle = Sprite2D.new()
 			_storm_field_circle.z_index = -3
-			var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
-			img.fill(Color(0, 0, 0, 0))
-			var center = Vector2(32, 32)
-			for x in range(64):
-				for y in range(64):
-					var d = Vector2(x, y).distance_to(center)
-					if d < 30 and d > 24:
-						img.set_pixel(x, y, Color(0.3, 0.7, 1.0, 0.25))
-					elif d < 24:
-						img.set_pixel(x, y, Color(0.2, 0.5, 0.9, 0.08))
-			_storm_field_circle.texture = ImageTexture.create_from_image(img)
+			if _shared_storm_field_tex == null:
+				var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
+				img.fill(Color(0, 0, 0, 0))
+				var center = Vector2(32, 32)
+				for x in range(64):
+					for y in range(64):
+						var d = Vector2(x, y).distance_to(center)
+						if d < 30 and d > 24:
+							img.set_pixel(x, y, Color(0.3, 0.7, 1.0, 0.25))
+						elif d < 24:
+							img.set_pixel(x, y, Color(0.2, 0.5, 0.9, 0.08))
+				_shared_storm_field_tex = ImageTexture.create_from_image(img)
+			_storm_field_circle.texture = _shared_storm_field_tex
 			_storm_field_circle.scale = Vector2.ONE * (_storm_field_radius / 32.0)
 			var mat = CanvasItemMaterial.new()
 			mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
@@ -86,73 +92,70 @@ func _apply_evolution_visuals() -> void:
 			if _lightning_orb != null:
 				_lightning_orb.modulate = Color(0.5, 1.0, 1.0, 1.0)
 
-func _setup_tower_specific_visuals() -> void:
-	# Create secondary coil for T2 (initially hidden)
-	_secondary_coil = Sprite2D.new()
-	_secondary_coil.name = "SecondaryCoil"
-	_secondary_coil.z_index = -1
-	_secondary_coil.modulate = Color(0.5, 0.7, 1.0, 0.0)  # Blue-tinted, hidden
-	_secondary_coil.position = Vector2(8, 0)
-	
-	# Create coil texture (similar to body but offset)
-	if body_sprite != null and body_sprite.sprite_frames != null:
-		_secondary_coil.texture = body_sprite.sprite_frames.get_frame_texture("default", 0)
-	
-	var coil_material = CanvasItemMaterial.new()
-	coil_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_secondary_coil.material = coil_material
-	add_child(_secondary_coil)
-	
-	# Create lightning orb for T3 (initially hidden)
-	_lightning_orb = Sprite2D.new()
-	_lightning_orb.name = "LightningOrb"
-	_lightning_orb.z_index = 5
-	_lightning_orb.position = Vector2(0, -25)
-	_lightning_orb.modulate = Color(0.2, 0.8, 1.0, 0.0)
-	
-	# Create orb texture (glowing ball)
-	var orb_img = Image.create(20, 20, false, Image.FORMAT_RGBA8)
-	orb_img.fill(Color(0, 0, 0, 0))
+static func _get_orb_tex() -> ImageTexture:
+	if _shared_orb_tex != null:
+		return _shared_orb_tex
+	var img = Image.create(20, 20, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
 	var center = Vector2(10, 10)
 	for x in range(20):
 		for y in range(20):
 			var dist = Vector2(x, y).distance_to(center)
 			if dist < 9:
 				var intensity = 1.0 - (dist / 9.0)
-				var color = Color(0.4, 0.8, 1.0, intensity)
-				orb_img.set_pixel(x, y, color)
-	var orb_tex = ImageTexture.create_from_image(orb_img)
-	_lightning_orb.texture = orb_tex
-	
+				img.set_pixel(x, y, Color(0.4, 0.8, 1.0, intensity))
+	_shared_orb_tex = ImageTexture.create_from_image(img)
+	return _shared_orb_tex
+
+func _setup_tower_specific_visuals() -> void:
+	# Secondary coil for T2 (initially hidden)
+	_secondary_coil = Sprite2D.new()
+	_secondary_coil.name = "SecondaryCoil"
+	_secondary_coil.z_index = -1
+	_secondary_coil.modulate = Color(0.5, 0.7, 1.0, 0.0)
+	_secondary_coil.position = Vector2(8, 0)
+	if body_sprite != null and body_sprite.sprite_frames != null:
+		_secondary_coil.texture = body_sprite.sprite_frames.get_frame_texture("default", 0)
+	var coil_material = CanvasItemMaterial.new()
+	coil_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_secondary_coil.material = coil_material
+	add_child(_secondary_coil)
+
+	# Lightning orb for T3 (initially hidden) — shared texture
+	_lightning_orb = Sprite2D.new()
+	_lightning_orb.name = "LightningOrb"
+	_lightning_orb.z_index = 5
+	_lightning_orb.position = Vector2(0, -25)
+	_lightning_orb.modulate = Color(0.2, 0.8, 1.0, 0.0)
+	_lightning_orb.texture = _get_orb_tex()
 	var orb_material = CanvasItemMaterial.new()
 	orb_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	_lightning_orb.material = orb_material
 	add_child(_lightning_orb)
-	
-	# Create arc beams (lines from orb to tower) for T3
-	for i in range(3):
+
+	# Arc beams for T3 — reduced from 3 to 2
+	for i in range(2):
 		var beam = Line2D.new()
 		beam.name = "ArcBeam%d" % i
 		beam.width = 2.0
-		beam.default_color = Color(0.3, 0.9, 1.0, 0.0)  # Hidden initially
+		beam.default_color = Color(0.3, 0.9, 1.0, 0.0)
 		beam.z_index = 4
-		beam.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		add_child(beam)
 		_arc_beams.append(beam)
-	
-	# Create crackle particles for T3 aura
+
+	# Crackle particles for T3 — reduced amount
 	_crackle_particles = CPUParticles2D.new()
 	_crackle_particles.name = "CrackleParticles"
-	_crackle_particles.amount = 16
+	_crackle_particles.amount = 6
 	_crackle_particles.lifetime = 0.5
 	_crackle_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	_crackle_particles.emission_sphere_radius = 25.0
+	_crackle_particles.emission_sphere_radius = 20.0
 	_crackle_particles.gravity = Vector2(0, -20)
 	_crackle_particles.initial_velocity_min = 10.0
-	_crackle_particles.initial_velocity_max = 40.0
+	_crackle_particles.initial_velocity_max = 30.0
 	_crackle_particles.scale_amount_min = 0.3
-	_crackle_particles.scale_amount_max = 1.0
-	_crackle_particles.color = Color(0.4, 0.9, 1.0, 0.0)  # Hidden initially
+	_crackle_particles.scale_amount_max = 0.8
+	_crackle_particles.color = Color(0.4, 0.9, 1.0, 0.0)
 	_crackle_particles.emitting = false
 	add_child(_crackle_particles)
 
@@ -192,7 +195,6 @@ func _update_arc_beams() -> void:
 	var tower_points = [
 		Vector2(-8, -5),
 		Vector2(8, -5),
-		Vector2(0, 5)
 	]
 	
 	for i in range(_arc_beams.size()):
@@ -311,7 +313,7 @@ func _tick_storm_field() -> void:
 	var dmg_bonus = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = _game.get_tower_damage_bonus()
-	var enemies = get_tree().get_nodes_in_group("enemies")
+	var enemies = _get_enemies()
 	var hits = 0
 	for enemy in enemies:
 		if enemy == null or not is_instance_valid(enemy):
@@ -339,7 +341,7 @@ func _trigger_lightning_storm() -> void:
 	if _game == null:
 		return
 	# Find enemies in storm radius around tower
-	var enemies = get_tree().get_nodes_in_group("enemies")
+	var enemies = _get_enemies()
 	var storm_hits = 0
 	for enemy in enemies:
 		if enemy == null or not is_instance_valid(enemy):
@@ -365,13 +367,13 @@ func _trigger_lightning_storm() -> void:
 			if storm_hits >= 3:  # Max 3 storm strikes per interval
 				break
 
-func _fire_at(target: Node) -> void:
+func _fire_at(target: Node2D) -> void:
 	# Arc Conduit: special chain logic that allows re-hitting
 	if is_evolved and evolution_id == "arc_conduit":
 		_fire_arc_conduit(target)
 		return
 
-	var enemies = get_tree().get_nodes_in_group("enemies")
+	var enemies = _get_enemies()
 	enemies.sort_custom(func(a, b):
 		return global_position.distance_squared_to(a.global_position) < global_position.distance_squared_to(b.global_position)
 	)
@@ -424,8 +426,8 @@ func _fire_at(target: Node) -> void:
 		if hits >= chain_count:
 			break
 
-func _fire_arc_conduit(target: Node) -> void:
-	var enemies = get_tree().get_nodes_in_group("enemies")
+func _fire_arc_conduit(target: Node2D) -> void:
+	var enemies = _get_enemies()
 	var in_range: Array = []
 	for e in enemies:
 		if e != null and is_instance_valid(e) and global_position.distance_squared_to(e.global_position) <= range * range:
@@ -477,7 +479,7 @@ func _fire_arc_conduit(target: Node) -> void:
 		current_dmg *= (1.0 + _arc_bounce_damage_mult)  # Escalate!
 
 		# Find next target (can bounce to any in-range enemy, including already-hit)
-		var best: Node = null
+		var best: Node2D = null
 		var best_dist = 999999.0
 		for e in in_range:
 			if e == null or not is_instance_valid(e) or e == current_target:
@@ -500,26 +502,13 @@ func _fire_arc_conduit(target: Node) -> void:
 	_line.points = line_points
 	_line.visible = true
 	_line.default_color = Color(0.4, 0.9, 1.0, 0.9)
+	_line.modulate.a = 1.0
 	if _game != null and _game.fx_manager != null and hit_positions.size() > 0:
 		_game.fx_manager.spawn_tesla_lightning(global_position, hit_positions)
 	var arc_tween = create_tween()
 	arc_tween.tween_property(_line, "modulate:a", 0.0, 0.12)
 	arc_tween.tween_callback(func(): _line.visible = false)
 	arc_tween.tween_property(_line, "modulate:a", 0.9, 0.0)
-
-	# Show lightning line (legacy)
-	_line.points = line_points
-	_line.visible = true
-	
-	# Use FX Manager for enhanced lightning beam
-	if _game != null and _game.fx_manager != null and hit_positions.size() > 0:
-		_game.fx_manager.spawn_tesla_lightning(global_position, hit_positions)
-	
-	# Flash effect
-	var tween = create_tween()
-	tween.tween_property(_line, "modulate:a", 0.0, 0.1)
-	tween.tween_callback(func(): _line.visible = false)
-	tween.tween_property(_line, "modulate:a", 0.9, 0.0)
 
 func _generate_arc(from: Vector2, to: Vector2, segments: int) -> Array[Vector2]:
 	var points: Array[Vector2] = []

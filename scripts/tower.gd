@@ -71,17 +71,33 @@ func _play_evolution_animation() -> void:
 		_game.shake_camera(10.0, 0.4)
 	# Purple essence flash
 	if _game.has_method("spawn_glow_particle"):
-		for i in range(16):
-			var angle = (TAU / 16.0) * i
+		for i in range(8):
+			var angle = (TAU / 8.0) * i
 			var dir = Vector2.RIGHT.rotated(angle)
 			var vel = dir * randf_range(100.0, 200.0)
 			_game.spawn_glow_particle(global_position, Color(0.7, 0.3, 1.0), randf_range(10.0, 18.0), 1.0, vel, 2.5, 0.8, 1.2, 5)
+
+# Shared static textures (created once, reused by all instances)
+static var _shared_aura_tex: ImageTexture = null
+
+static func _get_aura_texture() -> ImageTexture:
+	if _shared_aura_tex != null:
+		return _shared_aura_tex
+	var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var center = Vector2(32, 32)
+	for x in range(64):
+		for y in range(64):
+			var dist = Vector2(x, y).distance_to(center)
+			if dist > 28 and dist < 32:
+				img.set_pixel(x, y, Color(1, 1, 1, 0.3))
+	_shared_aura_tex = ImageTexture.create_from_image(img)
+	return _shared_aura_tex
 
 # Visual progression - Tower-specific elements
 var _glow_sprite: Sprite2D = null
 var _glow_tween: Tween = null
 var _particles: CPUParticles2D = null
-var _upgrade_glow: PointLight2D = null
 var _level_up_particles: CPUParticles2D = null
 var _aura_ring: Sprite2D = null
 var _tier_badge: Label = null
@@ -133,85 +149,69 @@ func _ready() -> void:
 	_update_visuals_for_upgrade_level(true)  # true = instant, no animation
 
 func _setup_premium_visuals() -> void:
-	# Create aura ring (rotating glow behind tower)
+	# Create aura ring (rotating glow behind tower) — uses shared texture
 	_aura_ring = Sprite2D.new()
 	_aura_ring.name = "AuraRing"
 	_aura_ring.z_index = -2
 	_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.0)
-	# Create a simple circle texture procedurally
-	var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
-	var center = Vector2(32, 32)
-	for x in range(64):
-		for y in range(64):
-			var dist = Vector2(x, y).distance_to(center)
-			if dist > 28 and dist < 32:
-				img.set_pixel(x, y, Color(1, 1, 1, 0.3))
-	var tex = ImageTexture.create_from_image(img)
-	_aura_ring.texture = tex
+	_aura_ring.texture = _get_aura_texture()
 	add_child(_aura_ring)
-	
+
 	# Create glow sprite for T2+ (using CanvasItemMaterial for additive blend)
 	_glow_sprite = Sprite2D.new()
 	_glow_sprite.name = "UpgradeGlow"
 	_glow_sprite.z_index = -1
 	_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.0)
-	
-	# Set up additive blend mode for glow effect
+
 	var glow_material = CanvasItemMaterial.new()
 	glow_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	_glow_sprite.material = glow_material
-	
+
 	if body_sprite != null and body_sprite.sprite_frames != null:
 		_glow_sprite.texture = body_sprite.sprite_frames.get_frame_texture("default", 0)
 	add_child(_glow_sprite)
-	
-	# Create ambient particles for T3
+
+	# NOTE: _particles and _level_up_particles are created lazily in _ensure_particles()
+	# NOTE: PointLight2D removed — too expensive with many towers
+
+func _ensure_particles() -> void:
+	if _particles != null:
+		return
 	_particles = CPUParticles2D.new()
 	_particles.name = "UpgradeParticles"
-	_particles.amount = 12
+	_particles.amount = 6
 	_particles.lifetime = 2.0
-	_particles.preprocess = 1.0  # Pre-warm particles
 	_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
 	_particles.emission_sphere_radius = 18.0
 	_particles.gravity = Vector2(0, -15)
 	_particles.initial_velocity_min = 5.0
-	_particles.initial_velocity_max = 20.0
-	_particles.angular_velocity_min = -30.0
-	_particles.angular_velocity_max = 30.0
+	_particles.initial_velocity_max = 15.0
 	_particles.scale_amount_min = 0.5
-	_particles.scale_amount_max = 1.5
+	_particles.scale_amount_max = 1.0
 	_particles.color = Color(1.0, 1.0, 1.0, 0.8)
 	_particles.emitting = false
 	_particles.visible = false
 	add_child(_particles)
-	
-	# Create level-up burst particles (one-shot)
+
+func _ensure_level_up_particles() -> void:
+	if _level_up_particles != null:
+		return
 	_level_up_particles = CPUParticles2D.new()
 	_level_up_particles.name = "LevelUpParticles"
-	_level_up_particles.amount = 30
-	_level_up_particles.lifetime = 1.0
+	_level_up_particles.amount = 16
+	_level_up_particles.lifetime = 0.8
 	_level_up_particles.one_shot = true
 	_level_up_particles.explosiveness = 0.9
 	_level_up_particles.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	_level_up_particles.emission_sphere_radius = 15.0
+	_level_up_particles.emission_sphere_radius = 12.0
 	_level_up_particles.gravity = Vector2(0, -30)
-	_level_up_particles.initial_velocity_min = 40.0
-	_level_up_particles.initial_velocity_max = 100.0
-	_level_up_particles.scale_amount_min = 1.0
-	_level_up_particles.scale_amount_max = 3.0
+	_level_up_particles.initial_velocity_min = 30.0
+	_level_up_particles.initial_velocity_max = 70.0
+	_level_up_particles.scale_amount_min = 0.8
+	_level_up_particles.scale_amount_max = 2.0
 	_level_up_particles.color = Color(1.0, 0.9, 0.5, 1.0)
 	_level_up_particles.emitting = false
 	add_child(_level_up_particles)
-	
-	# Create light glow for T3
-	_upgrade_glow = PointLight2D.new()
-	_upgrade_glow.name = "UpgradeLight"
-	_upgrade_glow.color = Color(1.0, 1.0, 1.0, 0.6)
-	_upgrade_glow.energy = 0.0
-	_upgrade_glow.texture = load("res://assets/light.png") if ResourceLoader.exists("res://assets/light.png") else null
-	_upgrade_glow.texture_scale = 2.5
-	add_child(_upgrade_glow)
 
 	# Create tier badge (I, II, III)
 	_tier_badge = Label.new()
@@ -317,16 +317,13 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		var brightness = 1.0 + (upgrade_level - 1) * 0.1
 		body_sprite.modulate = Color(brightness, brightness, brightness, 1.0)
 	
-	# Particles for T3
-	if _particles != null:
-		_particles.color = element_color
-		_particles.visible = upgrade_level >= 3
-		_particles.emitting = upgrade_level >= 3
-	
-	# Light glow for T3
-	if _upgrade_glow != null:
-		_upgrade_glow.energy = 0.0 if upgrade_level < 3 else 0.6
-		_upgrade_glow.color = Color(element_color.r, element_color.g, element_color.b, 0.8)
+	# Particles for T3 (lazy created)
+	if upgrade_level >= 3:
+		_ensure_particles()
+		if _particles != null:
+			_particles.color = element_color
+			_particles.visible = true
+			_particles.emitting = true
 	
 	# Aura ring
 	if _aura_ring != null:
@@ -386,22 +383,19 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.35), 0.5)
 		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.0 + upgrade_level * 0.2), 0.5)
 	
-	# Light glow for T3
-	if _upgrade_glow != null and upgrade_level >= 3:
-		var light_tween = create_tween()
-		light_tween.tween_property(_upgrade_glow, "energy", 0.6, 0.6)
-		_upgrade_glow.color = Color(element_color.r, element_color.g, element_color.b, 0.8)
-	
-	# Particle burst
+	# Particle burst (lazy created)
+	_ensure_level_up_particles()
 	if _level_up_particles != null:
 		_level_up_particles.color = UPGRADE_SWIRL_COLORS.get(upgrade_level, Color(1.0, 0.9, 0.5, 1.0))
 		_level_up_particles.restart()
-	
-	# Start ambient particles for T3
-	if _particles != null and upgrade_level >= 3:
-		_particles.color = element_color
-		_particles.visible = true
-		_particles.emitting = true
+
+	# Start ambient particles for T3 (lazy created)
+	if upgrade_level >= 3:
+		_ensure_particles()
+		if _particles != null:
+			_particles.color = element_color
+			_particles.visible = true
+			_particles.emitting = true
 	
 	# Pulse ring effect
 	_spawn_upgrade_pulse(element_color if upgrade_level >= 3 else Color(1.0, 0.85, 0.2, 1.0))
@@ -487,7 +481,7 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	"""Create swirling particle effect around tower during upgrade"""
 	var swirl = CPUParticles2D.new()
 	swirl.name = "UpgradeSwirl"
-	swirl.amount = 40
+	swirl.amount = 16
 	swirl.lifetime = 1.0
 	swirl.one_shot = true
 	swirl.explosiveness = 0.3
@@ -549,7 +543,8 @@ func _find_target() -> Node2D:
 		range_mult = _game.get_tower_range_mult()
 	var effective_range = range * range_mult
 	var best_dist = effective_range * effective_range
-	for enemy: Node2D in get_tree().get_nodes_in_group("enemies"):
+	var enemies: Array = _get_enemies()
+	for enemy: Node2D in enemies:
 		if enemy == null:
 			continue
 		var dist = global_position.distance_squared_to(enemy.global_position)
@@ -557,6 +552,11 @@ func _find_target() -> Node2D:
 			best = enemy
 			best_dist = dist
 	return best
+
+func _get_enemies() -> Array:
+	if _game != null and "cached_enemies" in _game:
+		return _game.cached_enemies
+	return get_tree().get_nodes_in_group("enemies")
 
 func get_range() -> float:
 	var range_mult = 1.0

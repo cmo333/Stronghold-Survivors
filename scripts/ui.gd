@@ -383,7 +383,6 @@ func show_evolution_panel(options: Array, current_essence: int) -> void:
 		var cost = int(opt.get("cost", 3))
 		var can_afford = current_essence >= cost
 
-		card.get_node("NameLabel" if card.has_node("NameLabel") else "PanelContainer/VBoxContainer/NameLabel")
 		# Access through card's child VBox
 		var vbox = card.get_child(0)
 		var name_label = vbox.get_child(1) as Label

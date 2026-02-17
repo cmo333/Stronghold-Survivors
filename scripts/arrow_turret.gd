@@ -2,6 +2,11 @@ extends Tower
 
 var pierce_count = 1
 
+# Shared static textures (created once, reused by all arrow turrets)
+static var _shared_metal_bands_tex: ImageTexture = null
+static var _shared_crystal_tex: ImageTexture = null
+static var _shared_arrow_tex: ImageTexture = null
+
 # Arrow tower specific visuals (note: _crystal_core is inherited from Tower)
 var _floating_arrows: Array[Sprite2D] = []
 var _arrow_orbit_angle: float = 0.0
@@ -86,86 +91,84 @@ func _apply_evolution_visuals() -> void:
 				if arrow != null:
 					arrow.visible = false
 
-func _setup_tower_specific_visuals() -> void:
-	# Create metal bands for T2 (initially hidden)
-	_metal_bands = Sprite2D.new()
-	_metal_bands.name = "MetalBands"
-	_metal_bands.z_index = 1
-	_metal_bands.modulate = Color(0.6, 0.6, 0.7, 0.0)  # Metallic gray, hidden initially
-	
-	# Create a simple metal band texture procedurally
+static func _get_metal_bands_tex() -> ImageTexture:
+	if _shared_metal_bands_tex != null:
+		return _shared_metal_bands_tex
 	var img = Image.create(48, 48, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
-	# Draw horizontal metal bands
 	for x in range(48):
 		for y in range(48):
-			# Top band
 			if y >= 8 and y <= 12:
 				var shade = 0.5 + 0.3 * sin(x * 0.3)
 				img.set_pixel(x, y, Color(shade, shade, shade + 0.1, 0.9))
-			# Bottom band
 			if y >= 36 and y <= 40:
 				var shade = 0.5 + 0.3 * sin(x * 0.3 + 1.0)
 				img.set_pixel(x, y, Color(shade, shade, shade + 0.1, 0.9))
-	var tex = ImageTexture.create_from_image(img)
-	_metal_bands.texture = tex
-	add_child(_metal_bands)
-	
-	# Create crystal core for T3 (initially hidden)
-	_crystal_core = Sprite2D.new()
-	_crystal_core.name = "CrystalCore"
-	_crystal_core.z_index = 2
-	_crystal_core.modulate = Color(0.2, 0.9, 0.3, 0.0)  # Green glow, hidden initially
-	
-	# Create crystal texture
-	var crystal_img = Image.create(24, 24, false, Image.FORMAT_RGBA8)
-	crystal_img.fill(Color(0, 0, 0, 0))
+	_shared_metal_bands_tex = ImageTexture.create_from_image(img)
+	return _shared_metal_bands_tex
+
+static func _get_crystal_tex() -> ImageTexture:
+	if _shared_crystal_tex != null:
+		return _shared_crystal_tex
+	var img = Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
 	var center = Vector2(12, 12)
 	for x in range(24):
 		for y in range(24):
 			var dist = Vector2(x, y).distance_to(center)
 			if dist < 10:
 				var intensity = 1.0 - (dist / 10.0)
-				var color = Color(0.2, 0.95, 0.3, intensity * 0.9)
-				crystal_img.set_pixel(x, y, color)
-	var crystal_tex = ImageTexture.create_from_image(crystal_img)
-	_crystal_core.texture = crystal_tex
-	
-	# Add pulsing glow to crystal
+				img.set_pixel(x, y, Color(0.2, 0.95, 0.3, intensity * 0.9))
+	_shared_crystal_tex = ImageTexture.create_from_image(img)
+	return _shared_crystal_tex
+
+static func _get_arrow_tex() -> ImageTexture:
+	if _shared_arrow_tex != null:
+		return _shared_arrow_tex
+	var img = Image.create(12, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for x in range(12):
+		for y in range(16):
+			if y < 6 and abs(x - 6) < (6 - y) * 0.8:
+				img.set_pixel(x, y, Color(0.9, 0.95, 0.9, 1.0))
+			if y >= 6 and y < 14 and abs(x - 6) < 2:
+				img.set_pixel(x, y, Color(0.8, 0.9, 0.8, 1.0))
+			if y >= 14 and abs(x - 6) < 4:
+				img.set_pixel(x, y, Color(0.6, 0.8, 0.6, 0.9))
+	_shared_arrow_tex = ImageTexture.create_from_image(img)
+	return _shared_arrow_tex
+
+func _setup_tower_specific_visuals() -> void:
+	# Metal bands for T2 (initially hidden) — shared texture
+	_metal_bands = Sprite2D.new()
+	_metal_bands.name = "MetalBands"
+	_metal_bands.z_index = 1
+	_metal_bands.modulate = Color(0.6, 0.6, 0.7, 0.0)
+	_metal_bands.texture = _get_metal_bands_tex()
+	add_child(_metal_bands)
+
+	# Crystal core for T3 (initially hidden) — shared texture
+	_crystal_core = Sprite2D.new()
+	_crystal_core.name = "CrystalCore"
+	_crystal_core.z_index = 2
+	_crystal_core.modulate = Color(0.2, 0.9, 0.3, 0.0)
+	_crystal_core.texture = _get_crystal_tex()
 	var crystal_material = CanvasItemMaterial.new()
 	crystal_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	_crystal_core.material = crystal_material
 	add_child(_crystal_core)
-	
-	# Create floating arrows for T3 (initially hidden)
+
+	# Floating arrows for T3 (initially hidden) — shared texture
+	var arrow_tex = _get_arrow_tex()
 	for i in range(3):
 		var arrow = Sprite2D.new()
 		arrow.name = "FloatingArrow%d" % i
 		arrow.z_index = 3
 		arrow.modulate = Color(0.3, 0.9, 0.4, 0.0)
-		
-		# Create arrow texture
-		var arrow_img = Image.create(12, 16, false, Image.FORMAT_RGBA8)
-		arrow_img.fill(Color(0, 0, 0, 0))
-		# Draw arrow shape
-		for x in range(12):
-			for y in range(16):
-				# Arrow head
-				if y < 6 and abs(x - 6) < (6 - y) * 0.8:
-					arrow_img.set_pixel(x, y, Color(0.9, 0.95, 0.9, 1.0))
-				# Arrow shaft
-				if y >= 6 and y < 14 and abs(x - 6) < 2:
-					arrow_img.set_pixel(x, y, Color(0.8, 0.9, 0.8, 1.0))
-				# Arrow fletching
-				if y >= 14 and abs(x - 6) < 4:
-					arrow_img.set_pixel(x, y, Color(0.6, 0.8, 0.6, 0.9))
-		var arrow_tex = ImageTexture.create_from_image(arrow_img)
 		arrow.texture = arrow_tex
-		
 		var arrow_material = CanvasItemMaterial.new()
 		arrow_material.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 		arrow.material = arrow_material
-		
 		add_child(arrow)
 		_floating_arrows.append(arrow)
 
@@ -271,8 +274,8 @@ func _process(delta: float) -> void:
 
 	# Sniper laser sight
 	if is_evolved and evolution_id == "sniper" and _sniper_laser_line != null:
-		var enemies = get_tree().get_nodes_in_group("enemies")
-		var closest: Node = null
+		var enemies = _get_enemies()
+		var closest: Node2D = null
 		var closest_dist = range * range
 		for enemy in enemies:
 			if enemy == null or not is_instance_valid(enemy):
@@ -288,7 +291,7 @@ func _process(delta: float) -> void:
 		else:
 			_sniper_laser_line.points = [Vector2.ZERO, Vector2.ZERO]
 
-func _fire_at(target: Node) -> void:
+func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
 
@@ -334,7 +337,7 @@ func _fire_at(target: Node) -> void:
 	if is_evolved and evolution_id == "gatling" and _game.has_method("spawn_fx"):
 		_game.spawn_fx("hit", global_position + dir * 12.0)
 
-func _fire_sniper(target: Node) -> void:
+func _fire_sniper(target: Node2D) -> void:
 	var dir = (target.global_position - global_position).normalized()
 	var dmg_bonus = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
@@ -342,7 +345,7 @@ func _fire_sniper(target: Node) -> void:
 
 	# Hitscan: damage ALL enemies in a line
 	var total_dmg = damage + dmg_bonus
-	var enemies = get_tree().get_nodes_in_group("enemies")
+	var enemies = _get_enemies()
 	var hit_count = 0
 	for enemy in enemies:
 		if enemy == null or not is_instance_valid(enemy):
