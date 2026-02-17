@@ -158,14 +158,15 @@ func _cache_sounds() -> void:
 
 func _cache_sound(name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
+	if not ResourceLoader.exists(path):
+		# File doesn't exist yet — skip silently to avoid flooding the editor
+		# output panel (which triggers Godot 4.2 p_gutter cascade bug)
+		return
 	var stream = load(path)
 	if stream != null:
 		_sound_cache[name] = stream
 		if sfx_categories.has(category):
 			sfx_categories[category].append(name)
-	else:
-		# Sound not found - will use placeholder in play function
-		pass
 
 # ============================================
 # PUBLIC API
@@ -444,10 +445,12 @@ func _get_available_sfx_player(priority: int) -> AudioStreamPlayer2D:
 
 func _process(_delta: float) -> void:
 	"""Clean up finished SFX from tracking"""
-	_active_sfx = _active_sfx.filter(func(sfx):
-		var player = sfx["player"] as AudioStreamPlayer2D
-		return player != null and player.playing
-	)
+	var i = _active_sfx.size() - 1
+	while i >= 0:
+		var player = _active_sfx[i]["player"] as AudioStreamPlayer2D
+		if player == null or not player.playing:
+			_active_sfx.remove_at(i)
+		i -= 1
 
 func stop_all_sfx() -> void:
 	"""Stop all playing SFX immediately"""
