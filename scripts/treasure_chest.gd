@@ -45,13 +45,17 @@ const UPGRADE_COUNTS = [
 
 @export var auto_open_delay = 0.25
 
+# Static: only one chest can run the slow-mo animation at a time
+static var _chest_opening: bool = false
+static var _saved_time_scale: float = 1.0
+
 var _game: Node = null
 var _player_in_range = false
 var _opened = false
 var _opening = false
+var _owns_time_scale = false  # True if THIS chest set Engine.time_scale
 var _proximity_timer = 0.0
 var _upgrades_to_grant: Array = []
-var _time_scale_backup: float = 1.0
 
 @onready var body: Sprite2D = $Body
 @onready var glow: Sprite2D = $Glow
@@ -65,7 +69,19 @@ func _ready() -> void:
 	collision_mask = GameLayers.PLAYER
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+	tree_exiting.connect(_on_tree_exiting)
 	_start_glow_pulse()
+
+# Safety net: if this chest is freed for ANY reason while it owns time_scale, restore it
+func _on_tree_exiting() -> void:
+	if _owns_time_scale:
+		_restore_time_scale()
+
+func _restore_time_scale() -> void:
+	if _owns_time_scale:
+		_owns_time_scale = false
+		_chest_opening = false
+		Engine.time_scale = _saved_time_scale
 
 func _process(delta: float) -> void:
 	if _opened or _opening:
@@ -93,27 +109,51 @@ func _start_open() -> void:
 		return
 	_opening = true
 	_upgrades_to_grant = _roll_upgrades()
-	
-	# VAMPIRE SURVIVORS STYLE: Time slow-down for dramatic effect
-	_time_scale_backup = Engine.time_scale
+
+	# If another chest is already animating, skip the slow-mo sequence entirely
+	# Just grant upgrades instantly to avoid time_scale corruption
+	if _chest_opening:
+		_grant_all_upgrades_instant()
+		_opened = true
+		queue_free()
+		return
+
+	# This chest owns the slow-mo animation
+	_chest_opening = true
+	_owns_time_scale = true
+	_saved_time_scale = Engine.time_scale
 	Engine.time_scale = 0.15  # Super slow mo during opening
-	
+
 	_play_vs_opening_sequence()
+
+# Fast path: grant all upgrades without animation (used when another chest is mid-animation)
+func _grant_all_upgrades_instant() -> void:
+	if _game == null:
+		_game = get_tree().get_first_node_in_group("game") if is_inside_tree() else null
+	if _game == null:
+		return
+	for upgrade in _upgrades_to_grant:
+		var id = upgrade.get("id", "")
+		if _game.has_method("apply_chest_upgrade"):
+			_game.apply_chest_upgrade(id, upgrade)
+		if _game.has_method("show_floating_text"):
+			var rarity = upgrade.get("rarity", "common")
+			var color = RARITY_COLORS.get(rarity, Color.WHITE)
+			_game.show_floating_text(upgrade.get("name", ""), global_position + Vector2(0, -40), color)
 
 # Vampire Survivors style dramatic opening sequence
 func _play_vs_opening_sequence() -> void:
 	if _game == null:
-		_game = get_tree().get_first_node_in_group("game")
-	
+		if is_inside_tree():
+			_game = get_tree().get_first_node_in_group("game")
+
 	# PHASE 1: Build anticipation - chest glows brighter
-	if glow != null:
-		if not is_inside_tree():
-			return
+	if glow != null and is_inside_tree():
 		var bright_tween = create_tween()
-		bright_tween.set_speed_scale(1.0 / Engine.time_scale)  # Compensate for slow-mo
+		bright_tween.set_speed_scale(1.0 / max(Engine.time_scale, 0.01))
 		bright_tween.tween_property(glow, "modulate", Color(1.0, 0.9, 0.4, 0.9), 0.3)
 		bright_tween.parallel().tween_property(glow, "scale", Vector2.ONE * 1.4, 0.3)
-	
+
 	# Big particle burst
 	if _game != null and _game.has_method("spawn_glow_particle"):
 		for i in range(20):
@@ -122,80 +162,85 @@ func _play_vs_opening_sequence() -> void:
 			var vel = dir * randf_range(150.0, 300.0)
 			var color = Color(1.0, 0.85, 0.3).lerp(Color.WHITE, randf_range(0.2, 0.5))
 			_game.spawn_glow_particle(global_position, color, randf_range(12.0, 20.0), 1.2, vel, 3.0, 0.8, 1.3, 5)
-	
+
 	# Wait for anticipation
 	if not is_inside_tree():
+		_grant_all_upgrades_instant()
+		_restore_time_scale()
 		return
-	await get_tree().create_timer(0.4 * Engine.time_scale).timeout
+	await get_tree().create_timer(0.4 * max(Engine.time_scale, 0.01)).timeout
 	if not is_inside_tree():
+		# tree_exiting signal handles time_scale restore
 		return
-	
+
 	# PHASE 2: Chest bursts open with screen shake
-	# Audio: Chest open sound
 	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
-	
-	if body != null:
-		if not is_inside_tree():
-			return
+
+	if body != null and is_inside_tree():
 		var open_tween = create_tween()
-		open_tween.set_speed_scale(1.0 / Engine.time_scale)
-		# Lid flies open
+		open_tween.set_speed_scale(1.0 / max(Engine.time_scale, 0.01))
 		open_tween.tween_property(body, "rotation", -0.6, 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		open_tween.parallel().tween_property(body, "scale", Vector2(1.1, 0.9), 0.1).set_trans(Tween.TRANS_ELASTIC)
-	
-	# SCREEN SHAKE
+
 	if _game != null and _game.has_method("shake_camera"):
 		_game.shake_camera(8.0)
-	
-	# Flash effect
 	if _game != null and _game.has_method("flash_screen"):
 		_game.flash_screen(Color(1.0, 0.9, 0.4, 0.4), 0.2)
-	
+
 	# Wait for open animation
 	if not is_inside_tree():
+		_grant_all_upgrades_instant()
+		_restore_time_scale()
 		return
-	await get_tree().create_timer(0.3 * Engine.time_scale).timeout
+	await get_tree().create_timer(0.3 * max(Engine.time_scale, 0.01)).timeout
 	if not is_inside_tree():
 		return
-	
+
 	# PHASE 3: Items fly out one by one (VS style)
 	await _reveal_items_vs_style()
-	
-	# Restore time scale
-	Engine.time_scale = _time_scale_backup
-	
-	# Clean up
+
+	# Always restore time scale and clean up
+	_restore_time_scale()
 	_opened = true
 	queue_free()
 
 func _reveal_items_vs_style() -> void:
 	if _game == null:
 		return
-	
+
 	var item_count = _upgrades_to_grant.size()
-	var spread_angle = min(PI * 0.6, item_count * 0.3)  # Arc spread based on count
+	var spread_angle = min(PI * 0.6, item_count * 0.3)
 	var start_angle = -spread_angle / 2.0
-	
+
 	for i in range(item_count):
 		var upgrade = _upgrades_to_grant[i]
 		var rarity = upgrade.get("rarity", "common")
 		var color = RARITY_COLORS.get(rarity, Color.WHITE)
-		
-		# Calculate arc position for this item
+
 		var angle = start_angle + (spread_angle / (item_count - 1 if item_count > 1 else 1)) * i
-		var fly_direction = Vector2.RIGHT.rotated(angle - PI/2)  # Upward arc
+		var fly_direction = Vector2.RIGHT.rotated(angle - PI/2)
 		var target_pos = global_position + fly_direction * 120.0
-		
-		# Create floating item effect
-		await _spawn_floating_item(upgrade, target_pos, color, i)
-		
+
+		_spawn_floating_item(upgrade, target_pos, color, i)
+
 		# Pause between items for drama
 		if not is_inside_tree():
+			# Grant any remaining upgrades we haven't shown yet
+			for j in range(i + 1, item_count):
+				var remaining = _upgrades_to_grant[j]
+				var rid = remaining.get("id", "")
+				if _game != null and _game.has_method("apply_chest_upgrade"):
+					_game.apply_chest_upgrade(rid, remaining)
 			return
-		await get_tree().create_timer(0.5 * Engine.time_scale).timeout
+		await get_tree().create_timer(0.5 * max(Engine.time_scale, 0.01)).timeout
 		if not is_inside_tree():
+			for j in range(i + 1, item_count):
+				var remaining = _upgrades_to_grant[j]
+				var rid = remaining.get("id", "")
+				if _game != null and _game.has_method("apply_chest_upgrade"):
+					_game.apply_chest_upgrade(rid, remaining)
 			return
-	
+
 	# Final burst after all items
 	if _game != null and _game.has_method("spawn_glow_particle"):
 		for i in range(30):
