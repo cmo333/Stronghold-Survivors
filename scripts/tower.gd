@@ -173,6 +173,26 @@ func _setup_premium_visuals() -> void:
 
 	# NOTE: _particles and _level_up_particles are created lazily in _ensure_particles()
 	# NOTE: PointLight2D removed — too expensive with many towers
+	_ensure_tier_badge()
+
+func _ensure_tier_badge() -> void:
+	if _tier_badge != null:
+		return
+	_tier_badge = Label.new()
+	_tier_badge.name = "TierBadge"
+	_tier_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tier_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_tier_badge.position = Vector2(8, 10)
+	_tier_badge.z_index = 20
+	_tier_badge.add_theme_font_size_override("font_size", 8)
+	var font = load("res://assets/ui/pixel_font.ttf") if ResourceLoader.exists("res://assets/ui/pixel_font.ttf") else null
+	if font != null:
+		_tier_badge.add_theme_font_override("font", font)
+	_tier_badge.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5, 1.0))
+	_tier_badge.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
+	_tier_badge.add_theme_constant_override("outline_size", 2)
+	_update_tier_badge()
+	add_child(_tier_badge)
 
 func _ensure_particles() -> void:
 	if _particles != null:
@@ -213,22 +233,7 @@ func _ensure_level_up_particles() -> void:
 	_level_up_particles.emitting = false
 	add_child(_level_up_particles)
 
-	# Create tier badge (I, II, III)
-	_tier_badge = Label.new()
-	_tier_badge.name = "TierBadge"
-	_tier_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_tier_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_tier_badge.position = Vector2(8, 10)
-	_tier_badge.z_index = 20
-	_tier_badge.add_theme_font_size_override("font_size", 8)
-	var font = load("res://assets/ui/pixel_font.ttf") if ResourceLoader.exists("res://assets/ui/pixel_font.ttf") else null
-	if font != null:
-		_tier_badge.add_theme_font_override("font", font)
-	_tier_badge.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5, 1.0))
-	_tier_badge.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
-	_tier_badge.add_theme_constant_override("outline_size", 2)
-	_update_tier_badge()
-	add_child(_tier_badge)
+	_ensure_tier_badge()
 
 func _update_tier_badge() -> void:
 	if _tier_badge == null:
@@ -594,6 +599,13 @@ func _fire_at(target: Node2D) -> void:
 	
 	# Audio: Tower fire sound based on tower type
 	AudioManager.play_weapon_sound(tower_type, global_position)
+
+	# Recoil animation: brief scale punch for satisfying fire feedback
+	if body_sprite != null and is_inside_tree():
+		var base_scale = body_sprite.scale
+		var recoil_tween = create_tween()
+		recoil_tween.tween_property(body_sprite, "scale", base_scale * 1.15, 0.04).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		recoil_tween.tween_property(body_sprite, "scale", base_scale, 0.08).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
 
 func _set_anim_active(active: bool) -> void:
 	if body_sprite == null:

@@ -55,6 +55,13 @@ var _elite_glow_tween: Tween = null
 var _elite_glow_timer = 0.0
 var _elite_glow_interval = 0.18
 
+# Health bar (only for elites/siege/bosses)
+var _health_bar_bg: ColorRect = null
+var _health_bar_fill: ColorRect = null
+const HEALTH_BAR_WIDTH = 24.0
+const HEALTH_BAR_HEIGHT = 3.0
+const HEALTH_BAR_OFFSET_Y = -22.0
+
 @onready var body: CanvasItem = $Body
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 var _base_color: Color = Color.WHITE
@@ -76,6 +83,8 @@ func _ready() -> void:
 	if collision_shape != null and collision_shape.shape is CircleShape2D:
 		var shape: CircleShape2D = collision_shape.shape
 		shape.radius = max(shape.radius, 12.0)
+	if is_elite or is_siege:
+		_create_health_bar()
 
 func _physics_process(delta: float) -> void:
 	if _is_dying:
@@ -164,6 +173,37 @@ func _find_target() -> Node2D:
 		return best
 	return player
 
+func _create_health_bar() -> void:
+	_health_bar_bg = ColorRect.new()
+	_health_bar_bg.size = Vector2(HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT)
+	_health_bar_bg.position = Vector2(-HEALTH_BAR_WIDTH / 2.0, HEALTH_BAR_OFFSET_Y)
+	_health_bar_bg.color = Color(0.15, 0.15, 0.15, 0.7)
+	_health_bar_bg.z_index = 15
+	add_child(_health_bar_bg)
+
+	_health_bar_fill = ColorRect.new()
+	_health_bar_fill.size = Vector2(HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT)
+	_health_bar_fill.position = Vector2.ZERO
+	if is_elite:
+		_health_bar_fill.color = Color(1.0, 0.85, 0.2, 0.9)  # Gold for elites
+	elif is_siege:
+		_health_bar_fill.color = Color(1.0, 0.3, 0.2, 0.9)  # Red for siege
+	else:
+		_health_bar_fill.color = Color(0.2, 0.9, 0.2, 0.9)  # Green default
+	_health_bar_bg.add_child(_health_bar_fill)
+
+func _update_health_bar() -> void:
+	if _health_bar_fill == null:
+		return
+	var ratio = clampf(health / max_health, 0.0, 1.0)
+	_health_bar_fill.size.x = HEALTH_BAR_WIDTH * ratio
+	# Color shift: green → yellow → red as health drops
+	if not is_elite:
+		if ratio > 0.5:
+			_health_bar_fill.color = Color(0.2, 0.9, 0.2, 0.9).lerp(Color(1.0, 0.9, 0.2, 0.9), 1.0 - ratio * 2.0)
+		else:
+			_health_bar_fill.color = Color(1.0, 0.9, 0.2, 0.9).lerp(Color(1.0, 0.2, 0.2, 0.9), 1.0 - ratio * 2.0)
+
 func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
 	if amount <= 0.0:
 		return
@@ -199,7 +239,8 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			_last_damage_number_ms = now_ms
 
 	health -= amount
-	
+	_update_health_bar()
+
 	# Trigger hitstop on crit
 	if is_crit and _game != null and _game.has_method("trigger_hitstop"):
 		_game.trigger_hitstop()
@@ -239,21 +280,29 @@ func _start_death_sequence() -> void:
 			corpse_texture = (body as Sprite2D).texture
 		_game.fx_manager.spawn_death_effect(self, _base_color, corpse_texture)
 
+	# Hide health bar on death
+	if _health_bar_bg != null:
+		_health_bar_bg.visible = false
+
 	# Death animation sequence using tween (safety check)
 	if not is_inside_tree():
 		queue_free()
 		return
 	var tween = create_tween()
-	
-	# Flash white (0.1s) then fade out
-	tween.tween_interval(FeedbackConfig.DEATH_FLASH_DURATION)
-	
-	# Scale down to 0.3x over 0.3s
+
 	if body != null:
-		tween.tween_property(body, "scale", body.scale * 0.3, FeedbackConfig.DEATH_SCALE_DURATION).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
-		# Fade out alpha over 0.2s (overlapping with scale)
+		var orig_scale = body.scale
+		# Pop UP briefly (satisfying squash & stretch)
+		tween.tween_property(body, "scale", orig_scale * 1.3, 0.05).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		# Then SLAM down to nothing
+		tween.tween_property(body, "scale", orig_scale * 0.15, FeedbackConfig.DEATH_SCALE_DURATION).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+		# Fade out overlapping with scale
 		tween.parallel().tween_property(body, "modulate:a", 0.0, FeedbackConfig.DEATH_FADE_DURATION)
-	
+
+	# Elite/siege screen flash
+	if (is_elite or is_siege) and _game != null and _game.has_method("flash_screen"):
+		_game.flash_screen(Color(1.0, 0.9, 0.3, 0.15), 0.15)
+
 	# Corpse fade delay then cleanup
 	tween.tween_interval(FeedbackConfig.DEATH_CORPSE_FADE_DELAY)
 	tween.tween_callback(_finish_death)
@@ -364,6 +413,7 @@ func _tick_elite(delta: float) -> void:
 func _process_regen(delta: float) -> void:
 	if health < max_health:
 		health = min(max_health, health + _regen_rate * delta)
+		_update_health_bar()
 
 func _process_aura(delta: float) -> void:
 	_elite_mod_timer += delta
