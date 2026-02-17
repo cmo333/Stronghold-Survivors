@@ -1,5 +1,48 @@
 # Stronghold Survivors - Session Handoff
 
+## Session 4: Crash Fixes & Stability (2026-02-16)
+
+### Crash Root Causes (from Godot logs)
+1. **FX node churn** — All 72 FX sprite assets exist in `assets/fx/` but `fx.gd` used `@onready` which failed to resolve the AnimatedSprite2D child, causing 2700+ nodes to be created and instantly destroyed per game session
+2. **"Can't create Tween when not inside scene tree"** — Towers destroyed mid-upgrade-animation tried to create tweens after removal from the scene tree
+3. **Fire pool outliving tower** — Cannon tower's hellfire fire pool used `get_tree()` on the tower (which gets freed), crashing the async damage loop
+4. **Shared array mutation** — Tesla tower sorted the shared `cached_enemies` array in-place, corrupting it for all towers (fixed in prior commit)
+
+### Fixes Applied
+
+#### FX System (main.gd, fx.gd)
+- `_validate_fx_defs()` at startup strips fx_defs with missing assets
+- `fx.gd` sprite lookup moved from `@onready` to `setup()` time
+- Cached shell casing texture (was creating new Image per spawn)
+
+#### Tower Async Safety (tower.gd, all 3 subclasses)
+- `is_inside_tree()` guard added to ALL `create_tween()` calls:
+  - `_play_upgrade_animation()`, `_spawn_upgrade_pulse()`, `_play_levitation_effect()`
+  - `_spawn_upgrade_swirl()`, `_spawn_upgrade_flash()`, `take_damage()` flash
+  - `_update_tower_specific_visuals()` and `_play_tower_specific_upgrade_effects()` in all 3 subclasses
+  - `_fire_arc_conduit()` tween in tesla_tower.gd
+
+#### Cannon Tower Fire Pool (cannon_tower.gd)
+- Pre-await `is_inside_tree()` guards on `_apply_shockwave_at()` and `_spawn_fire_pool()`
+- Fire pool damage loop now uses `pool.get_tree()` instead of tower's `get_tree()`
+- Captures `game_ref` before async loop so fire pools keep burning after tower destruction
+- Falls back to `get_nodes_in_group("enemies")` if cached_enemies unavailable
+
+### Commits This Session
+- `2c23e9d` — fix: eliminate FX node churn crash + guard all tween creation
+- `6ecaed2` — fix: cannon_tower fire pool survives tower destruction + codex task
+
+### Parallel Work: Codex Task
+- `docs/CODEX_TASK_async_safety_audit.md` — Async safety audit of 21 remaining scripts + audio warning dedup
+- Covers: all boss scripts, enemy.gd, resource_generator.gd, player.gd, pickup.gd, power_up.gd, treasure_chest.gd, all FX scripts, audio_manager.gd
+
+### Known Remaining Issues
+- Audio manager spams "Sound not cached" for 28 missing .wav files (Codex task)
+- Tier badge only appears after first upgrade, not on placement (regression from lazy creation refactor — `_tier_badge` creation inside `_ensure_level_up_particles()` instead of `_setup_premium_visuals()`)
+- Essence count may accumulate too fast (screenshot showed 29,424 at Level 8)
+
+---
+
 ## Session 3: Tower Evolutions & Essence System (2026-02-16)
 
 ### New Feature: Essence Resource
