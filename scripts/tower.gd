@@ -15,6 +15,68 @@ var max_upgrade_level = 3
 var _is_upgrading = false  # Prevents spam
 var _upgrade_cooldown = 0.0
 
+# Evolution system
+var is_evolved: bool = false
+var evolution_id: String = ""
+var evolution_name: String = ""
+
+# Synergy bonus tracking
+var synergy_damage_bonus: float = 0.0
+var synergy_rate_bonus: float = 0.0
+var synergy_range_bonus: float = 0.0
+var synergy_chain_bonus: int = 0
+var synergy_explosion_bonus: float = 0.0
+
+# Evolution definitions per tower type (override in subclasses)
+func get_evolution_options() -> Array:
+	return []  # Each subclass returns [{"id": "gatling", "name": "Gatling Turret", "desc": "...", "cost": 3}, ...]
+
+func can_evolve() -> bool:
+	return upgrade_level >= 3 and not is_evolved
+
+func get_evolution_cost(evo_id: String) -> int:
+	for opt in get_evolution_options():
+		if opt.get("id", "") == evo_id:
+			return int(opt.get("cost", 3))
+	return 3
+
+func evolve(evo_id: String) -> void:
+	if not can_evolve():
+		return
+	is_evolved = true
+	evolution_id = evo_id
+	for opt in get_evolution_options():
+		if opt.get("id", "") == evo_id:
+			evolution_name = opt.get("name", evo_id)
+			break
+	_apply_evolution_stats()
+	_apply_evolution_visuals()
+	_play_evolution_animation()
+	_update_tier_badge()
+
+# Override in subclasses
+func _apply_evolution_stats() -> void:
+	pass
+
+func _apply_evolution_visuals() -> void:
+	pass
+
+func _play_evolution_animation() -> void:
+	if _game == null:
+		return
+	# Big dramatic effect
+	if _game.has_method("spawn_fx"):
+		_game.spawn_fx("upgrade_burst", global_position)
+	if _game.has_method("shake_camera"):
+		_game.shake_camera(10.0, 0.4)
+	# Purple essence flash
+	if _game.has_method("spawn_glow_particle"):
+		for i in range(16):
+			var angle = (TAU / 16.0) * i
+			var dir = Vector2.RIGHT.rotated(angle)
+			var vel = dir * randf_range(100.0, 200.0)
+			_game.spawn_glow_particle(global_position, Color(0.7, 0.3, 1.0), randf_range(10.0, 18.0), 1.0, vel, 2.5, 0.8, 1.2, 5)
+
 # Visual progression - Tower-specific elements
 var _glow_sprite: Sprite2D = null
 var _glow_tween: Tween = null
@@ -22,6 +84,7 @@ var _particles: CPUParticles2D = null
 var _upgrade_glow: PointLight2D = null
 var _level_up_particles: CPUParticles2D = null
 var _aura_ring: Sprite2D = null
+var _tier_badge: Label = null
 
 # Tower-specific visual elements (overridden by subclasses)
 var _tier_sprites: Array[Sprite2D] = []  # T2, T3 additive elements
@@ -59,6 +122,7 @@ var _game: Node = null
 var tower_type: String = "base"
 
 func _ready() -> void:
+	super._ready()  # CRITICAL: Adds to "buildings" group for selection
 	_game = get_tree().get_first_node_in_group("game")
 	if body_sprite != null:
 		body_sprite.stop()
@@ -149,6 +213,50 @@ func _setup_premium_visuals() -> void:
 	_upgrade_glow.texture_scale = 2.5
 	add_child(_upgrade_glow)
 
+	# Create tier badge (I, II, III)
+	_tier_badge = Label.new()
+	_tier_badge.name = "TierBadge"
+	_tier_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tier_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_tier_badge.position = Vector2(8, 10)
+	_tier_badge.z_index = 20
+	_tier_badge.add_theme_font_size_override("font_size", 8)
+	var font = load("res://assets/ui/pixel_font.ttf") if ResourceLoader.exists("res://assets/ui/pixel_font.ttf") else null
+	if font != null:
+		_tier_badge.add_theme_font_override("font", font)
+	_tier_badge.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5, 1.0))
+	_tier_badge.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
+	_tier_badge.add_theme_constant_override("outline_size", 2)
+	_update_tier_badge()
+	add_child(_tier_badge)
+
+func _update_tier_badge() -> void:
+	if _tier_badge == null:
+		return
+	if is_evolved:
+		# Show evolution name abbreviation
+		_tier_badge.text = "EVO"
+		_tier_badge.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0, 1.0))
+		return
+	var roman = ["I", "II", "III"]
+	_tier_badge.text = roman[clampi(upgrade_level - 1, 0, 2)]
+	# Color by tier
+	match upgrade_level:
+		1:
+			_tier_badge.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8, 0.7))
+		2:
+			_tier_badge.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4, 1.0))
+		3:
+			var element_color = ELEMENT_COLORS.get(tower_type, Color(1.0, 0.7, 1.0, 1.0))
+			_tier_badge.add_theme_color_override("font_color", element_color)
+
+func get_display_name() -> String:
+	var base = definition.get("name", "Tower")
+	if is_evolved:
+		return evolution_name
+	var tier_names = ["", " II", " III"]
+	return base + tier_names[clampi(upgrade_level - 1, 0, 2)]
+
 # Override this in subclasses to set up tower-specific visuals
 func _setup_tower_specific_visuals() -> void:
 	pass
@@ -233,6 +341,9 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 	# Tower-specific visuals
 	_update_tower_specific_visuals()
 
+	# Tier badge
+	_update_tier_badge()
+
 # Override in subclasses
 func _update_tower_specific_visuals() -> void:
 	pass
@@ -297,7 +408,10 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 	
 	# Tower-specific upgrade effects
 	_play_tower_specific_upgrade_effects()
-	
+
+	# Update tier badge
+	_update_tier_badge()
+
 	await get_tree().create_timer(0.5).timeout
 	_is_upgrading = false
 
@@ -377,9 +491,8 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	swirl.lifetime = 1.0
 	swirl.one_shot = true
 	swirl.explosiveness = 0.3
-	swirl.emission_shape = 4 # EMISSION_SHAPE_RING
-	swirl.emission_ring_radius = 20.0
-	swirl.emission_ring_inner_radius = 15.0
+	swirl.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
+	swirl.emission_sphere_radius = 20.0
 	swirl.gravity = Vector2(0, 0)
 	swirl.initial_velocity_min = 30.0
 	swirl.initial_velocity_max = 60.0

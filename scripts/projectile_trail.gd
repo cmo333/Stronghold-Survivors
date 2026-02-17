@@ -103,6 +103,9 @@ func _update_gradient_alpha() -> void:
 
 func _start_fade_out() -> void:
     _is_dying = true
+    if not is_inside_tree():
+        queue_free()
+        return
     var tween = create_tween()
     tween.tween_property(self, "modulate:a", 0.0, 0.15)
     tween.tween_callback(queue_free)

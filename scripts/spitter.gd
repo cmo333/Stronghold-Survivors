@@ -66,7 +66,7 @@ func _physics_process(delta: float) -> void:
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 		velocity = Vector2.ZERO
 	elif dist < preferred_distance:
-		# Back away slightly
+		# Back away slightly (direct, no nav needed for retreating)
 		var away = -to_target.normalized()
 		velocity = away * speed * 0.5 * _slow_multiplier
 		move_and_slide()

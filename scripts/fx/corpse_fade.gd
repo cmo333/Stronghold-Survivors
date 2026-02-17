@@ -29,14 +29,18 @@ func setup(texture: Texture2D, color: Color, start_scale: Vector2, lifetime: flo
     _flash_white()
 
 func _flash_white() -> void:
+    if not is_inside_tree():
+        return
     modulate = Color.WHITE
-    
+
     # Tween to base color
     var tween = create_tween()
     tween.tween_property(self, "modulate", _base_color, 0.1)
     tween.tween_callback(_start_fade_sequence)
 
 func _start_fade_sequence() -> void:
+    if not is_inside_tree():
+        return
     # Main fade sequence: scale down and fade out
     var tween = create_tween()
     

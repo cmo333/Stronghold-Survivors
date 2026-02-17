@@ -58,6 +58,7 @@ void fragment() {
 """
 
 static var _shared_shader: Shader = null
+static var _shared_quad: QuadMesh = null
 
 func setup(p_color: Color, p_size: float, p_lifetime: float, p_velocity: Vector2 = Vector2.ZERO, p_bloom: float = 1.6, p_trail_strength: float = 0.7, p_trail_length: float = 0.9, p_z: int = 0) -> void:
 	color = p_color
@@ -182,9 +183,10 @@ func _make_material(softness: float) -> ShaderMaterial:
 	return material
 
 func _make_quad() -> QuadMesh:
-	var mesh = QuadMesh.new()
-	mesh.size = Vector2.ONE
-	return mesh
+	if _shared_quad == null:
+		_shared_quad = QuadMesh.new()
+		_shared_quad.size = Vector2.ONE
+	return _shared_quad
 
 func _get_shader() -> Shader:
 	if _shared_shader == null:

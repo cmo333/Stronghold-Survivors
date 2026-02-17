@@ -32,10 +32,17 @@ var _trail_pool: Array[Node2D] = []
 var _spark_pool: Array[Node2D] = []
 var _shockwave_pool: Array[Node2D] = []
 const MAX_POOL_SIZE = 20
+const MAX_FX_CHILDREN = 300  # Global cap on FX to prevent memory issues
 
 func setup(game: Node, fx_root: Node2D) -> void:
     _game = game
     _fx_root = fx_root
+
+func _can_spawn_fx() -> bool:
+    """Check if we can spawn more FX without exceeding limits"""
+    if _fx_root == null:
+        return false
+    return _fx_root.get_child_count() < MAX_FX_CHILDREN
 
 # ============================================
 # PROJECTILE TRAILS
@@ -95,7 +102,7 @@ func spawn_impact(position: Vector2, damage_type: String = "normal", is_crit: bo
 
 func spawn_impact_sparks(position: Vector2, count: int, damage_type: String, normal: Vector2 = Vector2.UP) -> void:
     """Spawn bouncing spark particles"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var color = _get_damage_type_color(damage_type)
@@ -121,7 +128,7 @@ func spawn_impact_sparks(position: Vector2, count: int, damage_type: String, nor
 
 func spawn_ground_crack(position: Vector2, damage_type: String, normal: Vector2 = Vector2.UP) -> void:
     """Spawn ground crack decal that fades over 2 seconds"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var crack = GROUND_CRACK_SCENE.instantiate()
@@ -150,18 +157,18 @@ func spawn_death_effect(enemy: Node2D, enemy_color: Color, corpse_texture: Textu
     spawn_flash(position, Color.WHITE, 0.1, 1.5)
     
     # 2. Particle explosion matching enemy color
-    spawn_death_burst(position, enemy_color, 12)
-    
+    spawn_death_burst(position, enemy_color, 6)
+
     # 3. Leave fading corpse for 1s
     if corpse_texture != null:
         spawn_corpse_fade(position, corpse_texture, enemy_color, enemy.scale, enemy.rotation)
-    
+
     # 4. Blood/gore particles
     spawn_gore_particles(position, enemy_color)
 
 func spawn_death_burst(position: Vector2, base_color: Color, particle_count: int) -> void:
     """Explosion of particles in all directions"""
-    if _fx_root == null or not _game:
+    if not _can_spawn_fx() or not _game:
         return
     
     for i in range(particle_count):
@@ -191,27 +198,27 @@ func spawn_corpse_fade(position: Vector2, texture: Texture2D, color: Color, scal
 
 func spawn_gore_particles(position: Vector2, enemy_color: Color) -> void:
     """Blood and gore particle spray"""
-    if _fx_root == null or not _game:
+    if not _can_spawn_fx() or not _game:
         return
     
     var gore_color = enemy_color.darkened(0.3)
     gore_color = gore_color.lerp(Color(0.4, 0.05, 0.05), 0.5)  # Blood tint
     
-    for i in range(6):
+    for i in range(3):
         var angle = randf() * TAU
         var speed = randf_range(40.0, 100.0)
         var velocity = Vector2.RIGHT.rotated(angle) * speed
         velocity.y -= randf_range(20.0, 50.0)  # Arc up slightly
-        
+
         var size = randf_range(3.0, 7.0)
-        var lifetime = randf_range(0.5, 1.0)
-        
+        var lifetime = randf_range(0.4, 0.7)
+
         if _game.has_method("spawn_glow_particle"):
             _game.spawn_glow_particle(position, gore_color, size, lifetime, velocity, 1.2, 0.8, 0.7, 1)
 
 func spawn_flash(position: Vector2, color: Color, duration: float, max_size: float) -> void:
     """Bright flash effect that expands and fades"""
-    if _fx_root == null:
+    if not _can_spawn_fx():
         return
     
     var flash = Sprite2D.new()
@@ -355,10 +362,14 @@ func _get_damage_type_color(damage_type: String) -> Color:
         _:
             return COLOR_NORMAL
 
+var _cached_flash_texture: Texture2D = null
+
 func _create_flash_texture() -> Texture2D:
-    var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
-    img.fill(Color.WHITE)
-    return ImageTexture.create_from_image(img)
+    if _cached_flash_texture == null:
+        var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+        img.fill(Color.WHITE)
+        _cached_flash_texture = ImageTexture.create_from_image(img)
+    return _cached_flash_texture
 
 func return_to_pool(node: Node2D, pool_type: String) -> void:
     """Return a pooled object to its pool for reuse"""

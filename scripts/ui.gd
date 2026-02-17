@@ -138,7 +138,27 @@ func _build_upgrade_panel() -> void:
 func show_upgrade_panel(building: Node) -> void:
 	if upgrade_panel == null or building == null:
 		return
-	
+
+	# Check for evolution-ready or already evolved towers
+	if building.has_method("can_evolve") and building.can_evolve():
+		upgrade_title.text = "EVOLVE (Press U)"
+		upgrade_title.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+		upgrade_stats.text = "Tower is ready to evolve!\nChoose a specialization."
+		upgrade_cost.text = "Costs Essence"
+		var panel_style = upgrade_panel.get_theme_stylebox("panel").duplicate()
+		panel_style.border_color = Color(0.7, 0.3, 1.0)
+		upgrade_panel.add_theme_stylebox_override("panel", panel_style)
+		upgrade_panel.visible = true
+		return
+
+	if "is_evolved" in building and building.is_evolved:
+		upgrade_title.text = building.evolution_name if "evolution_name" in building else "EVOLVED"
+		upgrade_title.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+		upgrade_stats.text = "Fully evolved tower."
+		upgrade_cost.text = ""
+		upgrade_panel.visible = true
+		return
+
 	if not building.has_method("can_upgrade") or not building.can_upgrade():
 		upgrade_panel.visible = false
 		return
@@ -224,6 +244,181 @@ func _get_next_tier_data(def: Dictionary, next_tier: int) -> Dictionary:
 	if tiers.is_empty() or next_tier >= tiers.size():
 		return {}
 	return tiers[next_tier]
+
+# =========================================================
+# EVOLUTION PANEL
+# =========================================================
+
+var evolution_panel: PanelContainer = null
+var _evo_cards: Array[PanelContainer] = []
+var _evo_title: Label = null
+var _build_manager_ref: Node = null
+
+func _build_evolution_panel() -> void:
+	var hud = $HUD
+
+	evolution_panel = PanelContainer.new()
+	evolution_panel.name = "EvolutionPanel"
+	evolution_panel.visible = false
+	evolution_panel.set_anchors_preset(Control.PRESET_CENTER)
+	evolution_panel.size = Vector2(440, 220)
+	evolution_panel.position = Vector2(-220, -110)
+
+	var panel_style = StyleBoxFlat.new()
+	panel_style.bg_color = Color(0.06, 0.04, 0.12, 0.97)
+	panel_style.border_width_left = 2
+	panel_style.border_width_top = 2
+	panel_style.border_width_right = 2
+	panel_style.border_width_bottom = 2
+	panel_style.border_color = Color(0.7, 0.3, 1.0, 0.9)
+	panel_style.corner_radius_top_left = 6
+	panel_style.corner_radius_top_right = 6
+	panel_style.corner_radius_bottom_left = 6
+	panel_style.corner_radius_bottom_right = 6
+	evolution_panel.add_theme_stylebox_override("panel", panel_style)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	evolution_panel.add_child(vbox)
+
+	_evo_title = Label.new()
+	_evo_title.text = "EVOLVE YOUR TOWER"
+	_evo_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_evo_title.add_theme_font_size_override("font_size", 14)
+	_evo_title.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+	if _ui_font != null:
+		_evo_title.add_theme_font_override("font", _ui_font)
+	vbox.add_child(_evo_title)
+
+	var cards_row = HBoxContainer.new()
+	cards_row.add_theme_constant_override("separation", 12)
+	cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(cards_row)
+
+	# Create 2 evolution cards
+	for i in range(2):
+		var card = _create_evo_card(cards_row, i)
+		_evo_cards.append(card)
+
+	var hint = Label.new()
+	hint.text = "Press 1 or 2 to choose  |  ESC to cancel"
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint.add_theme_font_size_override("font_size", 9)
+	hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
+	if _ui_font != null:
+		hint.add_theme_font_override("font", _ui_font)
+	vbox.add_child(hint)
+
+	hud.add_child(evolution_panel)
+
+func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
+	var card = PanelContainer.new()
+	card.custom_minimum_size = Vector2(190, 140)
+
+	var card_style = StyleBoxFlat.new()
+	card_style.bg_color = Color(0.1, 0.06, 0.18, 0.95)
+	card_style.border_width_left = 1
+	card_style.border_width_top = 1
+	card_style.border_width_right = 1
+	card_style.border_width_bottom = 1
+	card_style.border_color = Color(0.5, 0.2, 0.8, 0.7)
+	card_style.corner_radius_top_left = 4
+	card_style.corner_radius_top_right = 4
+	card_style.corner_radius_bottom_left = 4
+	card_style.corner_radius_bottom_right = 4
+	card.add_theme_stylebox_override("panel", card_style)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 4)
+	card.add_child(vbox)
+
+	var key_label = Label.new()
+	key_label.name = "KeyLabel"
+	key_label.text = "[%d]" % (index + 1)
+	key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	key_label.add_theme_font_size_override("font_size", 10)
+	key_label.add_theme_color_override("font_color", Color(1.0, 0.9, 0.4))
+	if _ui_font != null:
+		key_label.add_theme_font_override("font", _ui_font)
+	vbox.add_child(key_label)
+
+	var name_label = Label.new()
+	name_label.name = "NameLabel"
+	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_label.add_theme_font_size_override("font_size", 11)
+	name_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+	if _ui_font != null:
+		name_label.add_theme_font_override("font", _ui_font)
+	vbox.add_child(name_label)
+
+	var desc_label = Label.new()
+	desc_label.name = "DescLabel"
+	desc_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	desc_label.add_theme_font_size_override("font_size", 8)
+	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
+	desc_label.autowrap_mode = TextServer.AUTOWRAP_WORD
+	if _ui_font != null:
+		desc_label.add_theme_font_override("font", _ui_font)
+	vbox.add_child(desc_label)
+
+	var cost_label = Label.new()
+	cost_label.name = "CostLabel"
+	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_label.add_theme_font_size_override("font_size", 9)
+	cost_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+	if _ui_font != null:
+		cost_label.add_theme_font_override("font", _ui_font)
+	vbox.add_child(cost_label)
+
+	parent.add_child(card)
+	return card
+
+func show_evolution_panel(options: Array, current_essence: int) -> void:
+	if evolution_panel == null:
+		_build_evolution_panel()
+
+	for i in range(min(options.size(), _evo_cards.size())):
+		var card = _evo_cards[i]
+		var opt = options[i]
+		var cost = int(opt.get("cost", 3))
+		var can_afford = current_essence >= cost
+
+		card.get_node("NameLabel" if card.has_node("NameLabel") else "PanelContainer/VBoxContainer/NameLabel")
+		# Access through card's child VBox
+		var vbox = card.get_child(0)
+		var name_label = vbox.get_child(1) as Label
+		var desc_label = vbox.get_child(2) as Label
+		var cost_label = vbox.get_child(3) as Label
+
+		name_label.text = opt.get("name", "???")
+		desc_label.text = opt.get("desc", "")
+		cost_label.text = "Cost: %d Essence" % cost
+
+		if can_afford:
+			cost_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+			name_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+		else:
+			cost_label.add_theme_color_override("font_color", Color(0.5, 0.2, 0.2))
+			name_label.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
+
+	evolution_panel.visible = true
+	# Animate entrance
+	evolution_panel.scale = Vector2(0.7, 0.7)
+	evolution_panel.modulate = Color(1, 1, 1, 0)
+	var tween = create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(evolution_panel, "scale", Vector2(1, 1), 0.25).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
+	tween.tween_property(evolution_panel, "modulate", Color(1, 1, 1, 1), 0.2)
+
+func hide_evolution_panel() -> void:
+	if evolution_panel != null and evolution_panel.visible:
+		var tween = create_tween()
+		tween.tween_property(evolution_panel, "scale", Vector2(0.7, 0.7), 0.15)
+		tween.parallel().tween_property(evolution_panel, "modulate:a", 0.0, 0.1)
+		tween.tween_callback(func(): evolution_panel.visible = false)
+
+func is_evolution_panel_open() -> bool:
+	return evolution_panel != null and evolution_panel.visible
 
 # =========================================================
 # BUILD PALETTE
@@ -334,8 +529,31 @@ func set_palette_active(id: String) -> void:
 # HUD LABELS
 # =========================================================
 
+var essence_label: Label = null
+
+func _build_essence_label() -> void:
+	var hud = $HUD
+	essence_label = Label.new()
+	essence_label.name = "Essence"
+	essence_label.text = "Essence: 0"
+	essence_label.add_theme_font_size_override("font_size", 10)
+	essence_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
+	if _ui_font != null:
+		essence_label.add_theme_font_override("font", _ui_font)
+	# Position below resources label
+	if resources_label != null:
+		essence_label.position = resources_label.position + Vector2(0, 16)
+	else:
+		essence_label.position = Vector2(10, 26)
+	hud.add_child(essence_label)
+
 func set_resources(amount: int) -> void:
 	resources_label.text = "Resources: %d" % amount
+
+func set_essence(amount: int) -> void:
+	if essence_label == null:
+		_build_essence_label()
+	essence_label.text = "Essence: %d" % amount
 
 func set_time(seconds: float) -> void:
 	time_label.text = "Time: %.1f" % seconds

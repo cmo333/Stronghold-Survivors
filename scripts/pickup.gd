@@ -40,6 +40,9 @@ func _on_body_entered(body: Node) -> void:
             if kind == "heal":
                 if _game.has_method("heal_player"):
                     _game.heal_player(value)
+            elif kind == "essence":
+                if _game.has_method("add_essence"):
+                    _game.add_essence(value)
             else:
                 _game.add_resources(value)
         queue_free()
@@ -49,5 +52,13 @@ func _apply_visual() -> void:
         return
     if kind == "heal":
         sprite.texture = HEAL_TEX
+    elif kind == "essence":
+        sprite.texture = HEAL_TEX  # Reuse crystal texture
+        sprite.modulate = Color(0.7, 0.3, 1.0, 1.0)  # Purple tint
+        # Add pulsing glow
+        var tween = create_tween()
+        tween.set_loops()
+        tween.tween_property(sprite, "modulate:a", 0.6, 0.4).set_trans(Tween.TRANS_SINE)
+        tween.tween_property(sprite, "modulate:a", 1.0, 0.4).set_trans(Tween.TRANS_SINE)
     else:
         sprite.texture = GOLD_TEX

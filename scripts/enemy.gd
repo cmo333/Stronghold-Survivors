@@ -238,8 +238,11 @@ func _start_death_sequence() -> void:
 		if body != null and body is Sprite2D:
 			corpse_texture = (body as Sprite2D).texture
 		_game.fx_manager.spawn_death_effect(self, _base_color, corpse_texture)
-	
-	# Death animation sequence using tween
+
+	# Death animation sequence using tween (safety check)
+	if not is_inside_tree():
+		queue_free()
+		return
 	var tween = create_tween()
 	
 	# Flash white (0.1s) then fade out
@@ -268,6 +271,11 @@ func _start_death_sequence() -> void:
 				_game.spawn_pickup(global_position, 18, "heal")
 		if is_elite and _game.has_method("spawn_treasure_chest"):
 			_game.spawn_treasure_chest(global_position)
+		# Essence drops from elite/siege kills
+		if is_elite and _game.has_method("spawn_pickup"):
+			_game.spawn_pickup(global_position + Vector2(randf_range(-10, 10), randf_range(-10, 10)), 1, "essence")
+		if is_siege and not is_elite and randf() < 0.5 and _game.has_method("spawn_pickup"):
+			_game.spawn_pickup(global_position + Vector2(randf_range(-10, 10), randf_range(-10, 10)), 1, "essence")
 		var xp_reward = 1
 		if is_siege:
 			xp_reward = 3
@@ -456,7 +464,7 @@ func _create_elite_glow(color: Color) -> void:
 	_start_elite_glow_pulse(base_scale, color)
 
 func _start_elite_glow_pulse(base_scale: Vector2, color: Color) -> void:
-	if _elite_glow == null:
+	if _elite_glow == null or not is_inside_tree():
 		return
 	if _elite_glow_tween != null:
 		_elite_glow_tween.kill()

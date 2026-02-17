@@ -104,45 +104,19 @@ func _setup_screen_effects() -> void:
 	_chromatic_aberration.material = ca_mat
 	
 	# Add to scene (as siblings so they render on top)
+	# Use call_deferred to avoid "busy setting up children" error
 	if get_parent() != null:
-		get_parent().add_child(_vignette)
-		get_parent().add_child(_chromatic_aberration)
+		get_parent().call_deferred("add_child", _vignette)
+		get_parent().call_deferred("add_child", _chromatic_aberration)
 
 func _process(delta: float) -> void:
-	_update_camera(delta)
+	# Only update shake and screen effects - no camera movement
 	_update_shake(delta)
 	_update_screen_effects(delta)
 
-func _update_camera(delta: float) -> void:
-	if _player == null:
-		return
-	
-	# Get mouse position for camera lean
-	var viewport = get_viewport()
-	if viewport == null:
-		return
-	
-	var mouse_pos = viewport.get_mouse_position()
-	var viewport_size = viewport.get_visible_rect().size
-	var mouse_normalized = (mouse_pos - viewport_size * 0.5) / (viewport_size * 0.5)
-	
-	# Camera lean toward mouse cursor
-	_mouse_offset = mouse_normalized * FeedbackConfig.CAMERA_MOUSE_LEAN_AMOUNT
-	
-	# Dynamic zoom based on enemy count
-	var enemy_count = get_tree().get_nodes_in_group("enemies").size()
-	if enemy_count > FeedbackConfig.CAMERA_ENEMY_COUNT_THRESHOLD:
-		_zoom_target = _base_zoom * FeedbackConfig.CAMERA_ZOOM_OUT_AMOUNT
-	else:
-		_zoom_target = _base_zoom
-	
-	# Smooth zoom
-	_current_zoom = _current_zoom.lerp(_zoom_target, delta * FeedbackConfig.CAMERA_SMOOTH_SPEED)
-	zoom = _current_zoom
-	
-	# Smooth follow with slight lag
-	var target_pos = _player.global_position + _mouse_offset + _shake_offset
-	position = position.lerp(target_pos, delta * FeedbackConfig.CAMERA_SMOOTH_SPEED)
+func _update_camera(_delta: float) -> void:
+	# Disabled - camera stays locked to player via parent node
+	pass
 
 func _update_shake(delta: float) -> void:
 	if _shake_timer > 0.0:

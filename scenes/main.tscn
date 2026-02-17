@@ -1,4 +1,4 @@
-[gd_scene load_steps=17 format=3 uid="uid://b3iccjuodukry"]
+[gd_scene load_steps=18 format=3 uid="uid://b3iccjuodukry"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2"]
@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/ground.gd" id="15"]
 [ext_resource type="Texture2D" uid="uid://dtvmyjiyni8w7" path="res://assets/ui/ui_bar_health_256x24_v001.png" id="21"]
 [ext_resource type="Texture2D" uid="uid://c7060wefc781" path="res://assets/ui/ui_bar_health_empty_256x24_v001.png" id="22"]
+[ext_resource type="Script" path="res://scripts/camera_controller.gd" id="23"]
 
 [sub_resource type="CircleShape2D" id="1"]
 
@@ -41,6 +42,7 @@ shape = SubResource("1")
 
 [node name="Camera2D" type="Camera2D" parent="World/Player"]
 zoom = Vector2(2, 2)
+script = ExtResource("23")
 
 [node name="Enemies" type="Node2D" parent="World"]
 

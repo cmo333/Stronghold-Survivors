@@ -15,6 +15,7 @@ func toggle() -> void:
     _apply_gate_state()
 
 func _apply_gate_state() -> void:
+    blocks_path = not is_open
     if collider_body != null:
         collider_body.collision_layer = 0 if is_open else GameLayers.BUILDING
     if body != null:

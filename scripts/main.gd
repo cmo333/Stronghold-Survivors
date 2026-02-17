@@ -23,11 +23,10 @@ const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
 const GAME_OVER_SCENE = preload("res://scenes/game_over.tscn")
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 const WaveManager = preload("res://scripts/wave_manager.gd")
-const DynamicCamera = preload("res://scripts/camera_controller.gd")
 const FXManager = preload("res://scripts/fx_manager.gd")
 
 @onready var player: CharacterBody2D = $World/Player
-@onready var camera: DynamicCamera = get_node_or_null("World/Player/Camera2D")
+@onready var camera: Camera2D = $World/Player/Camera2D
 @onready var enemies_root: Node2D = $World/Enemies
 @onready var allies_root: Node2D = get_node_or_null("World/Allies")
 @onready var projectiles_root: Node2D = $World/Projectiles
@@ -45,6 +44,7 @@ var fx_manager: FXManager = null
 
 # Game state
 var resources: int = 0
+var essence: int = 0
 var elapsed: float = 0.0
 var spawn_accumulator: float = 0.0
 var game_over = false
@@ -160,6 +160,7 @@ var spawn_radius_min = 720.0
 var spawn_radius_max = 1050.0
 var max_enemies_cap = 180
 var max_projectiles = 240
+var max_particles = 250  # Cap glow particles to prevent memory issues
 var elite_health_mult = 2.2
 var max_allies = 16
 
@@ -815,6 +816,8 @@ func _process(delta: float) -> void:
 		return
 	if tech_open:
 		_handle_tech_input()
+	# Camera zoom controls
+	_handle_zoom_input()
 	start_timer += delta
 	if start_timer < spawn_delay:
 		return
@@ -833,6 +836,26 @@ func _handle_start_input(delta: float) -> void:
 		_set_selected_character(1)
 	if Input.is_action_just_pressed("start_game"):
 		_start_game()
+
+func _handle_zoom_input() -> void:
+	if camera == null:
+		return
+	if Input.is_action_just_pressed("zoom_out"):
+		_cycle_zoom(1)  # Zoom out (lower zoom = see more)
+	elif Input.is_action_just_pressed("zoom_in"):
+		_cycle_zoom(-1)  # Zoom in (higher zoom = see less)
+
+func _cycle_zoom(direction: int) -> void:
+	_current_zoom_index = clampi(_current_zoom_index + direction, 0, ZOOM_LEVELS.size() - 1)
+	var target_zoom = ZOOM_LEVELS[_current_zoom_index]
+
+	# Kill existing tween if any
+	if _zoom_tween != null and _zoom_tween.is_valid():
+		_zoom_tween.kill()
+
+	# Smooth zoom transition
+	_zoom_tween = create_tween()
+	_zoom_tween.tween_property(camera, "zoom", target_zoom, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func _start_game() -> void:
 	game_started = true
@@ -1162,6 +1185,8 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 		return
 	var fx = FX_SCENE.instantiate()
 	fx.global_position = position
+	# Add to tree FIRST so @onready vars initialize before setup()
+	fx_root.add_child(fx)
 	var def = fx_defs[kind]
 	if fx.has_method("setup"):
 		var tint = def.get("tint", Color.WHITE)
@@ -1177,7 +1202,6 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 			int(def.get("z", 0)),
 			tint
 		)
-	fx_root.add_child(fx)
 	if kind == "explosion":
 		_spawn_glow_burst(position, Color(1.0, 0.55, 0.2), 10, 10.0, 0.5, 220.0, 1.9)
 	elif kind == "elite_kill":
@@ -1185,6 +1209,9 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 
 func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lifetime: float = 0.45, velocity: Vector2 = Vector2.ZERO, bloom: float = 1.6, trail_strength: float = 0.7, trail_length: float = 0.9, z: int = 1) -> Node:
 	if fx_root == null:
+		return null
+	# Cap particles to prevent memory issues in long games
+	if fx_root.get_child_count() >= max_particles:
 		return null
 	var glow = GLOW_PARTICLE_SCRIPT.new()
 	glow.global_position = position
@@ -1334,6 +1361,9 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 
 func add_resources(amount: int) -> void:
 	resources += amount
+
+func add_essence(amount: int) -> void:
+	essence += amount
 	_update_ui()
 
 func add_xp(amount: int) -> void:
@@ -1578,6 +1608,8 @@ func _get_available_tech_ids() -> Array:
 func _update_ui() -> void:
 	if ui.has_method("set_resources"):
 		ui.set_resources(resources)
+	if ui.has_method("set_essence"):
+		ui.set_essence(essence)
 	if ui.has_method("set_time"):
 		ui.set_time(elapsed)
 	if ui.has_method("set_level"):
@@ -1941,6 +1973,11 @@ var _original_camera_zoom: Vector2 = Vector2.ONE
 var _original_camera_position: Vector2 = Vector2.ZERO
 var _shake_base_offset: Vector2 = Vector2.ZERO
 
+# Camera zoom levels for gameplay toggle
+const ZOOM_LEVELS: Array[Vector2] = [Vector2(2.0, 2.0), Vector2(1.5, 1.5), Vector2(1.0, 1.0)]
+var _current_zoom_index: int = 0
+var _zoom_tween: Tween = null
+
 func _spawn_initial_breakables() -> void:
 	for i in range(breakable_target):
 		spawn_breakable()
@@ -2150,6 +2187,19 @@ func flash_screen(color: Color, duration: float = 0.3) -> void:
 	tween.tween_property(flash, "modulate:a", 0.0, duration).from(color.a).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(flash.queue_free)
 
+func set_death_vignette(intensity: float) -> void:
+	"""Set vignette intensity during death sequence"""
+	if camera != null and camera.has_method("set_vignette_intensity"):
+		camera.set_vignette_intensity(intensity)
+
+func spawn_soul_fragment(position: Vector2) -> Node2D:
+	"""Spawn a soul fragment particle during death animation"""
+	if fx_root == null:
+		return null
+	var color = Color(0.6, 0.7, 1.0, 0.8)  # Ghostly blue
+	spawn_glow_particle(position, color, 8.0, 2.0, Vector2(0, -30), 1.0, 0.5, 0.98, 2)
+	return null  # We don't track individual particles
+
 # Generator management functions
 func register_generator(generator: Node) -> void:
 	if generator == null or not is_instance_valid(generator):
@@ -2272,18 +2322,16 @@ func spawn_glow_burst_death(position: Vector2, base_color: Color) -> void:
 		spawn_glow_particle(position, color, size, 0.4, vel, 1.5, 0.7, 0.9, 2)
 
 # Death particle for player death sequence
-func spawn_death_particle(position: Vector2, velocity: Vector2) -> void:
+func spawn_death_particle(position: Vector2, velocity: Vector2, color: Color = Color(0.7, 0.1, 0.1), size: float = -1.0) -> void:
 	"""Spawn a blood/death particle for player death animation"""
 	if fx_root == null:
 		return
-	
-	var color = Color(0.7, 0.1, 0.1)  # Dark red blood
-	color = color.lerp(Color(0.5, 0.05, 0.05), randf())
-	
-	var size = randf_range(3.0, 7.0)
+
+	var final_color = color.lerp(Color(0.5, 0.05, 0.05), randf() * 0.3)
+	var final_size = size if size > 0 else randf_range(3.0, 7.0)
 	var lifetime = randf_range(0.5, 1.2)
-	
-	spawn_glow_particle(position, color, size, lifetime, velocity, 1.2, 0.8, 0.95, 1)
+
+	spawn_glow_particle(position, final_color, final_size, lifetime, velocity, 1.2, 0.8, 0.95, 1)
 
 # Heartbeat sound effect for death sequence
 func play_heartbeat_sound() -> void:

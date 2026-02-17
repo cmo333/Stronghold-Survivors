@@ -7,8 +7,6 @@ const BUILD_BINDINGS = {
 	"build_4": "mine_trap",
 	"build_5": "ice_trap",
 	"build_6": "acid_trap",
-	"build_7": "wall",
-	"build_8": "gate",
 	"build_9": "resource_generator",
 	"build_barracks": "barracks",
 	"build_armory": "armory",
@@ -36,6 +34,7 @@ var grid_size = 32.0
 var preview: Node2D = null
 var selection_ring: Sprite2D = null
 var range_ring: Sprite2D = null
+var _evo_input_cooldown: float = 0.0
 
 func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
@@ -64,6 +63,20 @@ func _process(delta: float) -> void:
 		selected_building = null
 		if selection_ring != null:
 			selection_ring.visible = false
+	# Handle evolution panel input
+	if ui != null and ui.has_method("is_evolution_panel_open") and ui.is_evolution_panel_open():
+		if Input.is_action_just_pressed("cancel"):
+			_hide_evolution_panel()
+		# Use _unhandled_key_input pattern - check for just-pressed via event
+		for key_idx in range(2):
+			var key = KEY_1 if key_idx == 0 else KEY_2
+			if Input.is_key_pressed(key) and _evo_input_cooldown <= 0.0:
+				_evo_input_cooldown = 0.3
+				choose_evolution(key_idx)
+				break
+		_evo_input_cooldown = max(0.0, _evo_input_cooldown - delta)
+		return  # Block all other input while evolution panel open
+
 	_handle_hotkeys()
 	if Input.is_action_just_pressed("upgrade"):
 		_try_upgrade_selected()
@@ -218,14 +231,17 @@ func _try_select() -> void:
 	selected_building = null
 	var pos = _get_mouse_world_position()
 	var best_dist = INF
-	for building: Node2D in get_tree().get_nodes_in_group("buildings"):
+	var buildings_found = get_tree().get_nodes_in_group("buildings")
+	for building: Node2D in buildings_found:
 		if building == null:
 			continue
 		var radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			radius = building.get_footprint_radius()
-		var dist = pos.distance_squared_to(building.global_position)
-		if dist <= radius * radius and dist < best_dist:
+		# Increase selection radius significantly for easier clicking (3x footprint, min 40px)
+		var select_radius = max(radius * 3.0, 40.0)
+		var dist = pos.distance_to(building.global_position)
+		if dist <= select_radius and dist < best_dist:
 			best_dist = dist
 			selected_building = building
 	if selected_building != null:
@@ -243,27 +259,35 @@ func _try_select() -> void:
 func _try_upgrade_selected() -> void:
 	if selected_building == null:
 		return
+
+	# Check for evolution first (T3 tower, not yet evolved)
+	if selected_building.has_method("can_evolve") and selected_building.can_evolve():
+		_show_evolution_choice(selected_building)
+		return
+
 	if not selected_building.has_method("can_upgrade"):
 		return
-	if not selected_building.can_upgrade():
+	var can_up = selected_building.can_upgrade()
+	if not can_up:
 		_set_selection_text("No upgrade available")
 		return
 	var upgrade_cost = _apply_cost_mult(int(selected_building.get_upgrade_cost()))
-	if game != null and not game.can_afford(upgrade_cost):
+	var can_afford = game != null and game.can_afford(upgrade_cost)
+	if not can_afford:
 		_set_selection_text("Not enough resources")
 		return
-	
+
 	# Store position before upgrade (in case building dies)
 	var building_pos = selected_building.global_position
-	
+
 	if selected_building.has_method("upgrade"):
 		# Play upgrade juice effects first
 		if selected_building.has_method("play_upgrade_juice"):
 			selected_building.play_upgrade_juice()
-		
+
 		# Apply the upgrade
 		selected_building.upgrade()
-		
+
 		if game != null:
 			game.spend(upgrade_cost)
 			# Premium upgrade FX
@@ -276,10 +300,52 @@ func _try_upgrade_selected() -> void:
 					tier = selected_building.tier
 				var shake = 4.0 + tier * 2.0
 				game.shake_camera(shake, 0.3)
-		
+
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 		_show_upgrade_panel()
+
+# --- Evolution System ---
+var _evolution_target: Node = null
+var _evolution_options: Array = []
+
+func _show_evolution_choice(building: Node) -> void:
+	if not building.has_method("get_evolution_options"):
+		return
+	_evolution_options = building.get_evolution_options()
+	if _evolution_options.is_empty():
+		_set_selection_text("No evolutions available")
+		return
+	_evolution_target = building
+	# Show evolution UI panel
+	if ui != null and ui.has_method("show_evolution_panel"):
+		ui.show_evolution_panel(_evolution_options, game.essence if game != null else 0)
+
+func choose_evolution(index: int) -> void:
+	if _evolution_target == null or not is_instance_valid(_evolution_target):
+		_hide_evolution_panel()
+		return
+	if index < 0 or index >= _evolution_options.size():
+		_hide_evolution_panel()
+		return
+	var option = _evolution_options[index]
+	var cost = int(option.get("cost", 3))
+	if game == null or game.essence < cost:
+		_set_selection_text("Not enough Essence (%d needed)" % cost)
+		return
+	# Spend essence and evolve
+	game.essence -= cost
+	_evolution_target.evolve(option.get("id", ""))
+	_hide_evolution_panel()
+	_set_selection_text(_describe_building(_evolution_target))
+	_update_selection_ring()
+	_show_upgrade_panel()
+
+func _hide_evolution_panel() -> void:
+	_evolution_target = null
+	_evolution_options = []
+	if ui != null and ui.has_method("hide_evolution_panel"):
+		ui.hide_evolution_panel()
 
 func _show_upgrade_panel() -> void:
 	if ui == null:
@@ -311,11 +377,13 @@ func _describe_building(building: Node) -> String:
 	else:
 		base_name = building.name
 	
-	# Add upgrade info if available
-	if building.has_method("can_upgrade") and building.can_upgrade():
+	# Add evolution or upgrade info
+	if building.has_method("can_evolve") and building.can_evolve():
+		base_name += " [U: EVOLVE]"
+	elif building.has_method("can_upgrade") and building.can_upgrade():
 		var cost = _apply_cost_mult(building.get_upgrade_cost())
 		base_name += " [U:%d]" % cost
-	
+
 	return base_name
 
 func _describe_current_build() -> String:
@@ -477,108 +545,8 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	return result
 
 func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
-	"""
-	Check if placing a building at proposed_pos would block ALL paths from enemy spawn points to player.
-	Uses flood-fill algorithm to check reachability.
-	"""
-	if game == null or game.player == null:
-		return true
-	
-	var player_pos = game.player.global_position
-	
-	# Get all potential spawn points (we check multiple directions around player)
-	var spawn_dist_min = 720.0
-	var spawn_dist_max = 1050.0
-	var spawn_points: Array[Vector2] = []
-	
-	# Sample spawn points in 8 directions
-	for i in range(8):
-		var angle = TAU * i / 8.0
-		var dist = (spawn_dist_min + spawn_dist_max) / 2.0
-		spawn_points.append(player_pos + Vector2.RIGHT.rotated(angle) * dist)
-	
-	# For each spawn point, check if there's still a valid path to player
-	for spawn_pos in spawn_points:
-		if not _can_reach_player(spawn_pos, player_pos, proposed_pos, proposed_radius):
-			return false
-	
+	"""Check if placing a building would block paths. Disabled for now."""
 	return true
-
-func _can_reach_player(from_pos: Vector2, player_pos: Vector2, proposed_pos: Vector2, proposed_radius: float) -> bool:
-	"""
-	Flood-fill check from spawn point to player, treating proposed building as an obstacle.
-	Returns true if player is reachable.
-	"""
-	# Use a simplified grid-based flood fill
-	var check_radius = proposed_radius - PATH_CHECK_RADIUS_OFFSET
-	if check_radius < 4.0:
-		check_radius = proposed_radius * 0.7
-	
-	var open_set: Array[Vector2] = [from_pos]
-	var visited: Dictionary = {}
-	var max_checks = 2000  # Limit to prevent infinite loops
-	var checks = 0
-	
-	# Pre-collect all existing building obstacles
-	var obstacles: Array[Dictionary] = []
-	for building in get_tree().get_nodes_in_group("buildings"):
-		if building == null or not is_instance_valid(building):
-			continue
-		var b_radius = 12.0
-		if building.has_method("get_footprint_radius"):
-			b_radius = building.get_footprint_radius()
-		# Skip if building doesn't block path
-		if building.has_meta("blocks_path") and not building.get_meta("blocks_path"):
-			continue
-		obstacles.append({"pos": building.global_position, "radius": b_radius - PATH_CHECK_RADIUS_OFFSET})
-	
-	# Add proposed building as obstacle
-	obstacles.append({"pos": proposed_pos, "radius": check_radius})
-	
-	while open_set.size() > 0 and checks < max_checks:
-		checks += 1
-		var current = open_set.pop_back()
-		
-		# Check if we've reached player
-		if current.distance_squared_to(player_pos) <= 60.0 * 60.0:
-			return true
-		
-		# Mark visited (use quantized position to handle floating point)
-		var key = Vector2i(int(current.x / PATH_CHECK_RESOLUTION), int(current.y / PATH_CHECK_RESOLUTION))
-		if visited.has(key):
-			continue
-		visited[key] = true
-		
-		# Check neighbors (8-directional)
-		var neighbors = [
-			current + Vector2(PATH_CHECK_RESOLUTION, 0),
-			current + Vector2(-PATH_CHECK_RESOLUTION, 0),
-			current + Vector2(0, PATH_CHECK_RESOLUTION),
-			current + Vector2(0, -PATH_CHECK_RESOLUTION),
-			current + Vector2(PATH_CHECK_RESOLUTION, PATH_CHECK_RESOLUTION),
-			current + Vector2(-PATH_CHECK_RESOLUTION, PATH_CHECK_RESOLUTION),
-			current + Vector2(PATH_CHECK_RESOLUTION, -PATH_CHECK_RESOLUTION),
-			current + Vector2(-PATH_CHECK_RESOLUTION, -PATH_CHECK_RESOLUTION)
-		]
-		
-		for neighbor in neighbors:
-			# Skip if already visited
-			var n_key = Vector2i(int(neighbor.x / PATH_CHECK_RESOLUTION), int(neighbor.y / PATH_CHECK_RESOLUTION))
-			if visited.has(n_key):
-				continue
-			
-			# Check collision with obstacles
-			var blocked = false
-			for obs in obstacles:
-				if neighbor.distance_squared_to(obs["pos"]) <= obs["radius"] * obs["radius"]:
-					blocked = true
-					break
-			
-			if not blocked:
-				open_set.append(neighbor)
-	
-	# If we've exhausted the search without finding player, path is blocked
-	return false
 
 func _apply_cost_mult(cost: int) -> int:
 	var final_cost = cost
