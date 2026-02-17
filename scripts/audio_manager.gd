@@ -51,12 +51,35 @@ var _warned_sounds: Dictionary = {}
 # SFX pool for one-shot sounds
 var _sfx_pool: Array[AudioStreamPlayer2D] = []
 
+# Set to true once actual audio assets exist to enable the system
+var audio_enabled: bool = false
+
 func _ready() -> void:
+	# Check if any audio files actually exist before spinning up the whole system
+	if not _any_audio_exists():
+		audio_enabled = false
+		set_process(false)  # No need for per-frame cleanup either
+		return
+	audio_enabled = true
 	_setup_audio_buses()
 	_create_music_players()
 	_create_sfx_pool()
 	_cache_sounds()
 	_update_bus_volumes()
+
+func _any_audio_exists() -> bool:
+	"""Quick check — do any of our audio directories have files?"""
+	for dir_path in ["res://assets/audio/sfx", "res://assets/audio/ui", "res://assets/audio/special"]:
+		if DirAccess.dir_exists_absolute(dir_path):
+			var dir = DirAccess.open(dir_path)
+			if dir != null:
+				dir.list_dir_begin()
+				var file = dir.get_next()
+				while file != "":
+					if not dir.current_is_dir() and (file.ends_with(".wav") or file.ends_with(".ogg") or file.ends_with(".mp3")):
+						return true
+					file = dir.get_next()
+	return false
 
 func _setup_audio_buses() -> void:
 	"""Ensure audio buses are configured properly"""
@@ -179,6 +202,8 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 	- position: World position for spatial audio (Vector2.ZERO for non-spatial)
 	- priority: Higher priority sounds can interrupt lower priority ones
 	"""
+	if not audio_enabled:
+		return
 	if not _sound_cache.has(sound_name):
 		# Try to load on-the-fly or use placeholder
 		if not _warned_sounds.has(sound_name):
@@ -218,6 +243,8 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 
 func play_random_from_category(category: String, position: Vector2 = Vector2.ZERO, priority: int = DEFAULT_PRIORITY) -> void:
 	"""Play a random sound from a category"""
+	if not audio_enabled:
+		return
 	if not sfx_categories.has(category):
 		push_warning("Unknown category: %s" % category)
 		return
@@ -231,6 +258,8 @@ func play_random_from_category(category: String, position: Vector2 = Vector2.ZER
 
 func play_weapon_sound(weapon_type: String, position: Vector2) -> void:
 	"""Play appropriate weapon sound"""
+	if not audio_enabled:
+		return
 	match weapon_type:
 		"gun":
 			play_random_from_category("weapon", position, DEFAULT_PRIORITY)
@@ -243,6 +272,8 @@ func play_weapon_sound(weapon_type: String, position: Vector2) -> void:
 
 func play_impact_sound(is_crit: bool = false, is_death: bool = false, position: Vector2 = Vector2.ZERO) -> void:
 	"""Play impact sound based on hit type"""
+	if not audio_enabled:
+		return
 	if is_death:
 		play_random_from_category("impact", position, DEFAULT_PRIORITY)
 	elif is_crit:
@@ -252,6 +283,8 @@ func play_impact_sound(is_crit: bool = false, is_death: bool = false, position: 
 
 func play_ui_sound(sound_name: String) -> void:
 	"""Play UI sound (non-spatial)"""
+	if not audio_enabled:
+		return
 	if _sound_cache.has(sound_name):
 		var player = AudioStreamPlayer.new()
 		player.bus = "UI"
@@ -266,6 +299,8 @@ func play_music(music_name: String, crossfade_duration: float = 2.0) -> void:
 	- music_name: Name of the music track
 	- crossfade_duration: Duration of crossfade in seconds
 	"""
+	if not audio_enabled:
+		return
 	var music_path = "res://assets/audio/music/%s.ogg" % music_name
 	var stream = load(music_path)
 	if stream == null:
@@ -318,6 +353,8 @@ func stop_music(fade_duration: float = 1.0) -> void:
 
 func play_ambient(ambient_name: String, fade_in: float = 3.0) -> void:
 	"""Start ambient sound loop"""
+	if not audio_enabled:
+		return
 	var ambient_path = "res://assets/audio/ambient/%s.ogg" % ambient_name
 	var stream = load(ambient_path)
 	if stream == null:
