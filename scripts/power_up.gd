@@ -6,7 +6,8 @@ enum Type {
 	ANCIENT_RELIC,    # Gold glow - Maxes out one random tower to T3
 	TIME_CRYSTAL,     # Cyan glow - Freezes all enemies for 5 seconds
 	RESOURCE_CACHE,   # Green glow - +500 gold instantly
-	BERSERK_ORB       # Red glow - Player damage ×3 for 15 seconds
+	BERSERK_ORB,      # Red glow - Player damage ×3 for 15 seconds
+	MAGNET_PULSE      # White glow - Vacuums all pickups to player
 }
 
 # Configuration for each power-up type
@@ -46,6 +47,15 @@ const TYPE_CONFIG = {
 		"spawn_max": 900.0,
 		"duration": 25.0,
 		"icon": "res://assets/ui/ui_icon_fire_32_v001.png"
+	},
+	Type.MAGNET_PULSE: {
+		"name": "Magnet Pulse",
+		"color": Color(0.9, 0.9, 1.0),       # White/silver
+		"glow_color": Color(1.0, 1.0, 1.0),
+		"spawn_min": 350.0,
+		"spawn_max": 550.0,
+		"duration": 30.0,
+		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png"
 	}
 }
 
@@ -159,6 +169,8 @@ func _apply_effect(player: Node2D) -> void:
 			_apply_resource_cache()
 		Type.BERSERK_ORB:
 			_apply_berserk_orb(player)
+		Type.MAGNET_PULSE:
+			_apply_magnet_pulse(player)
 
 func _apply_ancient_relic() -> void:
 	# Find all towers and upgrade one random tower to T3
@@ -248,6 +260,46 @@ func _apply_berserk_orb(player: Node2D) -> void:
 	# Screen shake
 	if _game.has_method("shake_camera"):
 		_game.shake_camera(8.0)
+
+func _apply_magnet_pulse(player: Node2D) -> void:
+	# Vacuum all pickups on the map to the player instantly
+	var pulled_count = 0
+	for pickup in get_tree().get_nodes_in_group("pickups"):
+		if pickup == null or not is_instance_valid(pickup):
+			continue
+		# Tween pickup to player position then let the magnet logic handle collection
+		if pickup.has_method("set") and pickup is Node2D:
+			pickup.magnet_radius = 99999.0
+			pickup.magnet_speed = 800.0
+			pulled_count += 1
+
+	# Also pull treasure chests and other power-ups closer (optional visual)
+	for chest in get_tree().get_nodes_in_group("treasure_chests"):
+		if chest == null or not is_instance_valid(chest) or chest is PowerUp:
+			continue
+		if chest is Node2D:
+			var tween = chest.create_tween()
+			tween.tween_property(chest, "global_position", player.global_position, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+
+	# Visual effects - expanding ring
+	if _game != null and _game.has_method("spawn_fx"):
+		_game.spawn_fx("shockwave", global_position)
+
+	# Radial particle burst (white/silver)
+	if _game != null and _game.has_method("spawn_glow_particle"):
+		for i in range(24):
+			var angle = (TAU / 24.0) * i
+			var dir = Vector2.RIGHT.rotated(angle)
+			var vel = dir * randf_range(60.0, 180.0)
+			_game.spawn_glow_particle(global_position, Color(0.9, 0.95, 1.0), randf_range(8.0, 14.0), 0.8, vel, 2.0, 0.7, 1.0, 5)
+
+	# Screen flash
+	if _game != null and _game.has_method("flash_screen"):
+		_game.flash_screen(Color(1.0, 1.0, 1.0, 0.3), 0.3)
+
+	# Show count
+	if pulled_count > 0 and _game != null and _game.has_method("show_floating_text"):
+		_game.show_floating_text("Pulled %d!" % pulled_count, global_position + Vector2(0, -60), Color(0.9, 0.95, 1.0))
 
 func _spawn_trail_particle() -> void:
 	if _game == null or not _game.has_method("spawn_glow_particle"):
@@ -356,11 +408,13 @@ static func get_spawn_distance(type: Type) -> Dictionary:
 
 static func get_random_type() -> Type:
 	var roll = randf()
-	if roll < 0.35:
-		return Type.RESOURCE_CACHE    # 35% - most common
-	elif roll < 0.60:
-		return Type.TIME_CRYSTAL      # 25%
-	elif roll < 0.80:
-		return Type.ANCIENT_RELIC     # 20%
+	if roll < 0.28:
+		return Type.RESOURCE_CACHE    # 28% - most common
+	elif roll < 0.48:
+		return Type.TIME_CRYSTAL      # 20%
+	elif roll < 0.65:
+		return Type.ANCIENT_RELIC     # 17%
+	elif roll < 0.82:
+		return Type.BERSERK_ORB       # 17%
 	else:
-		return Type.BERSERK_ORB       # 20% - rarest
+		return Type.MAGNET_PULSE      # 18%

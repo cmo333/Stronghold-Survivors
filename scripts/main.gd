@@ -177,8 +177,8 @@ var elite_health_mult = 2.2
 var max_allies = 16
 var max_pickups = 60
 
-var chest_drop_chance = 0.35
-var chest_drop_cooldown = 18.0
+var chest_drop_chance = 0.50
+var chest_drop_cooldown = 12.0
 var _next_chest_time = 0.0
 
 var _essence_announce_count = 0

@@ -20,6 +20,7 @@ func setup(game_ref: Node, amount: int, kind_name: String = "gold") -> void:
     _apply_magnet_settings()
 
 func _ready() -> void:
+    add_to_group("pickups")
     collision_layer = GameLayers.PICKUP
     collision_mask = GameLayers.PLAYER
     body_entered.connect(_on_body_entered)

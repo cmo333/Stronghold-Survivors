@@ -36,11 +36,10 @@ const RARITY_COLORS = {
 }
 
 const UPGRADE_COUNTS = [
-	{"count": 1, "weight": 20},
-	{"count": 2, "weight": 35},
-	{"count": 3, "weight": 30},
-	{"count": 4, "weight": 12},
-	{"count": 5, "weight": 3},
+	{"count": 2, "weight": 25},
+	{"count": 3, "weight": 40},
+	{"count": 4, "weight": 25},
+	{"count": 5, "weight": 10},
 ]
 
 @export var auto_open_delay = 0.25
@@ -109,6 +108,14 @@ func _start_open() -> void:
 		return
 	_opening = true
 	_upgrades_to_grant = _roll_upgrades()
+	# Bonus gold on every chest open (50-150)
+	var bonus_gold = randi_range(50, 150)
+	if _game == null and is_inside_tree():
+		_game = get_tree().get_first_node_in_group("game")
+	if _game != null and _game.has_method("add_resources"):
+		_game.add_resources(bonus_gold)
+	if _game != null and _game.has_method("show_floating_text"):
+		_game.show_floating_text("+%d Gold" % bonus_gold, global_position + Vector2(0, -20), Color(1.0, 0.84, 0.2))
 
 	# If another chest is already animating, skip the slow-mo sequence entirely
 	# Just grant upgrades instantly to avoid time_scale corruption
@@ -317,7 +324,7 @@ func _roll_upgrades() -> Array:
 			count = entry.count
 			break
 	
-	var has_diamond = randf() < 0.05
+	var has_diamond = randf() < 0.10
 	if has_diamond:
 		var diamond_keys = DIAMOND_UPGRADES.keys()
 		var diamond_key = diamond_keys[randi_range(0, diamond_keys.size() - 1)]
@@ -334,9 +341,9 @@ func _roll_upgrades() -> Array:
 func _roll_regular_upgrade() -> Dictionary:
 	var rarity_roll = randf()
 	var target_rarity = "common"
-	if rarity_roll < 0.10:
+	if rarity_roll < 0.18:
 		target_rarity = "epic"
-	elif rarity_roll < 0.40:
+	elif rarity_roll < 0.55:
 		target_rarity = "rare"
 	
 	var candidates = []

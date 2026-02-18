@@ -321,8 +321,13 @@ func _start_death_sequence() -> void:
 			if is_elite:
 				gold_amount = 6
 			_game.spawn_pickup(global_position, gold_amount, "gold")
-			if is_elite and randf() < 0.35:
-				_game.spawn_pickup(global_position, 18, "heal")
+			# Life pickups: regular enemies have 8% chance, siege 20%, elite 40%
+			if is_elite and randf() < 0.40:
+				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 15, "heal")
+			elif is_siege and randf() < 0.20:
+				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 8, "heal")
+			elif not is_elite and not is_siege and randf() < 0.08:
+				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 5, "heal")
 		if is_elite and _game.has_method("spawn_treasure_chest"):
 			_game.spawn_treasure_chest(global_position)
 		# Essence drops from elite/siege kills (throttled to reduce clutter)
