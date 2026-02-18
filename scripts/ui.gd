@@ -741,22 +741,34 @@ func set_palette_active(id: String) -> void:
 # =========================================================
 
 var essence_label: Label = null
+var _essence_hint_label: Label = null
+var _essence_pulse_tween: Tween = null
+var _evo_ready_announced: bool = false
 
 func _build_essence_label() -> void:
 	var hud = $HUD
+	# Main essence counter - placed below Controls label to avoid overlap
 	essence_label = Label.new()
 	essence_label.name = "Essence"
-	essence_label.text = "Essence: 0"
-	essence_label.add_theme_font_size_override("font_size", 10)
+	essence_label.text = ""
+	essence_label.add_theme_font_size_override("font_size", 12)
 	essence_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
 	if _ui_font != null:
 		essence_label.add_theme_font_override("font", _ui_font)
-	# Position below resources label
-	if resources_label != null:
-		essence_label.position = resources_label.position + Vector2(0, 16)
-	else:
-		essence_label.position = Vector2(10, 26)
+	essence_label.position = Vector2(16, 150)
+	essence_label.visible = false  # Hidden until player has essence
 	hud.add_child(essence_label)
+	# Hint label below essence showing what it does
+	_essence_hint_label = Label.new()
+	_essence_hint_label.name = "EssenceHint"
+	_essence_hint_label.text = ""
+	_essence_hint_label.add_theme_font_size_override("font_size", 10)
+	_essence_hint_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.8, 0.7))
+	if _ui_font != null:
+		_essence_hint_label.add_theme_font_override("font", _ui_font)
+	_essence_hint_label.position = Vector2(16, 166)
+	_essence_hint_label.visible = false
+	hud.add_child(_essence_hint_label)
 
 func set_resources(amount: int) -> void:
 	resources_label.text = "Resources: %d" % amount
@@ -764,7 +776,31 @@ func set_resources(amount: int) -> void:
 func set_essence(amount: int) -> void:
 	if essence_label == null:
 		_build_essence_label()
+	if amount <= 0:
+		essence_label.visible = false
+		if _essence_hint_label != null:
+			_essence_hint_label.visible = false
+		return
+	essence_label.visible = true
 	essence_label.text = "Essence: %d" % amount
+	if _essence_hint_label != null:
+		_essence_hint_label.visible = true
+		if amount >= 3:
+			_essence_hint_label.text = "Select T3 tower + U to evolve!"
+			_essence_hint_label.add_theme_color_override("font_color", Color(0.8, 0.5, 1.0, 0.9))
+			# Pulse the essence label when enough to evolve
+			if _essence_pulse_tween == null and is_inside_tree():
+				_essence_pulse_tween = create_tween()
+				_essence_pulse_tween.set_loops()
+				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 0.5, 0.6).set_trans(Tween.TRANS_SINE)
+				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+		else:
+			_essence_hint_label.text = "Evolves T3 towers (need 3)"
+			_essence_hint_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.8, 0.7))
+			if _essence_pulse_tween != null:
+				_essence_pulse_tween.kill()
+				_essence_pulse_tween = null
+				essence_label.modulate.a = 1.0
 
 func set_time(seconds: float) -> void:
 	time_label.text = "Time: %.1f" % seconds

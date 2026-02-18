@@ -1623,7 +1623,7 @@ func add_essence(amount: int) -> void:
 	essence += amount
 	_update_ui()
 	if not _essence_tip_shown and ui != null and ui.has_method("show_announcement"):
-		ui.show_announcement("ESSENCE fuels tower evolutions (U)", Color(0.8, 0.4, 1.0), 24, 3.2)
+		ui.show_announcement("ESSENCE collected! Upgrade towers to T3 then press U to EVOLVE", Color(0.8, 0.4, 1.0), 18, 5.0)
 		_essence_tip_shown = true
 
 func add_xp(amount: int) -> void:

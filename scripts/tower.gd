@@ -102,6 +102,8 @@ var _level_up_particles: CPUParticles2D = null
 var _aura_ring: Sprite2D = null
 var _tier_badge: Label = null
 var _tier_halo: Sprite2D = null
+var _evo_ready_label: Label = null
+var _evo_ready_tween: Tween = null
 
 # Tower-specific visual elements (overridden by subclasses)
 var _tier_sprites: Array[Sprite2D] = []  # T2, T3 additive elements
@@ -328,6 +330,12 @@ func _process(delta: float) -> void:
 	# Animate floating elements for T3
 	if upgrade_level >= 3:
 		_animate_floating_elements(delta)
+
+	# Show/hide EVO READY indicator
+	if can_evolve() and _evo_ready_label == null:
+		_show_evo_ready_label()
+	elif not can_evolve() and _evo_ready_label != null:
+		_hide_evo_ready_label()
 	
 	if _cooldown > 0.0:
 		return
@@ -346,8 +354,36 @@ func _process(delta: float) -> void:
 func _animate_floating_elements(delta: float) -> void:
 	pass
 
+func _show_evo_ready_label() -> void:
+	if _evo_ready_label != null:
+		return
+	_evo_ready_label = Label.new()
+	_evo_ready_label.name = "EvoReady"
+	_evo_ready_label.text = "EVO READY"
+	_evo_ready_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_evo_ready_label.add_theme_font_size_override("font_size", 8)
+	_evo_ready_label.add_theme_color_override("font_color", Color(0.8, 0.4, 1.0))
+	_evo_ready_label.position = Vector2(-28, -42)
+	_evo_ready_label.size = Vector2(56, 12)
+	_evo_ready_label.z_index = 20
+	add_child(_evo_ready_label)
+	# Pulse animation
+	if is_inside_tree():
+		_evo_ready_tween = create_tween()
+		_evo_ready_tween.set_loops()
+		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 0.3, 0.7).set_trans(Tween.TRANS_SINE)
+		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+
+func _hide_evo_ready_label() -> void:
+	if _evo_ready_tween != null:
+		_evo_ready_tween.kill()
+		_evo_ready_tween = null
+	if _evo_ready_label != null:
+		_evo_ready_label.queue_free()
+		_evo_ready_label = null
+
 func _update_visuals_for_upgrade_level(instant: bool = false) -> void:
-	var target_scale = 1.35 + (upgrade_level - 1) * 0.15
+	var target_scale = 1.4 + (upgrade_level - 1) * 0.2
 	var element_color = ELEMENT_COLORS.get(tower_type, Color(1.0, 1.0, 1.0, 0.8))
 	
 	if instant:
@@ -409,7 +445,10 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 
 	# Flash white
 	if body_sprite != null:
-		body_sprite.modulate = Color(2.0, 2.0, 2.0, 1.0)
+		if upgrade_level >= 3:
+			body_sprite.modulate = Color(element_color.r * 2.2, element_color.g * 2.2, element_color.b * 2.2, 1.0)
+		else:
+			body_sprite.modulate = Color(2.0, 2.0, 2.0, 1.0)
 
 	# Scale pop effect
 	if body_sprite != null:
@@ -481,14 +520,14 @@ func _spawn_upgrade_pulse(color: Color) -> void:
 	var pulse = Sprite2D.new()
 	pulse.z_index = -3
 	pulse.texture = _aura_ring.texture if _aura_ring != null else null
-	pulse.modulate = Color(color.r, color.g, color.b, 0.5)
-	pulse.scale = Vector2.ONE * 0.5
+	pulse.modulate = Color(color.r, color.g, color.b, 0.7)
+	pulse.scale = Vector2.ONE * 0.6
 	add_child(pulse)
 
 	var tween = create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(pulse, "scale", Vector2.ONE * 3.0, 0.8)
-	tween.tween_property(pulse, "modulate:a", 0.0, 0.8)
+	tween.tween_property(pulse, "scale", Vector2.ONE * 3.5, 0.75)
+	tween.tween_property(pulse, "modulate:a", 0.0, 0.75)
 	tween.chain().tween_callback(pulse.queue_free)
 
 func play_upgrade_juice() -> void:
@@ -513,10 +552,16 @@ func play_upgrade_juice() -> void:
 		_game.shake_camera(shake_strength, 0.3)
 	
 	# Spawn upgrade swirl particles (gold for T2, purple for T3)
+	var upgrade_color = _get_upgrade_color(next_level)
 	_spawn_upgrade_swirl(next_level)
 	
 	# Flash of light on completion
-	_spawn_upgrade_flash()
+	_spawn_upgrade_flash(upgrade_color)
+	_spawn_upgrade_glow_burst(upgrade_color, next_level)
+	if _game != null and _game.has_method("spawn_fx"):
+		_game.spawn_fx("upgrade_burst", global_position)
+	if _game != null and _game.has_method("flash_screen"):
+		_game.flash_screen(Color(upgrade_color.r, upgrade_color.g, upgrade_color.b, 0.14), 0.18)
 	
 	# Note: The actual visual transformation happens in _apply_tier_stats()
 	# when upgrade_level is incremented. This method just triggers the FX.
@@ -547,19 +592,19 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 		return
 	var swirl = CPUParticles2D.new()
 	swirl.name = "UpgradeSwirl"
-	swirl.amount = 16
+	swirl.amount = 18
 	swirl.lifetime = 1.0
 	swirl.one_shot = true
 	swirl.explosiveness = 0.3
 	swirl.emission_shape = CPUParticles2D.EMISSION_SHAPE_SPHERE
-	swirl.emission_sphere_radius = 20.0
+	swirl.emission_sphere_radius = 24.0
 	swirl.gravity = Vector2(0, 0)
-	swirl.initial_velocity_min = 30.0
-	swirl.initial_velocity_max = 60.0
+	swirl.initial_velocity_min = 35.0
+	swirl.initial_velocity_max = 70.0
 	swirl.angular_velocity_min = 180.0
 	swirl.angular_velocity_max = 360.0
-	swirl.scale_amount_min = 0.8
-	swirl.scale_amount_max = 2.0
+	swirl.scale_amount_min = 0.9
+	swirl.scale_amount_max = 2.3
 	swirl.color = UPGRADE_SWIRL_COLORS.get(target_level, Color(1.0, 0.85, 0.2, 1.0))
 	swirl.emitting = true
 	add_child(swirl)
@@ -568,21 +613,46 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	var timer = get_tree().create_timer(1.5)
 	timer.timeout.connect(func(): if is_instance_valid(swirl): swirl.queue_free())
 
-func _spawn_upgrade_flash() -> void:
+func _spawn_upgrade_flash(color: Color = Color(1.0, 1.0, 1.0, 1.0)) -> void:
 	"""Bright flash when upgrade completes"""
 	if not is_inside_tree():
 		return
 	var flash = ColorRect.new()
 	flash.name = "UpgradeFlash"
-	flash.color = Color(1.0, 1.0, 1.0, 0.0)
-	flash.size = Vector2(100, 100)
-	flash.position = Vector2(-50, -50)
+	flash.color = Color(color.r, color.g, color.b, 0.0)
+	flash.size = Vector2(140, 140)
+	flash.position = Vector2(-70, -70)
 	add_child(flash)
 	
 	var tween = create_tween()
-	tween.tween_property(flash, "color:a", 0.8, 0.1)
-	tween.tween_property(flash, "color:a", 0.0, 0.4)
+	tween.tween_property(flash, "color:a", 0.85, 0.1)
+	tween.tween_property(flash, "color:a", 0.0, 0.45)
 	tween.chain().tween_callback(flash.queue_free)
+
+func _get_upgrade_color(target_level: int) -> Color:
+	if target_level >= 3:
+		return ELEMENT_COLORS.get(tower_type, Color(0.8, 0.2, 1.0, 1.0))
+	return Color(1.0, 0.85, 0.2, 1.0)
+
+func _spawn_upgrade_glow_burst(color: Color, target_level: int) -> void:
+	if _game == null or not _game.has_method("spawn_glow_particle"):
+		return
+	var count = 6 + target_level * 2
+	for i in range(count):
+		var angle = randf() * TAU
+		var dir = Vector2.RIGHT.rotated(angle)
+		var vel = dir * randf_range(90.0, 170.0)
+		_game.spawn_glow_particle(
+			global_position + dir * randf_range(4.0, 14.0),
+			color,
+			randf_range(10.0, 16.0),
+			0.6,
+			vel,
+			2.3,
+			0.8,
+			1.15,
+			5
+		)
 
 func _apply_tier_stats(tier_data: Dictionary) -> void:
 	super._apply_tier_stats(tier_data)
