@@ -98,7 +98,6 @@ func _boss_behavior(delta: float) -> void:
 func _enter_phase_2() -> void:
 	"""Activate Phase 2 - faster, stronger, more aggressive"""
 	_phase_2_active = true
-	_phase = 2
 	
 	# Stat boosts
 	speed *= _phase_2_speed_mult

@@ -55,6 +55,9 @@ var _elite_glow_tween: Tween = null
 var _elite_glow_timer = 0.0
 var _elite_glow_interval = 0.18
 
+# Simple steering angles (degrees) for maze navigation
+const STEER_ANGLES = [0.0, 20.0, -20.0, 40.0, -40.0, 60.0, -60.0, 90.0, -90.0]
+
 # Health bar (only for elites/siege/bosses)
 var _health_bar_bg: ColorRect = null
 var _health_bar_fill: ColorRect = null
@@ -73,12 +76,12 @@ func setup(game_ref: Node, difficulty: float) -> void:
 		health_mult = float(_game.get_enemy_health_mult())
 	max_health = max_health * difficulty * health_mult
 	health = max_health
-	speed = speed * (1.0 + difficulty * 0.03)
+	speed = speed * (1.0 + difficulty * 0.03) * 0.9  # Slightly slower to reduce pile-ups
 
 func _ready() -> void:
 	add_to_group("enemies")
 	collision_layer = GameLayers.ENEMY
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY
+	collision_mask = GameLayers.PLAYER | GameLayers.ALLY | GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	if body != null:
 		_base_color = body.modulate
@@ -111,10 +114,42 @@ func _physics_process(delta: float) -> void:
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 		velocity = Vector2.ZERO
 	else:
-		var dir: Vector2 = (target.global_position - global_position).normalized()
+		var dir: Vector2 = _get_move_direction(target.global_position, delta)
 		velocity = dir * speed * _slow_multiplier
 		move_and_slide()
 	_update_status_visuals()
+
+func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
+	"""Steer around obstacles by probing a few angles toward the target."""
+	var base_dir = (target_pos - global_position).normalized()
+	if base_dir == Vector2.ZERO:
+		return Vector2.ZERO
+
+	var preferred_dir = base_dir
+	if _game != null and _game.has_method("get_flow_direction"):
+		var flow_dir = _game.get_flow_direction(global_position)
+		if flow_dir != Vector2.ZERO:
+			preferred_dir = flow_dir
+
+	var step = preferred_dir * speed * _slow_multiplier * max(delta, 0.016)
+	if not test_move(global_transform, step):
+		return preferred_dir
+
+	var best_dir = preferred_dir
+	var best_dist = INF
+	for angle in STEER_ANGLES:
+		if angle == 0.0:
+			continue
+		var candidate = preferred_dir.rotated(deg_to_rad(angle))
+		var candidate_step = candidate * speed * _slow_multiplier * max(delta, 0.016)
+		if test_move(global_transform, candidate_step):
+			continue
+		var probe_pos = global_position + candidate * 24.0
+		var dist = probe_pos.distance_squared_to(target_pos)
+		if dist < best_dist:
+			best_dist = dist
+			best_dir = candidate
+	return best_dir
 
 func _find_target() -> Node2D:
 	if _game == null:

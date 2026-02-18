@@ -129,7 +129,7 @@ func _start_open() -> void:
 	_chest_opening = true
 	_owns_time_scale = true
 	_saved_time_scale = Engine.time_scale
-	Engine.time_scale = 0.15  # Super slow mo during opening
+	Engine.time_scale = 0.6  # Subtle slow mo during opening
 
 	_play_vs_opening_sequence()
 

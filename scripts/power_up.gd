@@ -278,6 +278,8 @@ func _apply_magnet_pulse(player: Node2D) -> void:
 		if chest == null or not is_instance_valid(chest) or chest is PowerUp:
 			continue
 		if chest is Node2D:
+			if not chest.is_inside_tree():
+				continue
 			var tween = chest.create_tween()
 			tween.tween_property(chest, "global_position", player.global_position, 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 

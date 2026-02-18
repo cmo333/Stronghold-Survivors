@@ -445,7 +445,10 @@ func hide_upgrade_panel() -> void:
 		var tween = create_tween()
 		tween.tween_property(upgrade_panel, "scale", Vector2(0.8, 0.8), 0.15)
 		tween.parallel().tween_property(upgrade_panel, "modulate:a", 0.0, 0.1)
-		tween.tween_callback(func(): upgrade_panel.visible = false)
+		tween.tween_callback(func():
+			if upgrade_panel != null and is_instance_valid(upgrade_panel):
+				upgrade_panel.visible = false
+		)
 
 func _get_next_tier_data(def: Dictionary, next_tier: int) -> Dictionary:
 	var tiers = def.get("tiers", [])
@@ -626,7 +629,10 @@ func hide_evolution_panel() -> void:
 		var tween = create_tween()
 		tween.tween_property(evolution_panel, "scale", Vector2(0.7, 0.7), 0.15)
 		tween.parallel().tween_property(evolution_panel, "modulate:a", 0.0, 0.1)
-		tween.tween_callback(func(): evolution_panel.visible = false)
+		tween.tween_callback(func():
+			if evolution_panel != null and is_instance_valid(evolution_panel):
+				evolution_panel.visible = false
+		)
 
 func is_evolution_panel_open() -> bool:
 	return evolution_panel != null and evolution_panel.visible

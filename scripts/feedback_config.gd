@@ -56,8 +56,8 @@ const DAMAGE_COLOR_SHADOW = Color(0.416, 0.173, 1.0)
 const DAMAGE_COLOR_ARCANE = Color(0.271, 0.949, 1.0)
 
 # Time scale accents
-const KILL_SLOW_TIME_SCALE = 0.3
-const KILL_SLOW_DURATION = 0.1
+const KILL_SLOW_TIME_SCALE = 0.6
+const KILL_SLOW_DURATION = 0.06
 const TECH_SLOW_TIME_SCALE = 0.2
 
 # Screen shake

@@ -22,7 +22,7 @@ func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, proj_ran
 
 func _ready() -> void:
 	collision_layer = GameLayers.PROJECTILE
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY
+	collision_mask = GameLayers.PLAYER | GameLayers.ALLY | GameLayers.BUILDING
 	body_entered.connect(_on_body_entered)
 	_last_position = global_position
 
@@ -36,6 +36,9 @@ func _physics_process(delta: float) -> void:
 
 func _on_body_entered(body: Node) -> void:
 	if body == null:
+		return
+	if body.is_in_group("buildings"):
+		queue_free()
 		return
 	if not (body.is_in_group("player") or body.is_in_group("allies")):
 		return

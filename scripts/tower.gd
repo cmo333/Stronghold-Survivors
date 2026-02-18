@@ -193,7 +193,7 @@ func _ensure_tier_badge() -> void:
 	_tier_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_tier_badge.position = Vector2(6, 8)
 	_tier_badge.z_index = 20
-	_tier_badge.add_theme_font_size_override("font_size", 10)
+	_tier_badge.add_theme_font_size_override("font_size", 8)
 	var font = load("res://assets/ui/pixel_font.ttf") if ResourceLoader.exists("res://assets/ui/pixel_font.ttf") else null
 	if font != null:
 		_tier_badge.add_theme_font_override("font", font)
@@ -297,16 +297,16 @@ func _update_tier_halo() -> void:
 	else:
 		_tier_halo.visible = false
 	if _tier_halo.visible:
-		var base_scale = Vector2.ONE * 2.4
+		var base_scale = Vector2.ONE * 1.9
 		if body_sprite != null and body_sprite is Node2D:
-			base_scale = (body_sprite as Node2D).scale * 2.6
+			base_scale = (body_sprite as Node2D).scale * 2.0
 		_tier_halo.scale = base_scale
 		if is_evolved:
-			_tier_halo.modulate.a = 0.95
+			_tier_halo.modulate.a = 0.55
 		elif upgrade_level >= 3:
-			_tier_halo.modulate.a = 0.85
+			_tier_halo.modulate.a = 0.45
 		else:
-			_tier_halo.modulate.a = 0.7
+			_tier_halo.modulate.a = 0.3
 
 func get_display_name() -> String:
 	var base = definition.get("name", "Tower")
@@ -359,20 +359,20 @@ func _show_evo_ready_label() -> void:
 		return
 	_evo_ready_label = Label.new()
 	_evo_ready_label.name = "EvoReady"
-	_evo_ready_label.text = "EVO READY"
+	_evo_ready_label.text = "EVO"
 	_evo_ready_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_evo_ready_label.add_theme_font_size_override("font_size", 8)
-	_evo_ready_label.add_theme_color_override("font_color", Color(0.8, 0.4, 1.0))
-	_evo_ready_label.position = Vector2(-28, -42)
-	_evo_ready_label.size = Vector2(56, 12)
+	_evo_ready_label.add_theme_font_size_override("font_size", 7)
+	_evo_ready_label.add_theme_color_override("font_color", Color(0.7, 0.4, 0.9, 0.7))
+	_evo_ready_label.position = Vector2(-16, -36)
+	_evo_ready_label.size = Vector2(32, 10)
 	_evo_ready_label.z_index = 20
 	add_child(_evo_ready_label)
 	# Pulse animation
 	if is_inside_tree():
 		_evo_ready_tween = create_tween()
 		_evo_ready_tween.set_loops()
-		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 0.3, 0.7).set_trans(Tween.TRANS_SINE)
-		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE)
+		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 0.35, 0.7).set_trans(Tween.TRANS_SINE)
+		_evo_ready_tween.tween_property(_evo_ready_label, "modulate:a", 0.7, 0.7).set_trans(Tween.TRANS_SINE)
 
 func _hide_evo_ready_label() -> void:
 	if _evo_ready_tween != null:
@@ -399,14 +399,14 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		if upgrade_level == 1:
 			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.0)
 		elif upgrade_level == 2:
-			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.65)
+			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.35)
 		else:  # T3 - colored glow
-			_glow_sprite.modulate = Color(element_color.r, element_color.g, element_color.b, 0.9)
+			_glow_sprite.modulate = Color(element_color.r, element_color.g, element_color.b, 0.5)
 	
 	if body_sprite != null:
 		body_sprite.scale = Vector2.ONE * scale
 		# Slight brightness boost for higher tiers
-		var brightness = 1.0 + (upgrade_level - 1) * 0.1
+		var brightness = 1.0 + (upgrade_level - 1) * 0.08
 		body_sprite.modulate = Color(brightness, brightness, brightness, 1.0)
 	
 	# Particles for T3 (lazy created)
@@ -422,10 +422,10 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		if upgrade_level == 1:
 			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.0)
 		elif upgrade_level == 2:
-			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.4)
+			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.2)
 		else:
-			_aura_ring.modulate = Color(element_color.r, element_color.g, element_color.b, 0.55)
-		_aura_ring.scale = Vector2.ONE * (1.2 + upgrade_level * 0.3)
+			_aura_ring.modulate = Color(element_color.r, element_color.g, element_color.b, 0.3)
+		_aura_ring.scale = Vector2.ONE * (1.0 + upgrade_level * 0.2)
 	
 	# Tower-specific visuals
 	_update_tower_specific_visuals()
@@ -446,9 +446,9 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 	# Flash white
 	if body_sprite != null:
 		if upgrade_level >= 3:
-			body_sprite.modulate = Color(element_color.r * 2.2, element_color.g * 2.2, element_color.b * 2.2, 1.0)
+			body_sprite.modulate = Color(element_color.r * 1.6, element_color.g * 1.6, element_color.b * 1.6, 1.0)
 		else:
-			body_sprite.modulate = Color(2.0, 2.0, 2.0, 1.0)
+			body_sprite.modulate = Color(1.6, 1.6, 1.6, 1.0)
 
 	# Scale pop effect
 	if body_sprite != null:
@@ -461,25 +461,25 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 		# Return to normal brightness
 		var mod_tween = create_tween()
 		mod_tween.tween_property(body_sprite, "modulate", Color(2.0, 2.0, 2.0, 1.0), 0.0)
-		mod_tween.tween_property(body_sprite, "modulate", Color(1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0 + (upgrade_level - 1) * 0.1, 1.0), 0.3)
+		mod_tween.tween_property(body_sprite, "modulate", Color(1.0 + (upgrade_level - 1) * 0.08, 1.0 + (upgrade_level - 1) * 0.08, 1.0 + (upgrade_level - 1) * 0.08, 1.0), 0.3)
 
 	# Glow fade in
 	if _glow_sprite != null and is_inside_tree():
 		var glow_tween = create_tween()
 		if upgrade_level == 2:
-			glow_tween.tween_property(_glow_sprite, "modulate", Color(1.0, 1.0, 1.0, 0.65), 0.5)
+			glow_tween.tween_property(_glow_sprite, "modulate", Color(1.0, 1.0, 1.0, 0.35), 0.5)
 		else:  # T3
-			glow_tween.tween_property(_glow_sprite, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.9), 0.5)
+			glow_tween.tween_property(_glow_sprite, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.5), 0.5)
 
 	# Aura ring animation
 	if _aura_ring != null and upgrade_level >= 2 and is_inside_tree():
 		var aura_tween = create_tween()
 		aura_tween.set_parallel(true)
 		if upgrade_level == 2:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(1.0, 1.0, 1.0, 0.4), 0.5)
+			aura_tween.tween_property(_aura_ring, "modulate", Color(1.0, 1.0, 1.0, 0.2), 0.5)
 		else:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.55), 0.5)
-		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.2 + upgrade_level * 0.3), 0.5)
+			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.3), 0.5)
+		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.0 + upgrade_level * 0.2), 0.5)
 	
 	# Particle burst (lazy created)
 	_ensure_level_up_particles()
@@ -522,28 +522,28 @@ func _spawn_upgrade_pulse(color: Color) -> void:
 	var pulse = Sprite2D.new()
 	pulse.z_index = -3
 	pulse.texture = _aura_ring.texture if _aura_ring != null else null
-	pulse.modulate = Color(color.r, color.g, color.b, 0.7)
-	pulse.scale = Vector2.ONE * 0.6
+	pulse.modulate = Color(color.r, color.g, color.b, 0.45)
+	pulse.scale = Vector2.ONE * 0.5
 	add_child(pulse)
 
 	var tween = create_tween()
 	tween.set_parallel(true)
-	tween.tween_property(pulse, "scale", Vector2.ONE * 3.5, 0.75)
-	tween.tween_property(pulse, "modulate:a", 0.0, 0.75)
+	tween.tween_property(pulse, "scale", Vector2.ONE * 2.2, 0.6)
+	tween.tween_property(pulse, "modulate:a", 0.0, 0.6)
 	tween.chain().tween_callback(pulse.queue_free)
 
-func play_upgrade_juice() -> void:
+func play_upgrade_juice(target_level: int = -1) -> void:
 	"""Called by build_manager to trigger all upgrade effects"""
-	if _is_upgrading:
-		return  # Prevent spam
+	if _is_upgrading and target_level <= 0:
+		return  # Prevent spam when auto-previewing
 	
-	# Note: upgrade_level is still the OLD level here (called before upgrade())
-	# We use upgrade_level + 1 for effects that should match the NEW tier
-	var next_level = upgrade_level + 1
+	# Use explicit target level when provided (upgrade already applied)
+	# Otherwise assume we're called before upgrade and preview the next tier
+	var next_level = target_level if target_level > 0 else upgrade_level + 1
 	
-	# Time dilation moment - 0.2x for 1 second as specified
+	# Subtle time accent (avoid constant slow-mo feel)
 	if _game != null and _game.has_method("trigger_time_accent"):
-		_game.trigger_time_accent(0.2, 1.0)
+		_game.trigger_time_accent(0.75, 0.15)
 	
 	# Tower levitation effect
 	_play_levitation_effect()

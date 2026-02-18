@@ -229,6 +229,8 @@ func _try_place() -> void:
 	if building.has_method("configure"):
 		building.configure(current_id, def, tier)
 	if game != null:
+		if game.has_method("mark_flow_field_dirty"):
+			game.mark_flow_field_dirty()
 		game.spend(cost)
 		if game.has_method("spawn_fx"):
 			game.spawn_fx("build", pos)
@@ -291,12 +293,29 @@ func _try_upgrade_selected() -> void:
 	var building_pos = selected_building.global_position
 
 	if selected_building.has_method("upgrade"):
-		# Play upgrade juice effects first
-		if selected_building.has_method("play_upgrade_juice"):
-			selected_building.play_upgrade_juice()
+		var prev_tier = -1
+		if "tier" in selected_building:
+			prev_tier = selected_building.tier
 
-		# Apply the upgrade
+		# Apply the upgrade first (so can_upgrade() isn't blocked by upgrade FX cooldown)
 		selected_building.upgrade()
+
+		var upgraded = true
+		if prev_tier >= 0 and "tier" in selected_building:
+			upgraded = selected_building.tier != prev_tier
+
+		if not upgraded:
+			_set_selection_text("No upgrade available")
+			return
+
+		# Play upgrade juice effects after upgrade is applied
+		if selected_building.has_method("play_upgrade_juice"):
+			var juice_level = -1
+			if "upgrade_level" in selected_building:
+				juice_level = selected_building.upgrade_level
+			elif "tier" in selected_building:
+				juice_level = selected_building.tier + 1
+			selected_building.play_upgrade_juice(juice_level)
 
 		if game != null:
 			game.spend(upgrade_cost)
@@ -306,7 +325,7 @@ func _try_upgrade_selected() -> void:
 			# Stronger screenshake for higher tiers
 			if game.has_method("shake_camera"):
 				var tier = 1
-				if selected_building.has_method("tier"):
+				if "tier" in selected_building:
 					tier = selected_building.tier
 				var shake = 4.0 + tier * 2.0
 				game.shake_camera(shake, 0.3)

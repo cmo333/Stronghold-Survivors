@@ -36,6 +36,7 @@ const Minimap = preload("res://scripts/minimap.gd")
 @onready var props_root: Node2D = $World/Props
 @onready var pickups_root: Node2D = $World/Pickups
 @onready var breakables_root: Node2D = $World/Breakables
+@onready var ground: TileMap = $World/Ground
 @onready var ui: CanvasLayer = $UI
 @onready var build_manager: Node = $BuildManager
 @onready var game_over_ui: CanvasLayer = null
@@ -58,6 +59,25 @@ var _enemy_kill_count = 0
 var _time_scale_tween: Tween = null
 var _last_minute_announcement: int = -1
 var _essence_tip_shown: bool = false
+
+# Play area bounds (derived from Ground radius)
+var play_radius: float = 2200.0
+
+# Flow-field pathing (lightweight maze navigation)
+const FLOW_CELL_SIZE = 32.0
+const FLOW_RADIUS_CELLS = 60
+const FLOW_REBUILD_INTERVAL = 0.35
+const FLOW_DIRS = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
+]
+var _flow_dist: PackedInt32Array = PackedInt32Array()
+var _flow_blocked: PackedByteArray = PackedByteArray()
+var _flow_size: Vector2i = Vector2i.ZERO
+var _flow_origin_cell: Vector2i = Vector2i.ZERO
+var _flow_player_cell: Vector2i = Vector2i(999999, 999999)
+var _flow_dirty: bool = true
+var _flow_timer: float = 0.0
 
 # Cached enemy list — updated once per frame, used by all towers
 var cached_enemies: Array = []
@@ -867,7 +887,9 @@ func _ready() -> void:
 	_spawn_initial_breakables()
 	_spawn_environmental_particles()
 	_spawn_resource_zones()
+	_apply_play_bounds()
 	_reset_run_stats()
+	mark_flow_field_dirty()
 
 func _process(delta: float) -> void:
 	if game_over:
@@ -888,6 +910,7 @@ func _process(delta: float) -> void:
 	_update_dynamic_caps()
 	# Update cached enemy list once per frame (used by all towers)
 	cached_enemies = get_tree().get_nodes_in_group("enemies")
+	_update_flow_field(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
 	_handle_boss_spawning(delta)
@@ -1312,6 +1335,160 @@ func _apply_selected_character() -> void:
 	var base_path = str(data.get("base_path", ""))
 	var prefix = str(data.get("prefix", ""))
 	player.set_character(base_path, prefix)
+
+func _apply_play_bounds() -> void:
+	# Derive play radius from Ground radius (tiles * tile_size)
+	if ground != null:
+		var tile_size = 32.0
+		if "tile_size" in ground:
+			var raw = ground.tile_size
+			if typeof(raw) == TYPE_VECTOR2I:
+				tile_size = float(raw.x)
+			elif typeof(raw) == TYPE_VECTOR2:
+				tile_size = float(raw.x)
+		if "radius" in ground:
+			play_radius = float(ground.radius) * tile_size
+	# Clamp spawn distances to stay within play area
+	var max_spawn = max(300.0, play_radius - 120.0)
+	spawn_radius_max = min(spawn_radius_max, max_spawn)
+	spawn_radius_min = min(spawn_radius_min, spawn_radius_max - 160.0)
+	breakable_spawn_max = min(breakable_spawn_max, max_spawn + 200.0)
+	prop_spawn_radius = min(prop_spawn_radius, play_radius + 400.0)
+
+func get_play_radius() -> float:
+	return play_radius
+
+func clamp_to_play_area(pos: Vector2) -> Vector2:
+	if play_radius <= 0.0:
+		return pos
+	var clamp_radius = max(0.0, play_radius - 200.0)
+	var dist = pos.length()
+	if dist > clamp_radius:
+		return pos.normalized() * clamp_radius
+	return pos
+
+func mark_flow_field_dirty() -> void:
+	_flow_dirty = true
+
+func _update_flow_field(delta: float) -> void:
+	if player == null:
+		return
+	_flow_timer = max(0.0, _flow_timer - delta)
+	var player_cell = _world_to_flow_cell(player.global_position)
+	if player_cell != _flow_player_cell:
+		_flow_dirty = true
+	if not _flow_dirty or _flow_timer > 0.0:
+		return
+	_rebuild_flow_field(player_cell)
+
+func _rebuild_flow_field(player_cell: Vector2i) -> void:
+	_flow_timer = FLOW_REBUILD_INTERVAL
+	_flow_dirty = false
+	_flow_player_cell = player_cell
+
+	_flow_size = Vector2i(FLOW_RADIUS_CELLS * 2 + 1, FLOW_RADIUS_CELLS * 2 + 1)
+	_flow_origin_cell = player_cell - Vector2i(FLOW_RADIUS_CELLS, FLOW_RADIUS_CELLS)
+
+	var total = _flow_size.x * _flow_size.y
+	_flow_dist = PackedInt32Array()
+	_flow_dist.resize(total)
+	_flow_blocked = PackedByteArray()
+	_flow_blocked.resize(total)
+	for i in range(total):
+		_flow_dist[i] = -1
+		_flow_blocked[i] = 0
+
+	# Mark blocked cells from buildings
+	var buildings = get_tree().get_nodes_in_group("buildings")
+	for building in buildings:
+		if building == null or not is_instance_valid(building):
+			continue
+		var blocks_path = true
+		if "blocks_path" in building:
+			blocks_path = bool(building.blocks_path)
+		if not blocks_path:
+			continue
+		var radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			radius = float(building.get_footprint_radius())
+		var pad = radius + 2.0
+		var min_cell = _world_to_flow_cell(building.global_position - Vector2(pad, pad))
+		var max_cell = _world_to_flow_cell(building.global_position + Vector2(pad, pad))
+		for cx in range(min_cell.x, max_cell.x + 1):
+			for cy in range(min_cell.y, max_cell.y + 1):
+				var cell = Vector2i(cx, cy)
+				var idx = _flow_index(cell)
+				if idx < 0:
+					continue
+				var center = _flow_cell_to_world_center(cell)
+				if center.distance_squared_to(building.global_position) <= pad * pad:
+					_flow_blocked[idx] = 1
+
+	# BFS from player to build distance field
+	var start_idx = _flow_index(player_cell)
+	if start_idx < 0:
+		return
+	_flow_dist[start_idx] = 0
+	var queue: Array = [start_idx]
+	var head = 0
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % _flow_size.x
+		var y = int(idx / _flow_size.x)
+		for dir in FLOW_DIRS:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= _flow_size.x or ny >= _flow_size.y:
+				continue
+			var nidx = ny * _flow_size.x + nx
+			if _flow_blocked[nidx] == 1:
+				continue
+			if _flow_dist[nidx] >= 0:
+				continue
+			var cell = Vector2i(nx + _flow_origin_cell.x, ny + _flow_origin_cell.y)
+			if play_radius > 0.0 and _flow_cell_to_world_center(cell).length() > play_radius:
+				continue
+			_flow_dist[nidx] = _flow_dist[idx] + 1
+			queue.append(nidx)
+
+func get_flow_direction(world_pos: Vector2) -> Vector2:
+	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
+		return Vector2.ZERO
+	var cell = _world_to_flow_cell(world_pos)
+	var idx = _flow_index(cell)
+	if idx < 0:
+		return Vector2.ZERO
+	var dist = _flow_dist[idx]
+	if dist < 0:
+		return Vector2.ZERO
+	var best_dir = Vector2i.ZERO
+	var best_dist = dist
+	for dir in FLOW_DIRS:
+		var ncell = cell + dir
+		var nidx = _flow_index(ncell)
+		if nidx < 0:
+			continue
+		var ndist = _flow_dist[nidx]
+		if ndist >= 0 and ndist < best_dist:
+			best_dist = ndist
+			best_dir = dir
+	if best_dir == Vector2i.ZERO:
+		return Vector2.ZERO
+	var target = _flow_cell_to_world_center(cell + best_dir)
+	return (target - world_pos).normalized()
+
+func _world_to_flow_cell(world_pos: Vector2) -> Vector2i:
+	return Vector2i(int(floor(world_pos.x / FLOW_CELL_SIZE)), int(floor(world_pos.y / FLOW_CELL_SIZE)))
+
+func _flow_cell_to_world_center(cell: Vector2i) -> Vector2:
+	return Vector2((float(cell.x) + 0.5) * FLOW_CELL_SIZE, (float(cell.y) + 0.5) * FLOW_CELL_SIZE)
+
+func _flow_index(cell: Vector2i) -> int:
+	var local = cell - _flow_origin_cell
+	if local.x < 0 or local.y < 0 or local.x >= _flow_size.x or local.y >= _flow_size.y:
+		return -1
+	return local.y * _flow_size.x + local.x
 
 func _pick_weighted_choices(pool: Array, count: int) -> Array:
 	var picks: Array = []

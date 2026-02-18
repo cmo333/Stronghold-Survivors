@@ -2,7 +2,7 @@ extends CharacterBody2D
 
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 
-var speed = 230.0
+var speed = 250.0
 var attack_range = 520.0
 var attack_rate = 2.1
 var damage = 15.0
@@ -11,7 +11,7 @@ var projectile_range = 420.0
 
 var max_health = 100.0
 var health = 100.0
-var _base_speed = 230.0
+var _base_speed = 250.0
 var _speed_bonus = 0.0
 var _base_max_health = 100.0
 var _max_health_bonus = 0.0
@@ -88,6 +88,8 @@ func _physics_process(delta: float) -> void:
 	_update_facing(input_vector)
 	velocity = input_vector * speed * _slow_factor
 	move_and_slide()
+	if _game != null and _game.has_method("clamp_to_play_area"):
+		global_position = _game.clamp_to_play_area(global_position)
 
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if _attack_cooldown <= 0.0:

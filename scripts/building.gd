@@ -99,3 +99,8 @@ func sell() -> void:
         if game_node.has_method("show_floating_text"):
             game_node.show_floating_text("+%d" % refund, global_position + Vector2(0, -30), Color(1.0, 0.9, 0.3))
     queue_free()
+
+func _exit_tree() -> void:
+    var game_node = get_tree().get_first_node_in_group("game")
+    if game_node != null and game_node.has_method("mark_flow_field_dirty"):
+        game_node.mark_flow_field_dirty()
