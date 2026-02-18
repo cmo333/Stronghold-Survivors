@@ -78,14 +78,11 @@ func setup(game_ref: Node, difficulty: float) -> void:
 func _ready() -> void:
 	add_to_group("enemies")
 	collision_layer = GameLayers.ENEMY
-	collision_mask = GameLayers.PLAYER | GameLayers.BUILDING | GameLayers.ALLY
+	collision_mask = GameLayers.PLAYER | GameLayers.ALLY
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	if body != null:
 		_base_color = body.modulate
 		body.scale = Vector2.ONE * 1.8
-	if collision_shape != null and collision_shape.shape is CircleShape2D:
-		var shape: CircleShape2D = collision_shape.shape
-		shape.radius = max(shape.radius, 12.0)
 	if is_elite or is_siege:
 		_create_health_bar()
 

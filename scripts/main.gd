@@ -1861,16 +1861,19 @@ func get_pickup_range_mult() -> float:
 	return pickup_range_mult
 
 func get_enemy_health_mult() -> float:
-	if elapsed <= 600.0:
+	if elapsed <= 300.0:
 		return 1.0
+	if elapsed <= 600.0:
+		var t = clamp((elapsed - 300.0) / 300.0, 0.0, 1.0)
+		return lerp(1.0, 2.0, t)
 	if elapsed <= 1200.0:
 		var t = clamp((elapsed - 600.0) / 600.0, 0.0, 1.0)
-		return lerp(1.0, 1.6, t)
-	if elapsed <= 2100.0:
-		var t = clamp((elapsed - 1200.0) / 900.0, 0.0, 1.0)
-		return lerp(1.6, 2.6, t)
-	var t = clamp((elapsed - 2100.0) / 900.0, 0.0, 1.0)
-	return lerp(2.6, 3.2, t)
+		return lerp(2.0, 4.5, t)
+	if elapsed <= 1800.0:
+		var t = clamp((elapsed - 1200.0) / 600.0, 0.0, 1.0)
+		return lerp(4.5, 8.0, t)
+	var t = clamp((elapsed - 1800.0) / 600.0, 0.0, 1.0)
+	return lerp(8.0, 12.0, t)
 
 func _get_available_tech_ids() -> Array:
 	var available: Array = []

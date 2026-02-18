@@ -327,6 +327,9 @@ func _show_evolution_choice(building: Node) -> void:
 		_set_selection_text("No evolutions available")
 		return
 	_evolution_target = building
+	# Flash to draw attention to evolution panel
+	if game != null and game.has_method("flash_screen"):
+		game.flash_screen(Color(0.7, 0.3, 1.0, 0.3), 0.3)
 	# Show evolution UI panel
 	if ui != null and ui.has_method("show_evolution_panel"):
 		ui.show_evolution_panel(_evolution_options, game.essence if game != null else 0)

@@ -508,6 +508,8 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 		await get_tree().create_timer(0.5).timeout
 	if not is_inside_tree():
 		return
+	# Finalize all tier visuals after animation completes
+	_apply_tier_visuals_immediate(target_scale, element_color)
 	_is_upgrading = false
 
 # Override in subclasses for tower-specific upgrade effects

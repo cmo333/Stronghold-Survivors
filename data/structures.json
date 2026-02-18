@@ -27,7 +27,7 @@
         "pierce_count": 1
       },
       {
-        "cost": 50,
+        "cost": 120,
         "health": 75,
         "range": 360,
         "fire_rate": 1.5,
@@ -71,7 +71,7 @@
         "burn_effect": false
       },
       {
-        "cost": 75,
+        "cost": 150,
         "health": 95,
         "range": 290,
         "fire_rate": 0.8,
@@ -113,7 +113,7 @@
         "stun_chance": 0.0
       },
       {
-        "cost": 87,
+        "cost": 160,
         "health": 90,
         "range": 280,
         "fire_rate": 1.3,
