@@ -2187,10 +2187,15 @@ func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
 		_best_streak = _current_streak
 	if _enemy_kill_count % 10 == 0:
 		_trigger_kill_slow()
+	# Update kill streak HUD
+	if ui != null and ui.has_method("update_streak"):
+		ui.update_streak(_current_streak)
 
 func reset_kill_streak() -> void:
 	"""Call when player takes damage to reset streak"""
 	_current_streak = 0
+	if ui != null and ui.has_method("update_streak"):
+		ui.update_streak(0)
 
 func _check_and_save_record(stats: Dictionary) -> bool:
 	"""Check if this run is a new record and save to history"""

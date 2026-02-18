@@ -69,9 +69,15 @@ func _process(delta: float) -> void:
             var actual_income = int(round(float(income) * _zone_multiplier))
             _game.add_resources(actual_income)
             _zone.on_generator_ticked(actual_income)
+            # Show boosted income number in gold
+            if _game.has_method("show_floating_text"):
+                _game.show_floating_text("+%d" % actual_income, global_position + Vector2(randf_range(-6, 6), -20), Color(1.0, 0.85, 0.2, 0.9))
         else:
             _zone_multiplier = 1.0
             _game.add_resources(income)
+            # Show base income number in dimmer color
+            if _game.has_method("show_floating_text"):
+                _game.show_floating_text("+%d" % income, global_position + Vector2(randf_range(-6, 6), -20), Color(0.7, 0.7, 0.5, 0.7))
 
 func take_damage(amount: float) -> void:
     if _is_destroyed:

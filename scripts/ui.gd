@@ -85,6 +85,16 @@ var _tech_ledger_container: HBoxContainer = null
 var _tech_ledger_label: Label = null
 var _wave_announce_label: Label = null
 
+# Low health vignette
+var _vignette: ColorRect = null
+var _vignette_pulse_tween: Tween = null
+var _vignette_active: bool = false
+
+# Kill streak display
+var _streak_label: Label = null
+var _streak_fade_tween: Tween = null
+var _last_streak_shown: int = 0
+
 func _ready() -> void:
 	_ui_font = _build_bitmap_font(UI_FONT_PATH) if USE_CUSTOM_FONT else null
 	_apply_ui_fonts()
@@ -98,6 +108,8 @@ func _ready() -> void:
 	_build_wave_announcement()
 	_setup_upgrade_popup_timer()
 	_build_tech_ledger()
+	_build_vignette()
+	_build_streak_label()
 
 func _setup_upgrade_popup_timer() -> void:
 	if _upgrade_popup_timer != null:
@@ -794,6 +806,136 @@ func set_health(current: float, maximum: float) -> void:
 		return
 	health_bar.max_value = max(1.0, maximum)
 	health_bar.value = clamp(current, 0.0, maximum)
+	_update_vignette(current, maximum)
+
+# =========================================================
+# LOW HEALTH VIGNETTE
+# =========================================================
+
+func _build_vignette() -> void:
+	_vignette = ColorRect.new()
+	_vignette.name = "DamageVignette"
+	_vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_vignette.color = Color(0.8, 0.0, 0.0, 0.0)
+	# Use a shader for edge-only vignette effect
+	var mat = ShaderMaterial.new()
+	var shader = Shader.new()
+	shader.code = """
+shader_type canvas_item;
+uniform float intensity : hint_range(0.0, 1.0) = 0.0;
+void fragment() {
+	vec2 uv = UV * 2.0 - 1.0;
+	float dist = length(uv);
+	float vignette = smoothstep(0.4, 1.2, dist);
+	COLOR = vec4(0.8, 0.05, 0.05, vignette * intensity);
+}
+"""
+	mat.shader = shader
+	_vignette.material = mat
+	$HUD.add_child(_vignette)
+
+func _update_vignette(current: float, maximum: float) -> void:
+	if _vignette == null:
+		return
+	var ratio = current / max(1.0, maximum)
+	if ratio <= 0.3 and ratio > 0.0:
+		# Intensity scales: 0.3 ratio = mild, 0.0 = max
+		var intensity = (0.3 - ratio) / 0.3
+		var mat = _vignette.material as ShaderMaterial
+		if mat != null:
+			mat.set_shader_parameter("intensity", intensity * 0.7)
+		# Start pulse if not already
+		if not _vignette_active:
+			_vignette_active = true
+			_start_vignette_pulse()
+	else:
+		if _vignette_active:
+			_vignette_active = false
+			if _vignette_pulse_tween != null:
+				_vignette_pulse_tween.kill()
+				_vignette_pulse_tween = null
+			var mat = _vignette.material as ShaderMaterial
+			if mat != null:
+				mat.set_shader_parameter("intensity", 0.0)
+
+func _start_vignette_pulse() -> void:
+	if _vignette_pulse_tween != null:
+		_vignette_pulse_tween.kill()
+	if not is_inside_tree():
+		return
+	# We don't tween the shader param directly since set_health updates it
+	# Instead, modulate the ColorRect alpha for a pulsing feel
+	_vignette.modulate.a = 1.0
+	_vignette_pulse_tween = create_tween()
+	_vignette_pulse_tween.set_loops()
+	_vignette_pulse_tween.tween_property(_vignette, "modulate:a", 0.4, 0.5).set_trans(Tween.TRANS_SINE)
+	_vignette_pulse_tween.tween_property(_vignette, "modulate:a", 1.0, 0.5).set_trans(Tween.TRANS_SINE)
+
+# =========================================================
+# KILL STREAK DISPLAY
+# =========================================================
+
+func _build_streak_label() -> void:
+	_streak_label = Label.new()
+	_streak_label.name = "StreakLabel"
+	_streak_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_streak_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_streak_label.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	_streak_label.offset_right = -20.0
+	_streak_label.offset_left = -180.0
+	_streak_label.offset_top = -20.0
+	_streak_label.offset_bottom = 20.0
+	_streak_label.add_theme_font_size_override("font_size", 18)
+	_streak_label.modulate = Color(1.0, 0.9, 0.3, 0.0)  # Start invisible
+	_streak_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if _ui_font != null:
+		_streak_label.add_theme_font_override("font", _ui_font)
+	$HUD.add_child(_streak_label)
+
+func update_streak(streak: int) -> void:
+	if _streak_label == null:
+		return
+	if streak < 5:
+		# Below threshold, fade out if visible
+		if _last_streak_shown >= 5:
+			_fade_streak_out()
+		_last_streak_shown = streak
+		return
+	_last_streak_shown = streak
+	_streak_label.text = "x%d KILLS" % streak
+	# Color escalation
+	if streak >= 50:
+		_streak_label.modulate = Color(1.0, 0.2, 0.2, 1.0)  # Red
+		_streak_label.add_theme_font_size_override("font_size", 24)
+	elif streak >= 25:
+		_streak_label.modulate = Color(1.0, 0.5, 0.1, 1.0)  # Orange
+		_streak_label.add_theme_font_size_override("font_size", 22)
+	elif streak >= 10:
+		_streak_label.modulate = Color(1.0, 0.85, 0.2, 1.0)  # Gold
+		_streak_label.add_theme_font_size_override("font_size", 20)
+	else:
+		_streak_label.modulate = Color(0.9, 0.9, 0.9, 0.8)  # White
+		_streak_label.add_theme_font_size_override("font_size", 18)
+	# Quick pop animation
+	if _streak_fade_tween != null:
+		_streak_fade_tween.kill()
+	if not is_inside_tree():
+		return
+	_streak_fade_tween = create_tween()
+	var pop_scale = 1.2 if streak >= 25 else 1.1
+	_streak_label.scale = Vector2.ONE * pop_scale
+	_streak_fade_tween.tween_property(_streak_label, "scale", Vector2.ONE, 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+func _fade_streak_out() -> void:
+	if _streak_label == null:
+		return
+	if _streak_fade_tween != null:
+		_streak_fade_tween.kill()
+	if not is_inside_tree():
+		return
+	_streak_fade_tween = create_tween()
+	_streak_fade_tween.tween_property(_streak_label, "modulate:a", 0.0, 0.5)
 
 # =========================================================
 # TECH PICK PANEL
