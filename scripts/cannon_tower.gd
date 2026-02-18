@@ -223,7 +223,8 @@ func _update_tower_specific_visuals() -> void:
 	if _reinforced_barrel != null:
 		var tween = create_tween()
 		if upgrade_level >= 2:
-			tween.tween_property(_reinforced_barrel, "modulate", Color(0.8, 0.3, 0.2, 0.85), 0.3)
+			_reinforced_barrel.scale = Vector2.ONE * 1.15
+			tween.tween_property(_reinforced_barrel, "modulate", Color(0.95, 0.35, 0.25, 1.0), 0.3)
 		else:
 			tween.tween_property(_reinforced_barrel, "modulate", Color(0.8, 0.3, 0.2, 0.0), 0.3)
 	
@@ -231,7 +232,7 @@ func _update_tower_specific_visuals() -> void:
 		if vent != null:
 			if upgrade_level >= 2:
 				vent.emitting = true
-				vent.modulate = Color(0.9, 0.9, 0.95, 0.6)
+				vent.modulate = Color(0.95, 0.95, 1.0, 0.8)
 			else:
 				vent.emitting = false
 				vent.modulate = Color(0.9, 0.9, 0.95, 0.0)
@@ -241,16 +242,18 @@ func _update_tower_specific_visuals() -> void:
 		for barrel in _multi_barrels:
 			if barrel != null:
 				var barrel_tween = create_tween()
-				barrel_tween.tween_property(barrel, "modulate", Color(0.6, 0.2, 0.2, 0.9), 0.4)
+				barrel.scale = Vector2.ONE * 1.2
+				barrel_tween.tween_property(barrel, "modulate", Color(0.7, 0.25, 0.2, 1.0), 0.4)
 		
 		for rune in _rune_glows:
 			if rune != null:
 				var rune_tween = create_tween()
-				rune_tween.tween_property(rune, "modulate", Color(1.0, 0.3, 0.1, 0.8), 0.5)
+				rune.scale = Vector2.ONE * 1.15
+				rune_tween.tween_property(rune, "modulate", Color(1.2, 0.4, 0.15, 1.0), 0.5)
 		
 		if _smoke_trails != null:
 			_smoke_trails.emitting = true
-			_smoke_trails.modulate = Color(0.3, 0.3, 0.3, 0.4)
+			_smoke_trails.modulate = Color(0.35, 0.35, 0.35, 0.6)
 	else:
 		for barrel in _multi_barrels:
 			if barrel != null:

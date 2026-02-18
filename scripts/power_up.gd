@@ -329,6 +329,8 @@ func _start_glow_pulse() -> void:
 		return
 	if not is_inside_tree():
 		return
+	if not glow.is_inside_tree():
+		return
 	
 	# Add additive blend mode for glow effect
 	var mat = CanvasItemMaterial.new()

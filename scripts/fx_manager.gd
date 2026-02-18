@@ -220,6 +220,8 @@ func spawn_flash(position: Vector2, color: Color, duration: float, max_size: flo
     """Bright flash effect that expands and fades"""
     if not _can_spawn_fx():
         return
+    if not is_inside_tree():
+        return
     
     var flash = Sprite2D.new()
     flash.texture = _create_flash_texture()
@@ -229,6 +231,9 @@ func spawn_flash(position: Vector2, color: Color, duration: float, max_size: flo
     _fx_root.add_child(flash)
     
     flash.scale = Vector2.ZERO
+    if not flash.is_inside_tree():
+        flash.queue_free()
+        return
     var tween = flash.create_tween()
     tween.tween_property(flash, "scale", Vector2.ONE * max_size, duration * 0.3)
     tween.parallel().tween_property(flash, "modulate:a", 0.0, duration)

@@ -241,16 +241,22 @@
     "blocks_path": true,
     "tiers": [
       {
-        "cost": 25,
-        "health": 60,
-        "income": 2,
+        "cost": 30,
+        "health": 120,
+        "income": 4,
         "interval": 2.0
       },
       {
-        "cost": 40,
-        "health": 90,
-        "income": 3,
+        "cost": 50,
+        "health": 180,
+        "income": 6,
         "interval": 1.8
+      },
+      {
+        "cost": 80,
+        "health": 250,
+        "income": 10,
+        "interval": 1.5
       }
     ],
     "preview": "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v001.png"

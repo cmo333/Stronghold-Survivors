@@ -24,6 +24,7 @@ const GAME_OVER_SCENE = preload("res://scenes/game_over.tscn")
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 const WaveManager = preload("res://scripts/wave_manager.gd")
 const FXManager = preload("res://scripts/fx_manager.gd")
+const Minimap = preload("res://scripts/minimap.gd")
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
@@ -41,6 +42,7 @@ const FXManager = preload("res://scripts/fx_manager.gd")
 
 # FX Manager
 var fx_manager: FXManager = null
+var minimap: Control = null
 
 # Game state
 var resources: int = 0
@@ -54,6 +56,8 @@ var spawn_delay = 10.0
 var auto_start_delay = 2.0
 var _enemy_kill_count = 0
 var _time_scale_tween: Tween = null
+var _last_minute_announcement: int = -1
+var _essence_tip_shown: bool = false
 
 # Cached enemy list — updated once per frame, used by all towers
 var cached_enemies: Array = []
@@ -91,9 +95,7 @@ var tech_open = false
 var tech_choices: Array = []
 var tech_levels: Dictionary = {}
 var unlocked_builds: Dictionary = {
-	"arrow_turret": true,
-	"wall": true,
-	"gate": true
+	"arrow_turret": true
 }
 var characters = [
 	{
@@ -158,19 +160,43 @@ var tower_hp_mult = 1.0
 var towers_self_repair = false
 
 var wave_manager: Node = null
+var _active_boss: Node = null
+var _boss_schedule_index = 0
+var _boss_cycle = 0
+var _next_boss_time = 0.0
+var _boss_warning_shown = false
+var _final_boss_spawned = false
 
-var spawn_radius_min = 720.0
-var spawn_radius_max = 1050.0
-var max_enemies_cap = 120
+var spawn_radius_min = 500.0
+var spawn_radius_max = 750.0
+var max_enemies_cap_base = 140
+var max_enemies_cap = 140
 var max_projectiles = 150
 var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
 var max_allies = 16
+var max_pickups = 60
+
+var chest_drop_chance = 0.35
+var chest_drop_cooldown = 18.0
+var _next_chest_time = 0.0
+
+var _essence_announce_count = 0
+var _essence_announce_timer = 0.0
+var _essence_announce_position = Vector2.ZERO
 
 # Generator tracking
 var active_generators: Array = []
 var generators_destroyed = 0
 var total_generator_income = 0
+
+# Resource zone system
+var resource_zones: Array = []
+const ZONE_COUNT = 5
+const ZONE_MIN_DIST = 400.0
+const ZONE_MAX_DIST = 2200.0
+const ZONE_MIN_SPACING = 500.0
+const ResourceZone = preload("res://scripts/resource_zone.gd")
 
 # Power-up spawn system
 var powerup_spawn_timer: float = 0.0
@@ -189,8 +215,32 @@ const SPAWN_CURVE = [
 	{"time": 300.0, "interval": 0.54, "max_enemies": 78, "difficulty": 2.1, "elite": 0.075, "siege": 0.24},
 	{"time": 420.0, "interval": 0.48, "max_enemies": 110, "difficulty": 2.45, "elite": 0.095, "siege": 0.3},
 	{"time": 540.0, "interval": 0.44, "max_enemies": 145, "difficulty": 2.8, "elite": 0.12, "siege": 0.34},
-	{"time": 660.0, "interval": 0.41, "max_enemies": 170, "difficulty": 3.1, "elite": 0.14, "siege": 0.35}
+	{"time": 660.0, "interval": 0.41, "max_enemies": 170, "difficulty": 3.1, "elite": 0.12, "siege": 0.35},
+	{"time": 900.0, "interval": 0.37, "max_enemies": 190, "difficulty": 3.45, "elite": 0.13, "siege": 0.38},
+	{"time": 1200.0, "interval": 0.34, "max_enemies": 210, "difficulty": 3.9, "elite": 0.14, "siege": 0.40},
+	{"time": 1500.0, "interval": 0.31, "max_enemies": 230, "difficulty": 4.4, "elite": 0.15, "siege": 0.42},
+	{"time": 1800.0, "interval": 0.29, "max_enemies": 250, "difficulty": 4.9, "elite": 0.16, "siege": 0.44},
+	{"time": 2100.0, "interval": 0.27, "max_enemies": 270, "difficulty": 5.4, "elite": 0.16, "siege": 0.46},
+	{"time": 2400.0, "interval": 0.26, "max_enemies": 290, "difficulty": 5.9, "elite": 0.17, "siege": 0.48}
 ]
+
+const BOSS_SCHEDULE = [
+	{"time": 300.0, "script": "res://scripts/boss_bone_colossus.gd"},
+	{"time": 600.0, "script": "res://scripts/boss_plague_bringer.gd"},
+	{"time": 900.0, "script": "res://scripts/boss_siegebreaker.gd"},
+	{"time": 1200.0, "script": "res://scripts/boss_lich.gd"},
+	{
+		"time": 1800.0,
+		"script": "res://scripts/boss_siegebreaker.gd",
+		"final": true,
+		"health_mult": 3.0,
+		"speed_mult": 2.4,
+		"damage_mult": 1.7,
+		"title": "The Endbringer"
+	}
+]
+const BOSS_CYCLE_LENGTH = 1200.0
+const BOSS_WARNING_LEAD = 12.0
 
 const ENEMY_POOLS = [
 	{
@@ -345,15 +395,6 @@ var tech_defs = {
 		"rarity": "common",
 		"min_level": 2,
 		"unlock_build": "mine_trap"
-	},
-	"unlock_resource": {
-		"name": "Unlock: Resource Generator",
-		"desc": "Build generators for steady income",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_gold_32_v001.png",
-		"rarity": "common",
-		"min_level": 2,
-		"unlock_build": "resource_generator"
 	},
 	"unlock_ice_trap": {
 		"name": "Unlock: Ice Trap",
@@ -802,7 +843,7 @@ func _ready() -> void:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
 		$World.add_child(allies_root)
-	resources = 60
+	resources = 40
 	
 	# Initialize game over UI (hidden initially)
 	_instantiate_game_over_ui()
@@ -814,6 +855,7 @@ func _ready() -> void:
 		if ui.has_method("set_start_options"):
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
+	_setup_minimap()
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
@@ -824,6 +866,7 @@ func _ready() -> void:
 	_spawn_props()
 	_spawn_initial_breakables()
 	_spawn_environmental_particles()
+	_spawn_resource_zones()
 	_reset_run_stats()
 
 func _process(delta: float) -> void:
@@ -841,13 +884,17 @@ func _process(delta: float) -> void:
 	if start_timer < spawn_delay:
 		return
 	elapsed += delta
+	_maybe_minute_announcement()
+	_update_dynamic_caps()
 	# Update cached enemy list once per frame (used by all towers)
 	cached_enemies = get_tree().get_nodes_in_group("enemies")
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
+	_handle_boss_spawning(delta)
 	_handle_spawning(delta)
 	_maintain_breakables()
 	_handle_powerup_spawning(delta)  # Power-up spawn logic
+	_update_essence_announcement(delta)
 	_update_ui()
 
 func _handle_start_input(delta: float) -> void:
@@ -885,9 +932,33 @@ func _start_game() -> void:
 	_apply_selected_character()
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(false)
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("SURVIVE", Color(1.0, 1.0, 1.0), 48, 2.4)
 	_refresh_build_palette()
 	# Audio: Wave/Game start sound
 	AudioManager.play_ui_sound("wave_start")
+
+func _setup_minimap() -> void:
+	if minimap != null and is_instance_valid(minimap):
+		return
+	if ui == null:
+		return
+	minimap = Minimap.new()
+	ui.add_child(minimap)
+	if minimap.has_method("setup"):
+		minimap.setup(self)
+
+func _maybe_minute_announcement() -> void:
+	if ui == null or not ui.has_method("show_announcement"):
+		return
+	var minute = int(floor(elapsed / 60.0))
+	if minute <= 0:
+		return
+	if minute == _last_minute_announcement:
+		return
+	_last_minute_announcement = minute
+	var text = "%d:00" % minute
+	ui.show_announcement(text, Color(1.0, 1.0, 1.0, 0.5), 32, 2.0)
 
 func _get_base_time_scale() -> float:
 	if not game_started:
@@ -964,10 +1035,11 @@ func _get_spawn_settings(time_sec: float) -> Dictionary:
 	var prev = SPAWN_CURVE[0]
 	var prev_time = float(prev.get("time", 0.0))
 	if time_sec <= prev_time:
+		var diff = float(prev.get("difficulty", 1.0)) * _get_threat_multiplier(time_sec)
 		return {
 			"interval": float(prev.get("interval", 1.2)),
 			"max_enemies": int(prev.get("max_enemies", 12)),
-			"difficulty": float(prev.get("difficulty", 1.0)),
+			"difficulty": diff,
 			"elite": float(prev.get("elite", 0.02)),
 			"siege": float(prev.get("siege", 0.0))
 		}
@@ -978,27 +1050,51 @@ func _get_spawn_settings(time_sec: float) -> Dictionary:
 			var t = 0.0
 			if next_time > prev_time:
 				t = clamp((time_sec - prev_time) / (next_time - prev_time), 0.0, 1.0)
+			var diff = lerp(float(prev.get("difficulty", 1.0)), float(next.get("difficulty", 1.0)), t)
+			diff *= _get_threat_multiplier(time_sec)
 			return {
 				"interval": lerp(float(prev.get("interval", 1.2)), float(next.get("interval", 1.2)), t),
 				"max_enemies": int(round(lerp(float(prev.get("max_enemies", 12)), float(next.get("max_enemies", 12)), t))),
-				"difficulty": lerp(float(prev.get("difficulty", 1.0)), float(next.get("difficulty", 1.0)), t),
+				"difficulty": diff,
 				"elite": lerp(float(prev.get("elite", 0.02)), float(next.get("elite", 0.02)), t),
 				"siege": lerp(float(prev.get("siege", 0.0)), float(next.get("siege", 0.0)), t)
 			}
 		prev = next
 		prev_time = next_time
 	var last = SPAWN_CURVE[SPAWN_CURVE.size() - 1]
+	var diff = float(last.get("difficulty", 1.0)) * _get_threat_multiplier(time_sec)
 	return {
 		"interval": float(last.get("interval", 1.2)),
 		"max_enemies": int(last.get("max_enemies", 12)),
-		"difficulty": float(last.get("difficulty", 1.0)),
+		"difficulty": diff,
 		"elite": float(last.get("elite", 0.02)),
 		"siege": float(last.get("siege", 0.0))
 	}
 
+func _get_threat_multiplier(time_sec: float) -> float:
+	if time_sec <= 600.0:
+		return 1.0
+	var t = clamp((time_sec - 600.0) / 900.0, 0.0, 1.0)
+	return 1.0 + t * 0.6
+
+func _update_dynamic_caps() -> void:
+	var extra = 0
+	if elapsed > 300.0:
+		extra = int(clamp((elapsed - 300.0) / 60.0, 0.0, 20.0)) * 8
+	max_enemies_cap = max_enemies_cap_base + extra
+
+func _count_elites() -> int:
+	var count = 0
+	for enemy in cached_enemies:
+		if enemy == null or not is_instance_valid(enemy):
+			continue
+		if "is_elite" in enemy and enemy.is_elite:
+			count += 1
+	return count
+
 func _handle_spawning(delta: float) -> void:
 	var settings = _get_spawn_settings(elapsed)
-	var interval = max(0.35, float(settings.get("interval", 1.2)))
+	var interval = max(0.26, float(settings.get("interval", 1.2)))
 	spawn_accumulator += delta
 	while spawn_accumulator >= interval:
 		spawn_accumulator -= interval
@@ -1006,6 +1102,96 @@ func _handle_spawning(delta: float) -> void:
 		if enemies_root.get_child_count() >= max_enemies:
 			break
 		spawn_enemy(settings)
+
+func _handle_boss_spawning(_delta: float) -> void:
+	if BOSS_SCHEDULE.is_empty():
+		return
+	if _final_boss_spawned:
+		return
+	if _active_boss != null:
+		if is_instance_valid(_active_boss) and _active_boss.is_inside_tree():
+			return
+		_active_boss = null
+	if not _boss_warning_shown and elapsed >= _next_boss_time - BOSS_WARNING_LEAD:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("BOSS INCOMING", Color(1.0, 0.2, 0.2), 48, 2.4)
+		_boss_warning_shown = true
+	if elapsed < _next_boss_time:
+		return
+	_spawn_next_boss()
+
+func _spawn_next_boss() -> void:
+	if BOSS_SCHEDULE.is_empty():
+		return
+	var entry = BOSS_SCHEDULE[_boss_schedule_index]
+	var script_path = str(entry.get("script", ""))
+	var boss = _spawn_boss(script_path)
+	if boss != null:
+		_active_boss = boss
+		if entry.get("final", false):
+			_final_boss_spawned = true
+			call_deferred("_apply_final_boss_tuning", boss, entry)
+			if ui != null and ui.has_method("show_announcement"):
+				ui.show_announcement("FINAL BOSS", Color(1.0, 0.2, 0.2), 52, 3.2)
+		if boss.has_signal("boss_died"):
+			boss.boss_died.connect(_on_boss_died)
+		boss.tree_exited.connect(_on_boss_tree_exited)
+	_boss_schedule_index += 1
+	if _boss_schedule_index >= BOSS_SCHEDULE.size():
+		_boss_schedule_index = 0
+		_boss_cycle += 1
+	_next_boss_time = float(BOSS_SCHEDULE[_boss_schedule_index].get("time", _next_boss_time)) + BOSS_CYCLE_LENGTH * _boss_cycle
+	_boss_warning_shown = false
+
+func _spawn_boss(script_path: String) -> Node:
+	if enemies_root == null or player == null:
+		return null
+	if script_path == "" or not ResourceLoader.exists(script_path):
+		push_warning("Boss script missing: %s" % script_path)
+		return null
+	var boss = ENEMY_SCENE.instantiate()
+	var boss_script = load(script_path)
+	if boss_script == null:
+		push_warning("Failed to load boss script: %s" % script_path)
+		return null
+	boss.set_script(boss_script)
+	var angle = randf() * TAU
+	var distance = spawn_radius_max + randf_range(80.0, 140.0)
+	boss.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
+	var difficulty = float(_get_spawn_settings(elapsed).get("difficulty", 1.0))
+	if boss.has_method("setup"):
+		boss.setup(self, difficulty)
+	enemies_root.add_child(boss)
+	return boss
+
+func _on_boss_died(_boss: Node = null) -> void:
+	_active_boss = null
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("BOSS DEFEATED", Color(1.0, 0.85, 0.3), 36, 2.4)
+
+func _on_boss_tree_exited() -> void:
+	_active_boss = null
+
+func _apply_final_boss_tuning(boss: Node, entry: Dictionary) -> void:
+	if boss == null or not is_instance_valid(boss):
+		return
+	var health_mult = float(entry.get("health_mult", 2.5))
+	var speed_mult = float(entry.get("speed_mult", 2.0))
+	var damage_mult = float(entry.get("damage_mult", 1.5))
+	if "max_health" in boss:
+		boss.max_health = float(boss.max_health) * health_mult
+	if "health" in boss:
+		boss.health = boss.max_health
+	if "speed" in boss:
+		boss.speed = float(boss.speed) * speed_mult
+	if "attack_damage" in boss:
+		boss.attack_damage = float(boss.attack_damage) * damage_mult
+	if "attack_rate" in boss:
+		boss.attack_rate = float(boss.attack_rate) * 1.25
+	if "boss_title" in boss:
+		boss.boss_title = str(entry.get("title", boss.boss_title))
+	if boss.has_method("flash"):
+		boss.flash()
 
 func spawn_enemy(settings: Dictionary = {}) -> void:
 	if player == null:
@@ -1024,10 +1210,11 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
-	var base_elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.2)
-	var time_scalar = 1.0 + min(elapsed / 240.0, 1.0) * 0.5
-	var elite_chance = clamp(base_elite_chance * time_scalar, 0.0, 0.25)
-	if randf() < elite_chance and enemy.has_method("set_elite"):
+	var base_elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.14)
+	var time_scalar = 1.0 + min(elapsed / 360.0, 1.0) * 0.25
+	var elite_chance = clamp(base_elite_chance * time_scalar, 0.0, 0.12)
+	var elite_cap = clampi(int(6 + elapsed / 150.0), 6, 18)
+	if _count_elites() < elite_cap and randf() < elite_chance and enemy.has_method("set_elite"):
 		enemy.set_elite(elite_health_mult)
 	enemies_root.add_child(enemy)
 
@@ -1186,20 +1373,63 @@ func spawn_enemy_projectile(origin: Vector2, direction: Vector2, proj_speed: flo
 	projectiles_root.add_child(proj)
 
 func spawn_pickup(position: Vector2, value: int, kind: String = "gold") -> void:
+	if pickups_root == null:
+		return
+	if pickups_root.get_child_count() >= max_pickups:
+		# Prevent soft-locking resource drops when the ground is saturated.
+		if kind == "gold":
+			add_resources(value)
+			if has_method("show_floating_text"):
+				show_floating_text("+%d" % value, position, Color(1.0, 0.84, 0.2, 1.0))
+		return
 	var pickup = PICKUP_SCENE.instantiate()
 	pickup.global_position = position
 	if pickup.has_method("setup"):
 		pickup.setup(self, value, kind)
-	pickups_root.add_child(pickup)
+	# Defer add_child to avoid "flushing queries" errors during physics callbacks.
+	pickups_root.call_deferred("add_child", pickup)
+	if kind == "essence":
+		_queue_essence_announcement(position, value)
 
 func spawn_treasure_chest(position: Vector2) -> void:
 	if pickups_root == null:
 		return
+	if pickups_root.get_child_count() >= max_pickups:
+		return
+	if elapsed < _next_chest_time:
+		return
+	if randf() > chest_drop_chance:
+		return
+	_next_chest_time = elapsed + chest_drop_cooldown
 	var chest = TREASURE_CHEST_SCENE.instantiate()
 	chest.global_position = position
 	if chest.has_method("setup"):
 		chest.setup(self)
-	pickups_root.add_child(chest)
+	# Defer add_child to avoid "flushing queries" errors during physics callbacks.
+	pickups_root.call_deferred("add_child", chest)
+
+func _queue_essence_announcement(position: Vector2, value: int) -> void:
+	if value <= 0:
+		return
+	_essence_announce_count += value
+	if _essence_announce_count == value:
+		_essence_announce_position = position
+	else:
+		_essence_announce_position = _essence_announce_position.lerp(position, 0.35)
+	_essence_announce_timer = 0.35
+
+func _update_essence_announcement(delta: float) -> void:
+	if _essence_announce_count <= 0:
+		return
+	_essence_announce_timer -= delta
+	if _essence_announce_timer > 0.0:
+		return
+	if ui != null and ui.has_method("show_announcement"):
+		var amount = _essence_announce_count
+		var text = "+%d ESSENCE" % amount
+		ui.show_announcement(text, Color(0.8, 0.4, 1.0), 28, 2.0, _essence_announce_position)
+	_essence_announce_count = 0
+	_essence_announce_timer = 0.0
 
 func spawn_fx(kind: String, position: Vector2) -> void:
 	if fx_root == null or not fx_defs.has(kind):
@@ -1277,7 +1507,7 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	label.text = str(int(round(amount)))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.z_index = 30
-	_apply_damage_label_style(label, is_crit, is_kill, damage_type)
+	_apply_damage_label_style(label, is_crit, is_kill, is_elite, damage_type)
 	label.size = label.get_minimum_size()
 	label.position = -label.size * 0.5
 
@@ -1295,8 +1525,8 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	if target_max > 0.0:
 		health_ratio = clamp(amount / target_max, 0.0, 1.0)
 	var base_scale = lerp(FeedbackConfig.DAMAGE_NUMBER_SCALE_MIN, FeedbackConfig.DAMAGE_NUMBER_SCALE_MAX, health_ratio)
-	if is_elite:
-		base_scale += FeedbackConfig.DAMAGE_NUMBER_ELITE_SCALE_BONUS
+	if is_elite and is_kill:
+		base_scale += FeedbackConfig.DAMAGE_NUMBER_ELITE_KILL_SCALE_BONUS
 	if is_crit:
 		base_scale += FeedbackConfig.DAMAGE_NUMBER_CRIT_SCALE_BONUS
 	if is_kill:
@@ -1343,7 +1573,7 @@ func _load_damage_font() -> void:
 	else:
 		push_warning("Loaded resource is not a Font: " + path + " (type: " + str(typeof(font)) + ")")
 
-func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, damage_type: String) -> void:
+func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> void:
 	if label == null:
 		return
 	if _damage_font != null:
@@ -1358,6 +1588,9 @@ func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, damag
 		color = FeedbackConfig.DAMAGE_COLOR_KILL
 	if is_crit:
 		color = FeedbackConfig.DAMAGE_COLOR_CRIT
+		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
+	if is_elite and is_kill:
+		color = FeedbackConfig.DAMAGE_COLOR_ELITE_KILL
 		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
 	label.add_theme_color_override("font_color", color)
 
@@ -1389,6 +1622,9 @@ func add_resources(amount: int) -> void:
 func add_essence(amount: int) -> void:
 	essence += amount
 	_update_ui()
+	if not _essence_tip_shown and ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("ESSENCE fuels tower evolutions (U)", Color(0.8, 0.4, 1.0), 24, 3.2)
+		_essence_tip_shown = true
 
 func add_xp(amount: int) -> void:
 	xp += amount
@@ -1399,12 +1635,22 @@ func add_xp(amount: int) -> void:
 		level += 1
 		pending_picks += 1
 		leveled_up = true
+		_check_level_unlocks()
 	if leveled_up:
 		# Audio: Level up sound
 		AudioManager.play_ui_sound("level_up")
 	if pending_picks > 0 and not tech_open:
 		_open_tech_menu()
 	_update_ui()
+
+func _check_level_unlocks() -> void:
+	if level >= 5 and not is_build_unlocked("resource_generator"):
+		unlock_build("resource_generator")
+		if build_manager != null and build_manager.has_method("refresh_controls"):
+			build_manager.refresh_controls()
+		_refresh_build_palette()
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("RESOURCE GENERATOR UNLOCKED", Color(0.9, 0.8, 0.3), 32, 2.6)
 
 func can_afford(cost: int) -> bool:
 	return resources >= cost
@@ -1443,7 +1689,8 @@ func _open_tech_menu() -> void:
 			"name": def.get("name", id),
 			"desc": def.get("desc", ""),
 			"icon": def.get("icon", ""),
-			"rarity": def.get("rarity", "common")
+			"rarity": def.get("rarity", "common"),
+			"level": int(tech_levels.get(id, 0))
 		})
 	tech_open = true
 	if ui.has_method("show_tech"):
@@ -1485,6 +1732,8 @@ func _apply_tech(id: String) -> void:
 		tower_damage_bonus = 2.0 * tech_levels[id]
 	if player != null and player.has_method("apply_gun_tech"):
 		player.apply_gun_tech(id, tech_levels[id])
+	if ui != null and ui.has_method("update_tech_ledger"):
+		ui.update_tech_ledger(tech_levels, tech_defs)
 
 func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 	var rarity = upgrade.get("rarity", "common") if not upgrade.is_empty() else "common"
@@ -1608,6 +1857,21 @@ func get_tower_range_mult() -> float:
 func get_build_cost_mult() -> float:
 	return build_cost_mult
 
+func get_pickup_range_mult() -> float:
+	return pickup_range_mult
+
+func get_enemy_health_mult() -> float:
+	if elapsed <= 600.0:
+		return 1.0
+	if elapsed <= 1200.0:
+		var t = clamp((elapsed - 600.0) / 600.0, 0.0, 1.0)
+		return lerp(1.0, 1.6, t)
+	if elapsed <= 2100.0:
+		var t = clamp((elapsed - 1200.0) / 900.0, 0.0, 1.0)
+		return lerp(1.6, 2.6, t)
+	var t = clamp((elapsed - 2100.0) / 900.0, 0.0, 1.0)
+	return lerp(2.6, 3.2, t)
+
 func _get_available_tech_ids() -> Array:
 	var available: Array = []
 	for id in tech_defs.keys():
@@ -1706,7 +1970,11 @@ func on_death_animation_complete() -> void:
 	_fade_to_black()
 	
 	# Wait for fade then show game over screen
+	if not is_inside_tree():
+		return
 	await get_tree().create_timer(2.0).timeout
+	if not is_inside_tree():
+		return
 	
 	_show_game_over_screen()
 
@@ -1720,8 +1988,12 @@ func _fade_to_black() -> void:
 	fade.z_index = 100
 	fade.modulate = Color(1, 1, 1, 0)
 	add_child(fade)
-	
-	var tween = create_tween()
+	if not is_inside_tree():
+		return
+	if not fade.is_inside_tree():
+		fade.queue_free()
+		return
+	var tween = fade.create_tween()
 	tween.tween_property(fade, "modulate", Color(1, 1, 1, 1), 2.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
 func _show_game_over_screen() -> void:
@@ -1834,7 +2106,7 @@ func _reset_game_state() -> void:
 	elapsed = 0.0
 	spawn_accumulator = 0.0
 	start_timer = 0.0
-	resources = 60
+	resources = 40
 	
 	# Clear enemies
 	for enemy in enemies_root.get_children():
@@ -1871,6 +2143,26 @@ func _reset_run_stats() -> void:
 	_current_streak = 0
 	_best_streak = 0
 	_wave_reached = 1
+	_next_chest_time = 0.0
+	_essence_announce_count = 0
+	_essence_announce_timer = 0.0
+	_essence_announce_position = Vector2.ZERO
+	_last_minute_announcement = -1
+	_essence_tip_shown = false
+	_final_boss_spawned = false
+	if ui != null and ui.has_method("clear_tech_ledger"):
+		ui.clear_tech_ledger()
+	_reset_boss_schedule()
+
+func _reset_boss_schedule() -> void:
+	_boss_schedule_index = 0
+	_boss_cycle = 0
+	if BOSS_SCHEDULE.is_empty():
+		_next_boss_time = INF
+	else:
+		_next_boss_time = float(BOSS_SCHEDULE[0].get("time", 300.0))
+	_boss_warning_shown = false
+	_active_boss = null
 
 # ============================================
 # STATS TRACKING & PERSISTENCE
@@ -2185,29 +2477,42 @@ func _is_valid_powerup_position(pos: Vector2) -> bool:
 	return true
 
 func show_floating_text(text: String, position: Vector2, color: Color = Color.WHITE) -> void:
-	if fx_root == null:
+	if fx_root == null or not is_instance_valid(fx_root) or not fx_root.is_inside_tree():
+		return
+	if fx_root.get_child_count() >= max_particles:
 		return
 	var label = Label.new()
 	label.text = text
 	label.modulate = color
 	label.position = Vector2.ZERO
-	fx_root.add_child(label)
 	label.global_position = position
-	
+	# Defer add/animate to avoid physics "flushing queries" crashes.
+	fx_root.call_deferred("add_child", label)
+	call_deferred("_animate_floating_text", label)
+
+func _animate_floating_text(label: Label) -> void:
+	if label == null or not is_instance_valid(label):
+		return
+	if not label.is_inside_tree():
+		return
 	# Animate up and fade
-	var tween = create_tween()
+	var tween = label.create_tween()
 	tween.tween_property(label, "position", Vector2(0, -40), 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(label, "modulate:a", 0.0, 1.2).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tween.tween_callback(label.queue_free)
 
 func flash_screen(color: Color, duration: float = 0.3) -> void:
+	if not is_inside_tree():
+		return
 	var flash = ColorRect.new()
 	flash.color = color
 	flash.anchors_preset = Control.PRESET_FULL_RECT
 	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(flash)
-	
-	var tween = create_tween()
+	if not flash.is_inside_tree():
+		flash.queue_free()
+		return
+	var tween = flash.create_tween()
 	tween.tween_property(flash, "modulate:a", 0.0, duration).from(color.a).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(flash.queue_free)
 
@@ -2258,6 +2563,50 @@ func get_active_generator_count() -> int:
 			valid_generators.append(gen)
 	active_generators = valid_generators
 	return active_generators.size()
+
+# Resource zone management
+func _spawn_resource_zones() -> void:
+	var placed: Array = []
+	var attempts = 0
+	while placed.size() < ZONE_COUNT and attempts < 200:
+		attempts += 1
+		var angle = randf() * TAU
+		var dist = randf_range(ZONE_MIN_DIST, ZONE_MAX_DIST)
+		var pos = Vector2(cos(angle), sin(angle)) * dist
+		var too_close = false
+		for p in placed:
+			if pos.distance_to(p) < ZONE_MIN_SPACING:
+				too_close = true
+				break
+		if too_close:
+			continue
+		placed.append(pos)
+		var zone = ResourceZone.new()
+		zone.global_position = pos
+		zone.multiplier = randf_range(2.0, 3.0)
+		zone.zone_id = placed.size()
+		zone._game = self
+		$World.add_child(zone)
+		resource_zones.append(zone)
+	print("Spawned %d resource zones" % resource_zones.size())
+
+func get_zone_at(world_pos: Vector2):
+	for zone in resource_zones:
+		if zone != null and is_instance_valid(zone) and not zone._is_depleted:
+			if zone.is_point_inside(world_pos):
+				return zone
+	return null
+
+func on_zone_depleted(zone: Node) -> void:
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("ZONE DEPLETED - RELOCATE!", Color(1.0, 0.5, 0.0), 22, 4.0)
+	var active = 0
+	for z in resource_zones:
+		if z != null and is_instance_valid(z) and not z._is_depleted:
+			active += 1
+	if active == 0:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("ALL ZONES EXHAUSTED!", Color(1.0, 0.2, 0.2), 26, 5.0)
 
 # Hitstop - freeze frame effect for critical hits
 func trigger_hitstop() -> void:

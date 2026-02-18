@@ -130,16 +130,16 @@ func _start_open() -> void:
 func _grant_all_upgrades_instant() -> void:
 	if _game == null:
 		_game = get_tree().get_first_node_in_group("game") if is_inside_tree() else null
-	if _game == null:
+	if _game == null or not is_instance_valid(_game) or not _game.is_inside_tree():
 		return
 	for upgrade in _upgrades_to_grant:
 		var id = upgrade.get("id", "")
 		if _game.has_method("apply_chest_upgrade"):
-			_game.apply_chest_upgrade(id, upgrade)
+			_game.call_deferred("apply_chest_upgrade", id, upgrade)
 		if _game.has_method("show_floating_text"):
 			var rarity = upgrade.get("rarity", "common")
 			var color = RARITY_COLORS.get(rarity, Color.WHITE)
-			_game.show_floating_text(upgrade.get("name", ""), global_position + Vector2(0, -40), color)
+			_game.call_deferred("show_floating_text", upgrade.get("name", ""), global_position + Vector2(0, -40), color)
 
 # Vampire Survivors style dramatic opening sequence
 func _play_vs_opening_sequence() -> void:
@@ -229,16 +229,16 @@ func _reveal_items_vs_style() -> void:
 			for j in range(i + 1, item_count):
 				var remaining = _upgrades_to_grant[j]
 				var rid = remaining.get("id", "")
-				if _game != null and _game.has_method("apply_chest_upgrade"):
-					_game.apply_chest_upgrade(rid, remaining)
+				if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("apply_chest_upgrade"):
+					_game.call_deferred("apply_chest_upgrade", rid, remaining)
 			return
 		await get_tree().create_timer(0.5 * max(Engine.time_scale, 0.01)).timeout
 		if not is_inside_tree():
 			for j in range(i + 1, item_count):
 				var remaining = _upgrades_to_grant[j]
 				var rid = remaining.get("id", "")
-				if _game != null and _game.has_method("apply_chest_upgrade"):
-					_game.apply_chest_upgrade(rid, remaining)
+				if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("apply_chest_upgrade"):
+					_game.call_deferred("apply_chest_upgrade", rid, remaining)
 			return
 
 	# Final burst after all items
@@ -254,7 +254,7 @@ func _spawn_floating_item(upgrade: Dictionary, target_pos: Vector2, color: Color
 	var display_name = upgrade.get("name", "")
 	
 	# Create floating label (VS style item name)
-	if _game != null and _game.has_method("show_floating_text"):
+	if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("show_floating_text"):
 		# Main item text
 		var prefix = ""
 		if rarity == "diamond":
@@ -262,11 +262,11 @@ func _spawn_floating_item(upgrade: Dictionary, target_pos: Vector2, color: Color
 		elif rarity == "epic":
 			prefix = "✦ "
 		
-		_game.show_floating_text(prefix + display_name, target_pos, color)
+		_game.call_deferred("show_floating_text", prefix + display_name, target_pos, color)
 		
 		# Apply the upgrade immediately (VS auto-collects)
 		var id = upgrade.get("id", "")
-		_game.apply_chest_upgrade(id, upgrade)
+		_game.call_deferred("apply_chest_upgrade", id, upgrade)
 	
 	# Rarity-specific effects
 	match rarity:

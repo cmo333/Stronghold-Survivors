@@ -224,6 +224,8 @@ func _animate_stats() -> void:
 		return
 	for i in range(grid.get_child_count()):
 		var child = grid.get_child(i)
+		if child == null or not is_instance_valid(child) or not child.is_inside_tree():
+			continue
 		child.modulate = Color(1, 1, 1, 0)
 		
 		var tween = create_tween()
@@ -236,8 +238,14 @@ func _start_confetti_celebration() -> void:
 		_spawn_confetti_piece()
 	
 	# Continue spawning for a few seconds
+	if not is_inside_tree():
+		return
 	var timer = get_tree().create_timer(3.0)
-	timer.timeout.connect(_stop_confetti)
+	timer.timeout.connect(func():
+		if not is_instance_valid(self):
+			return
+		_stop_confetti()
+	)
 
 func _spawn_confetti_piece() -> void:
 	var confetti = ColorRect.new()

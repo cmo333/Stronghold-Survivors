@@ -1,6 +1,6 @@
 extends "res://scripts/building.gd"
 
-const MAX_HP = 100.0
+const MAX_HP = 120.0
 const LOW_HP_THRESHOLD = 0.3  # 30% health = low HP (pulse red)
 const HEALTH_BAR_WIDTH = 32.0
 const HEALTH_BAR_HEIGHT = 4.0
@@ -10,6 +10,8 @@ var income = 2
 var interval = 2.0
 var _timer = 0.0
 var _game: Node = null
+var _zone: Node = null
+var _zone_multiplier: float = 1.0
 var _health_bar: ProgressBar = null
 var _health_bar_container: Node2D = null
 var _is_destroyed = false
@@ -25,8 +27,6 @@ var _under_attack_warning_shown = false
 func _ready() -> void:
     super._ready()
     _game = get_tree().get_first_node_in_group("game")
-    max_health = MAX_HP
-    health = MAX_HP
     
     # Store base modulate color
     if body != null:
@@ -39,22 +39,39 @@ func _ready() -> void:
     if _game != null and _game.has_method("register_generator"):
         _game.register_generator(self)
 
+    # Check zone membership after scene tree is ready
+    call_deferred("_check_zone_membership")
+
+func _check_zone_membership() -> void:
+    if _game == null or not _game.has_method("get_zone_at"):
+        return
+    _zone = _game.get_zone_at(global_position)
+    if _zone != null:
+        _zone_multiplier = _zone.get_multiplier()
+        _zone.register_generator(self)
+        if _game.has_method("show_floating_text"):
+            _game.show_floating_text("IN ZONE x%.1f!" % _zone.multiplier, global_position + Vector2(0, -40), Color(1.0, 0.85, 0.2))
+
 func _apply_tier_stats(tier_data: Dictionary) -> void:
     super._apply_tier_stats(tier_data)
     income = int(tier_data.get("income", income))
     interval = float(tier_data.get("interval", interval))
-    # Generators have fixed HP regardless of tier for balance
-    max_health = MAX_HP
-    health = MAX_HP
 
 func _process(delta: float) -> void:
     if _is_destroyed or _game == null:
         return
-    
+
     _timer += delta
     if _timer >= interval:
         _timer -= interval
-        _game.add_resources(income)
+        if _zone != null and is_instance_valid(_zone) and not _zone._is_depleted:
+            _zone_multiplier = _zone.get_multiplier()
+            var actual_income = int(round(float(income) * _zone_multiplier))
+            _game.add_resources(actual_income)
+            _zone.on_generator_ticked(actual_income)
+        else:
+            _zone_multiplier = 1.0
+            _game.add_resources(income)
 
 func take_damage(amount: float) -> void:
     if _is_destroyed:
@@ -100,6 +117,11 @@ func heal(amount: float) -> void:
 
 func _destroy() -> void:
     _is_destroyed = true
+
+    # Unregister from zone
+    if _zone != null and is_instance_valid(_zone):
+        _zone.unregister_generator(self)
+        _zone = null
     
     # Audio: Generator destroyed sound
     AudioManager.play_one_shot("generator_destroyed", global_position, AudioManager.CRITICAL_PRIORITY)
@@ -236,6 +258,13 @@ func _stop_low_hp_pulse() -> void:
             return
         var tween = create_tween()
         tween.tween_property(body, "modulate", base_modulate, 0.3).set_trans(Tween.TRANS_SINE)
+
+func sell() -> void:
+    _is_destroyed = true
+    if _zone != null and is_instance_valid(_zone):
+        _zone.unregister_generator(self)
+        _zone = null
+    super.sell()
 
 func is_destroyed() -> bool:
     return _is_destroyed

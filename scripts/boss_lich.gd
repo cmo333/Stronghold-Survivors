@@ -130,7 +130,7 @@ func _enter_phase_2() -> void:
 	if _game != null and _game.ui != null and _game.ui.has_method("show_boss_phase"):
 		_game.ui.show_boss_phase(boss_name, 2)
 	
-	AudioManager.play_sound("boss_phase", global_position, 1.0, 0.0, true)
+	AudioManager.play_one_shot("boss_phase", global_position, AudioManager.HIGH_PRIORITY)
 	boss_phase_changed.emit(2)
 
 func _teleport_away() -> void:
@@ -153,7 +153,7 @@ func _teleport_away() -> void:
 		_game.spawn_fx("summon_shadow", global_position)
 		_game.spawn_fx("ghost", global_position)
 	
-	AudioManager.play_sound("teleport", global_position, 0.8)
+	AudioManager.play_one_shot("teleport", global_position, AudioManager.DEFAULT_PRIORITY)
 	
 	# Fade out
 	if not is_inside_tree():
@@ -180,7 +180,7 @@ func _teleport_away() -> void:
 			_game.spawn_fx("summon_shadow", global_position)
 			_game.spawn_fx("ghost", global_position)
 		
-		AudioManager.play_sound("teleport_arrive", global_position, 0.8)
+		AudioManager.play_one_shot("teleport_arrive", global_position, AudioManager.DEFAULT_PRIORITY)
 	)
 
 func _find_teleport_location(target_pos: Vector2) -> Vector2:
@@ -236,7 +236,7 @@ func _create_nova_indicator() -> void:
 	tween.parallel().tween_property(indicator, "modulate:a", 0.0, 1.0)
 	tween.tween_callback(indicator.queue_free)
 	
-	AudioManager.play_sound("nova_charge", global_position, 0.9)
+	AudioManager.play_one_shot("nova_charge", global_position, AudioManager.HIGH_PRIORITY)
 
 func _execute_nova() -> void:
 	"""Execute the Death Nova explosion"""
@@ -259,15 +259,15 @@ func _execute_nova() -> void:
 			_game.get_node_or_null("World/FX").add_child(ring) if _game.has_node("World/FX") else _game.add_child(ring)
 			ring.global_position = global_position
 			
-			if not is_inside_tree():
+			if ring == null or not is_instance_valid(ring) or not ring.is_inside_tree():
 				ring.queue_free()
 				continue
-			var tween = create_tween()
+			var tween = ring.create_tween()
 			tween.tween_property(ring, "scale", Vector2.ONE * (death_nova_radius / 32.0) * (1.0 + i * 0.3), 0.5)
 			tween.parallel().tween_property(ring, "modulate:a", 0.0, 0.5)
 			tween.tween_callback(ring.queue_free)
 	
-	AudioManager.play_sound("nova_explosion", global_position, 1.2, 0.0, true)
+	AudioManager.play_one_shot("nova_explosion", global_position, AudioManager.HIGH_PRIORITY)
 	
 	# Apply damage
 	_apply_nova_damage()
@@ -283,8 +283,7 @@ func _apply_nova_damage() -> void:
 			# Full damage if close, falling off with distance
 			var dist = sqrt(dist_sq)
 			var damage_mult = 1.0 - (dist / death_nova_radius) * 0.5
-			if _game.player.has_method("take_damage"):
-				_game.player.take_damage(death_nova_damage * damage_mult, global_position, true, true, "magic")
+			_deal_damage(_game.player, death_nova_damage * damage_mult, global_position, true)
 	
 	# Damage allies
 	for ally in get_tree().get_nodes_in_group("allies"):
@@ -294,8 +293,7 @@ func _apply_nova_damage() -> void:
 		if dist_sq <= radius_sq:
 			var dist = sqrt(dist_sq)
 			var damage_mult = 1.0 - (dist / death_nova_radius) * 0.5
-			if ally.has_method("take_damage"):
-				ally.take_damage(death_nova_damage * damage_mult, global_position, true, true, "magic")
+			_deal_damage(ally, death_nova_damage * damage_mult, global_position, true)
 
 func _summon_skeleton_army() -> void:
 	"""Summon skeleton minions"""
@@ -325,7 +323,7 @@ func _summon_skeleton_army() -> void:
 			var offset = Vector2.RIGHT.rotated(angle) * randf_range(20.0, 50.0)
 			_game.spawn_fx("ghost", global_position + offset)
 	
-	AudioManager.play_sound("summon_army", global_position, 0.8)
+	AudioManager.play_one_shot("summon_army", global_position, AudioManager.DEFAULT_PRIORITY)
 
 func _create_skeleton(spawn_pos: Vector2) -> Node:
 	"""Create a skeleton minion"""

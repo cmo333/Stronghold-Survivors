@@ -130,7 +130,9 @@ func _find_siege_target() -> Node2D:
 	for building in generators:
 		if building == null or not is_instance_valid(building):
 			continue
-		if not building is preload("res://scripts/resource_generator.gd"):
+		var raw_id = building.get("structure_id")
+		var structure_id = str(raw_id) if raw_id != null else ""
+		if structure_id != "resource_generator":
 			continue
 		if building.has_method("is_destroyed") and building.is_destroyed():
 			continue
@@ -163,8 +165,8 @@ func _fire_mortar(target_pos: Vector2) -> void:
 	# FX
 	if _game.has_method("spawn_fx"):
 		_game.spawn_fx("fire", global_position)
-	
-	AudioManager.play_sound("mortar_fire", global_position, 1.0, 0.0, true)
+
+	AudioManager.play_one_shot("mortar_fire", global_position, AudioManager.HIGH_PRIORITY)
 
 func _create_mortar_projectile(target_pos: Vector2) -> Node:
 	"""Create mortar projectile that arcs to target"""
@@ -195,7 +197,7 @@ func _on_mortar_impact(body: Node, mortar: Node, impact_pos: Vector2) -> void:
 		_game.spawn_fx("crit", explosion_pos)
 		_game.spawn_fx("fire", explosion_pos)
 	
-	AudioManager.play_sound("explosion", explosion_pos, 0.9)
+	AudioManager.play_one_shot("explosion", explosion_pos, AudioManager.DEFAULT_PRIORITY)
 	
 	# AOE damage
 	_apply_mortar_damage(explosion_pos)
@@ -236,7 +238,7 @@ func _update_shield(delta: float) -> void:
 			_current_shield = _max_shield * 0.25  # Start at 25%
 			if _shield_visual != null:
 				_shield_visual.visible = true
-			AudioManager.play_sound("shield_restore", global_position, 0.8)
+			AudioManager.play_one_shot("shield_restore", global_position, AudioManager.DEFAULT_PRIORITY)
 	else:
 		# Regenerate shield if not at max
 		if _current_shield < _max_shield:
@@ -274,7 +276,7 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			_shield_regen_timer = shield_regen_delay
 			if _shield_visual != null:
 				_shield_visual.visible = false
-			AudioManager.play_sound("shield_break", global_position, 1.0, 0.0, true)
+			AudioManager.play_one_shot("shield_break", global_position, AudioManager.HIGH_PRIORITY)
 			
 			# Shield break FX
 			if _game != null and _game.camera != null and _game.camera.has_method("shake"):
@@ -289,13 +291,12 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
 
 func _perform_attack(target: Node2D) -> void:
-	if target.has_method("take_damage"):
-		target.take_damage(attack_damage, global_position, true, true, "normal")
+	_deal_damage(target, attack_damage, global_position, true)
 	
 	if _game != null and _game.has_method("spawn_fx"):
 		_game.spawn_fx("hit", global_position)
 	
-	AudioManager.play_sound("heavy_hit", global_position, 0.9)
+	AudioManager.play_one_shot("heavy_hit", global_position, AudioManager.DEFAULT_PRIORITY)
 
 func get_shield_percent() -> float:
 	return _current_shield / _max_shield if _max_shield > 0 else 0.0

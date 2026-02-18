@@ -3,6 +3,8 @@ extends Node
 const BAT_SWARM_TIME = 120.0
 const PLANT_WALL_TIME = 240.0
 const ANNOUNCE_LEAD_TIME = 12.0
+const BAT_SWARM_INTERVAL = 180.0
+const PLANT_WALL_INTERVAL = 240.0
 
 const BAT_SWARM_COUNT = 60
 const BAT_SWARM_SPEED_MULT = 1.7
@@ -16,7 +18,7 @@ const PLANT_WALL_DAMAGE_MULT = 1.2
 const PLANT_WALL_SPACING = 80.0
 const PLANT_WALL_MIN_COUNT = 18
 const PLANT_WALL_MAX_COUNT = 28
-const PLANT_WALL_EDGE_OFFSET = 120.0
+const PLANT_WALL_EDGE_OFFSET = 60.0
 
 const BAT_SCENE = preload("res://scenes/enemies/banshee.tscn")
 const PLANT_SCENE = preload("res://scenes/enemies/plague_abomination.tscn")
@@ -26,8 +28,10 @@ var ui: CanvasLayer = null
 var enemies_root: Node2D = null
 var player: Node2D = null
 var game_time: float = 0.0
-var _bat_swarm_triggered = false
-var _plant_wall_triggered = false
+var _next_bat_swarm_time = BAT_SWARM_TIME
+var _next_plant_wall_time = PLANT_WALL_TIME
+var _bat_swarm_count = 0
+var _plant_wall_count = 0
 
 func setup(game_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
@@ -44,21 +48,20 @@ func update(_delta: float, time_sec: float) -> void:
 func _check_events() -> void:
 	if game == null or player == null or enemies_root == null:
 		return
-	if not _bat_swarm_triggered and game_time >= BAT_SWARM_TIME:
-		_bat_swarm_triggered = true
+	if game_time >= _next_bat_swarm_time:
 		_spawn_bat_swarm()
-	if not _plant_wall_triggered and game_time >= PLANT_WALL_TIME:
-		_plant_wall_triggered = true
+		_bat_swarm_count += 1
+		_next_bat_swarm_time = game_time + BAT_SWARM_INTERVAL
+	if game_time >= _next_plant_wall_time:
 		_spawn_plant_wall()
+		_plant_wall_count += 1
+		_next_plant_wall_time = game_time + PLANT_WALL_INTERVAL
 
 func _update_announcement() -> void:
 	if ui == null or not ui.has_method("show_wave_announcement"):
 		return
 	var next_time = INF
-	if not _bat_swarm_triggered:
-		next_time = BAT_SWARM_TIME
-	if not _plant_wall_triggered and PLANT_WALL_TIME < next_time:
-		next_time = PLANT_WALL_TIME
+	next_time = min(_next_bat_swarm_time, _next_plant_wall_time)
 	if next_time == INF:
 		ui.show_wave_announcement("", 0.0, false)
 		return
@@ -69,9 +72,11 @@ func _update_announcement() -> void:
 		ui.show_wave_announcement("", 0.0, false)
 
 func _spawn_bat_swarm() -> void:
-	var count = _get_event_spawn_budget(BAT_SWARM_COUNT)
+	var count = _get_event_spawn_budget(int(round(BAT_SWARM_COUNT * _get_event_scalar())))
 	if count <= 0:
 		return
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("BAT SWARM!", Color(0.7, 0.3, 1.0), 44, 2.4)
 	var center = player.global_position
 	var edge_distance = _get_edge_distance()
 	var spread = edge_distance
@@ -89,10 +94,12 @@ func _spawn_bat_swarm() -> void:
 		spawned += 1
 
 func _spawn_plant_wall() -> void:
-	var desired = _get_plant_wall_count()
+	var desired = int(round(_get_plant_wall_count() * _get_event_scalar()))
 	var count = min(desired, _get_event_spawn_budget(desired))
 	if count <= 0:
 		return
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("PLAGUE WALL!", Color(0.3, 1.0, 0.3), 44, 2.4)
 	var center = player.global_position
 	var edge_distance = _get_edge_distance() + PLANT_WALL_EDGE_OFFSET
 	var side = randi() % 4
@@ -183,20 +190,23 @@ func _get_event_spawn_budget(desired: int) -> int:
 
 func get_current_wave() -> int:
 	"""Return the current wave number based on triggered events"""
-	var wave = 1
-	if _bat_swarm_triggered:
-		wave = 2
-	if _plant_wall_triggered:
-		wave = 3
-	return wave
+	var wave = 1 + _bat_swarm_count + _plant_wall_count
+	return max(1, wave)
 
 func reset() -> void:
 	"""Reset wave manager state for new game"""
-	_bat_swarm_triggered = false
-	_plant_wall_triggered = false
+	_next_bat_swarm_time = BAT_SWARM_TIME
+	_next_plant_wall_time = PLANT_WALL_TIME
+	_bat_swarm_count = 0
+	_plant_wall_count = 0
 	game_time = 0.0
 
 func _get_plant_wall_count() -> int:
 	var line_length = _get_edge_distance() * 2.0
 	var count = int(round(line_length / PLANT_WALL_SPACING))
 	return int(clamp(float(count), float(PLANT_WALL_MIN_COUNT), float(PLANT_WALL_MAX_COUNT)))
+
+func _get_event_scalar() -> float:
+	var time_scalar = clamp(game_time / 600.0, 0.0, 1.0)
+	var wave_scalar = clamp((_bat_swarm_count + _plant_wall_count) * 0.05, 0.0, 0.35)
+	return 1.0 + time_scalar * 0.6 + wave_scalar

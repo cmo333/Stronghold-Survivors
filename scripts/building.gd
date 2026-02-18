@@ -82,3 +82,20 @@ func _max_tier() -> int:
 # Called after upgrade is applied - override in subclasses for visual effects
 func _on_upgraded() -> void:
     pass
+
+func get_sell_value() -> int:
+    var total_cost = 0
+    var tiers = definition.get("tiers", [])
+    for i in range(tier + 1):
+        if i < tiers.size():
+            total_cost += int(tiers[i].get("cost", 0))
+    return int(total_cost * 0.75)
+
+func sell() -> void:
+    var game_node = get_tree().get_first_node_in_group("game")
+    if game_node != null:
+        var refund = get_sell_value()
+        game_node.add_resources(refund)
+        if game_node.has_method("show_floating_text"):
+            game_node.show_floating_text("+%d" % refund, global_position + Vector2(0, -30), Color(1.0, 0.9, 0.3))
+    queue_free()

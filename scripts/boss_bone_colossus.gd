@@ -65,14 +65,13 @@ func _boss_behavior(delta: float) -> void:
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 
 func _perform_attack(target: Node2D) -> void:
-	if target.has_method("take_damage"):
-		target.take_damage(attack_damage, global_position, true, true, "normal")
+	_deal_damage(target, attack_damage, global_position, true)
 	
 	# Attack FX
 	if _game != null and _game.has_method("spawn_fx"):
 		_game.spawn_fx("hit", global_position)
 	
-	AudioManager.play_sound("heavy_hit", global_position, 0.8)
+	AudioManager.play_one_shot("heavy_hit", global_position, AudioManager.DEFAULT_PRIORITY)
 
 func _start_slam_windup() -> void:
 	"""Begin the ground slam windup"""
@@ -86,7 +85,7 @@ func _start_slam_windup() -> void:
 	_create_slam_indicator()
 	
 	# Warning sound
-	AudioManager.play_sound("boss_warning", global_position, 0.9)
+	AudioManager.play_one_shot("boss_warning", global_position, AudioManager.HIGH_PRIORITY)
 	
 	# Visual windup - raise arms (scale pulse)
 	if body != null:
@@ -113,7 +112,7 @@ func _create_slam_indicator() -> void:
 		add_child(indicator)
 		
 		# Fade out indicator
-		if not is_inside_tree():
+		if indicator == null or not is_instance_valid(indicator) or not indicator.is_inside_tree():
 			indicator.queue_free()
 			continue
 		var tween = create_tween()
@@ -140,7 +139,7 @@ func _execute_slam() -> void:
 		_game.spawn_fx("elite_kill", global_position)
 		_game.spawn_fx("summon_fire", global_position)
 	
-	AudioManager.play_sound("explosion_large", global_position, 1.0, 0.0, true)
+	AudioManager.play_one_shot("explosion_large", global_position, AudioManager.HIGH_PRIORITY)
 	
 	# Direct damage in slam radius
 	_apply_slam_damage()
@@ -193,13 +192,18 @@ func _create_shockwave() -> void:
 		return
 	
 	# Create 8 directional shockwaves
+	var shockwave_scene: PackedScene = null
+	var shockwave_path = "res://scenes/boss_shockwave.tscn"
+	if ResourceLoader.exists(shockwave_path):
+		shockwave_scene = load(shockwave_path)
+	if shockwave_scene == null:
+		if _game != null and _game.has_method("spawn_fx"):
+			_game.spawn_fx("shockwave", global_position)
+		return
 	for i in range(8):
 		var angle = (TAU / 8.0) * i
 		var dir = Vector2.RIGHT.rotated(angle)
-		
-		var shockwave = preload("res://scenes/boss_shockwave.tscn").instantiate() if ResourceLoader.exists("res://scenes/boss_shockwave.tscn") else null
-		if shockwave == null:
-			continue
+		var shockwave = shockwave_scene.instantiate()
 			
 		shockwave.global_position = global_position + dir * 20.0
 		if shockwave.has_method("setup"):

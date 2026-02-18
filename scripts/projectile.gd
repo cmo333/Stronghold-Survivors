@@ -152,6 +152,8 @@ func _explode_if_needed() -> void:
 	_trigger_explosion()
 
 func _trigger_explosion() -> void:
+	if not is_inside_tree():
+		return
 	if _game != null:
 		if _game.has_method("damage_enemies_in_radius"):
 			_game.damage_enemies_in_radius(global_position, explosion_radius, damage, 1.0, damage_type)
@@ -179,6 +181,8 @@ func _trigger_explosion() -> void:
 				# Delayed cluster explosion
 				var timer = get_tree().create_timer(0.1 * (i + 1))
 				timer.timeout.connect(func():
+					if not is_instance_valid(self) or not is_inside_tree():
+						return
 					if _game == null:
 						return
 					
@@ -199,10 +203,10 @@ func _trigger_explosion() -> void:
 							elif enemy.has_method("take_damage"):
 								# Fallback: apply damage over time manually
 								for j in range(3):
-									if not is_inside_tree():
+									if not is_instance_valid(self) or not is_inside_tree():
 										return
 									await get_tree().create_timer(1.0).timeout
-									if not is_inside_tree():
+									if not is_instance_valid(self) or not is_inside_tree():
 										return
 									if is_instance_valid(enemy) and enemy.has_method("take_damage"):
 										enemy.take_damage(burn_damage * 0.5, cluster_pos, false, false, "fire")

@@ -101,6 +101,7 @@ var _particles: CPUParticles2D = null
 var _level_up_particles: CPUParticles2D = null
 var _aura_ring: Sprite2D = null
 var _tier_badge: Label = null
+var _tier_halo: Sprite2D = null
 
 # Tower-specific visual elements (overridden by subclasses)
 var _tier_sprites: Array[Sprite2D] = []  # T2, T3 additive elements
@@ -115,6 +116,12 @@ const ELEMENT_COLORS = {
 	"arrow": Color(0.2, 0.9, 0.3, 0.8),    # Green
 	"tesla": Color(0.2, 0.6, 1.0, 0.8),    # Blue
 	"cannon": Color(1.0, 0.2, 0.2, 0.8)    # Red
+}
+const TIER_HALO_TEXTURES = {
+	1: "res://assets/ui/tech/ui_upgrade_halo_t1_96_v001.png",
+	2: "res://assets/ui/tech/ui_upgrade_halo_t2_96_v001.png",
+	3: "res://assets/ui/tech/ui_upgrade_halo_t3_96_v001.png",
+	"evo": "res://assets/ui/tech/ui_upgrade_halo_evo_96_v001.png"
 }
 
 # Tier colors for glow effects
@@ -182,9 +189,9 @@ func _ensure_tier_badge() -> void:
 	_tier_badge.name = "TierBadge"
 	_tier_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_tier_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_tier_badge.position = Vector2(8, 10)
+	_tier_badge.position = Vector2(6, 8)
 	_tier_badge.z_index = 20
-	_tier_badge.add_theme_font_size_override("font_size", 8)
+	_tier_badge.add_theme_font_size_override("font_size", 10)
 	var font = load("res://assets/ui/pixel_font.ttf") if ResourceLoader.exists("res://assets/ui/pixel_font.ttf") else null
 	if font != null:
 		_tier_badge.add_theme_font_override("font", font)
@@ -193,6 +200,20 @@ func _ensure_tier_badge() -> void:
 	_tier_badge.add_theme_constant_override("outline_size", 2)
 	_update_tier_badge()
 	add_child(_tier_badge)
+	_ensure_tier_halo()
+
+func _ensure_tier_halo() -> void:
+	if _tier_halo != null:
+		return
+	_tier_halo = Sprite2D.new()
+	_tier_halo.name = "TierHalo"
+	_tier_halo.z_index = -2
+	_tier_halo.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var mat = CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_tier_halo.material = mat
+	add_child(_tier_halo)
+	_update_tier_halo()
 
 func _ensure_particles() -> void:
 	if _particles != null:
@@ -242,6 +263,7 @@ func _update_tier_badge() -> void:
 		# Show evolution name abbreviation
 		_tier_badge.text = "EVO"
 		_tier_badge.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0, 1.0))
+		_update_tier_halo()
 		return
 	var roman = ["I", "II", "III"]
 	_tier_badge.text = roman[clampi(upgrade_level - 1, 0, 2)]
@@ -254,6 +276,35 @@ func _update_tier_badge() -> void:
 		3:
 			var element_color = ELEMENT_COLORS.get(tower_type, Color(1.0, 0.7, 1.0, 1.0))
 			_tier_badge.add_theme_color_override("font_color", element_color)
+	_update_tier_halo()
+
+func _update_tier_halo() -> void:
+	if _tier_halo == null:
+		return
+	var tex_path = ""
+	var visible = false
+	if is_evolved:
+		tex_path = str(TIER_HALO_TEXTURES.get("evo", ""))
+		visible = true
+	elif upgrade_level >= 2:
+		tex_path = str(TIER_HALO_TEXTURES.get(upgrade_level, ""))
+		visible = true
+	if tex_path != "" and ResourceLoader.exists(tex_path):
+		_tier_halo.texture = load(tex_path)
+		_tier_halo.visible = visible
+	else:
+		_tier_halo.visible = false
+	if _tier_halo.visible:
+		var base_scale = Vector2.ONE * 2.4
+		if body_sprite != null and body_sprite is Node2D:
+			base_scale = (body_sprite as Node2D).scale * 2.6
+		_tier_halo.scale = base_scale
+		if is_evolved:
+			_tier_halo.modulate.a = 0.95
+		elif upgrade_level >= 3:
+			_tier_halo.modulate.a = 0.85
+		else:
+			_tier_halo.modulate.a = 0.7
 
 func get_display_name() -> String:
 	var base = definition.get("name", "Tower")
@@ -312,9 +363,9 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		if upgrade_level == 1:
 			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.0)
 		elif upgrade_level == 2:
-			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.4)
+			_glow_sprite.modulate = Color(1.0, 1.0, 1.0, 0.65)
 		else:  # T3 - colored glow
-			_glow_sprite.modulate = element_color
+			_glow_sprite.modulate = Color(element_color.r, element_color.g, element_color.b, 0.9)
 	
 	if body_sprite != null:
 		body_sprite.scale = Vector2.ONE * scale
@@ -335,10 +386,10 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		if upgrade_level == 1:
 			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.0)
 		elif upgrade_level == 2:
-			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.25)
+			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.4)
 		else:
-			_aura_ring.modulate = Color(element_color.r, element_color.g, element_color.b, 0.35)
-		_aura_ring.scale = Vector2.ONE * (1.0 + upgrade_level * 0.2)
+			_aura_ring.modulate = Color(element_color.r, element_color.g, element_color.b, 0.55)
+		_aura_ring.scale = Vector2.ONE * (1.2 + upgrade_level * 0.3)
 	
 	# Tower-specific visuals
 	_update_tower_specific_visuals()
@@ -377,19 +428,19 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 	if _glow_sprite != null and is_inside_tree():
 		var glow_tween = create_tween()
 		if upgrade_level == 2:
-			glow_tween.tween_property(_glow_sprite, "modulate", Color(1.0, 1.0, 1.0, 0.4), 0.5)
+			glow_tween.tween_property(_glow_sprite, "modulate", Color(1.0, 1.0, 1.0, 0.65), 0.5)
 		else:  # T3
-			glow_tween.tween_property(_glow_sprite, "modulate", element_color, 0.5)
+			glow_tween.tween_property(_glow_sprite, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.9), 0.5)
 
 	# Aura ring animation
 	if _aura_ring != null and upgrade_level >= 2 and is_inside_tree():
 		var aura_tween = create_tween()
 		aura_tween.set_parallel(true)
 		if upgrade_level == 2:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(1.0, 1.0, 1.0, 0.25), 0.5)
+			aura_tween.tween_property(_aura_ring, "modulate", Color(1.0, 1.0, 1.0, 0.4), 0.5)
 		else:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.35), 0.5)
-		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.0 + upgrade_level * 0.2), 0.5)
+			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.55), 0.5)
+		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.2 + upgrade_level * 0.3), 0.5)
 	
 	# Particle burst (lazy created)
 	_ensure_level_up_particles()
@@ -416,6 +467,8 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 
 	if is_inside_tree():
 		await get_tree().create_timer(0.5).timeout
+	if not is_inside_tree():
+		return
 	_is_upgrading = false
 
 # Override in subclasses for tower-specific upgrade effects

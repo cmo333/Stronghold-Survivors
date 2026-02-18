@@ -105,19 +105,18 @@ func _calculate_orbit_direction(target_pos: Vector2) -> Vector2:
 	return dir
 
 func _perform_attack(target: Node2D) -> void:
-	if target.has_method("take_damage"):
-		# Plague attacks apply poison damage over time
-		target.take_damage(attack_damage, global_position, true, true, "poison")
+	# Plague attacks apply poison damage over time
+	_deal_damage(target, attack_damage, global_position, true)
 		
-		# Apply poison DOT if target has the method
-		if target.has_method("apply_poison"):
-			target.apply_poison(poison_damage_per_sec, 3.0)
+	# Apply poison DOT if target has the method
+	if target.has_method("apply_poison"):
+		target.apply_poison(poison_damage_per_sec, 3.0)
 	
 	# Attack FX
 	if _game != null and _game.has_method("spawn_fx"):
 		_game.spawn_fx("poison", global_position)
 	
-	AudioManager.play_sound("poison_hit", global_position, 0.7)
+	AudioManager.play_one_shot("poison_hit", global_position, AudioManager.DEFAULT_PRIORITY)
 
 func _spawn_adds() -> void:
 	"""Spawn plague minions"""
@@ -141,7 +140,7 @@ func _spawn_adds() -> void:
 		_game.spawn_fx("summon_shadow", global_position)
 		_game.spawn_fx("poison", global_position)
 	
-	AudioManager.play_sound("summon", global_position, 0.6)
+	AudioManager.play_one_shot("summon", global_position, AudioManager.DEFAULT_PRIORITY)
 
 func _create_plague_add(spawn_pos: Vector2) -> Node:
 	"""Create a plague add - use existing enemy scene with modified stats"""
@@ -206,7 +205,10 @@ func _create_poison_cloud(pos: Vector2) -> Node:
 		_game.add_child(cloud)
 	
 	# Animate and destroy after duration
-	var tween = create_tween()
+	if cloud == null or not is_instance_valid(cloud) or not cloud.is_inside_tree():
+		cloud.queue_free()
+		return null
+	var tween = cloud.create_tween()
 	tween.tween_interval(poison_cloud_duration)
 	tween.tween_property(sprite, "modulate:a", 0.0, 1.0)
 	tween.tween_callback(cloud.queue_free)
@@ -228,18 +230,16 @@ func _apply_poison_aura(delta: float) -> void:
 		# Damage player
 		if _game != null and _game.player != null and is_instance_valid(_game.player):
 			if cloud_pos.distance_squared_to(_game.player.global_position) <= radius_sq:
-				if _game.player.has_method("take_damage"):
-					_game.player.take_damage(damage_this_frame, cloud_pos, false, false, "poison")
+				_deal_damage(_game.player, damage_this_frame, cloud_pos, false)
 				if _game.player.has_method("apply_slow"):
-					_game.player.apply_slow(hash(self), 0.7, 0.5)
+					_game.player.apply_slow(0.7, 0.5)
 		
 		# Damage allies
 		for ally in get_tree().get_nodes_in_group("allies"):
 			if ally == null or not is_instance_valid(ally):
 				continue
 			if cloud_pos.distance_squared_to(ally.global_position) <= radius_sq:
-				if ally.has_method("take_damage"):
-					ally.take_damage(damage_this_frame, cloud_pos, false, false, "poison")
+				_deal_damage(ally, damage_this_frame, cloud_pos, false)
 
 func _cleanup_adds() -> void:
 	"""Remove dead adds from tracking"""

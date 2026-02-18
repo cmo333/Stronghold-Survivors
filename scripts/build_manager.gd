@@ -7,16 +7,17 @@ const BUILD_BINDINGS = {
 	"build_4": "mine_trap",
 	"build_5": "ice_trap",
 	"build_6": "acid_trap",
-	"build_9": "resource_generator",
-	"build_barracks": "barracks",
-	"build_armory": "armory",
-	"build_tech_lab": "tech_lab",
-	"build_shrine": "shrine"
+	"build_7": "resource_generator",
+	"build_8": "barracks",
+	"build_9": "armory",
+	"build_barracks": "tech_lab",
+	"build_armory": "shrine"
 }
 
 const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
 const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
 const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
+const RANGE_PREVIEW_IDS = ["arrow_turret", "cannon_tower", "tesla_tower"]
 
 # Pathfinding constants
 const PATH_CHECK_RESOLUTION = 16.0  # Grid size for pathfinding check (smaller = more accurate)
@@ -80,6 +81,8 @@ func _process(delta: float) -> void:
 	_handle_hotkeys()
 	if Input.is_action_just_pressed("upgrade"):
 		_try_upgrade_selected()
+	if Input.is_action_just_pressed("sell"):
+		_try_sell_selected()
 	if Input.is_action_just_pressed("toggle_gate"):
 		_try_toggle_selected()
 	if Input.is_action_just_pressed("cancel"):
@@ -175,6 +178,8 @@ func _update_preview_position() -> void:
 				preview.set_color(PREVIEW_COLOR_BLOCKED)
 			if preview.has_method("set_state"):
 				preview.set_state(status["clear"] and status["path_clear"] and status["affordable"])
+			if preview.has_method("set_range_state"):
+				preview.set_range_state(status["can_place"])
 
 func _update_preview_visuals() -> void:
 	if preview == null or current_id == "":
@@ -192,6 +197,11 @@ func _update_preview_visuals() -> void:
 	if preview.has_method("set_ghost_texture"):
 		var path = str(def.get("preview", ""))
 		preview.set_ghost_texture(path)
+	if preview.has_method("set_range_radius"):
+		if RANGE_PREVIEW_IDS.has(current_id):
+			preview.set_range_radius(float(def.get("range", 0.0)))
+		else:
+			preview.set_range_radius(0.0)
 
 func _try_place() -> void:
 	var def = StructureDB.get_def(current_id)
@@ -367,22 +377,41 @@ func _try_toggle_selected() -> void:
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 
+func _try_sell_selected() -> void:
+	if selected_building == null or not is_instance_valid(selected_building):
+		return
+	if not selected_building.has_method("sell"):
+		return
+	var refund = 0
+	if selected_building.has_method("get_sell_value"):
+		refund = selected_building.get_sell_value()
+	var bld = selected_building
+	selected_building = null
+	_clear_selection()
+	_hide_upgrade_panel()
+	bld.sell()
+	_set_selection_text("Sold for %d resources" % refund)
+
 func _describe_building(building: Node) -> String:
 	if building == null:
 		return ""
-	
+
 	var base_name = ""
 	if building.has_method("get_display_name"):
 		base_name = building.get_display_name()
 	else:
 		base_name = building.name
-	
+
 	# Add evolution or upgrade info
 	if building.has_method("can_evolve") and building.can_evolve():
 		base_name += " [U: EVOLVE]"
 	elif building.has_method("can_upgrade") and building.can_upgrade():
 		var cost = _apply_cost_mult(building.get_upgrade_cost())
 		base_name += " [U:%d]" % cost
+
+	# Add sell value
+	if building.has_method("get_sell_value"):
+		base_name += " [X: Sell +%d]" % building.get_sell_value()
 
 	return base_name
 
@@ -555,4 +584,4 @@ func _apply_cost_mult(cost: int) -> int:
 	return max(0, final_cost)
 
 func _controls_text() -> String:
-	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | G: gate | B: build"
+	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build"

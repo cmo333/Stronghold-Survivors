@@ -4,7 +4,7 @@ const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 const ResourceGenerator = preload("res://scripts/resource_generator.gd")
 const ELITE_GLOW_TEXTURE = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 
-var speed = 92.0
+var speed = 110.0
 var max_health = 20.0
 var health = 20.0
 var attack_damage = 10.0
@@ -68,7 +68,10 @@ var _base_color: Color = Color.WHITE
 
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
-	max_health = max_health * difficulty
+	var health_mult = 1.0
+	if _game != null and _game.has_method("get_enemy_health_mult"):
+		health_mult = float(_game.get_enemy_health_mult())
+	max_health = max_health * difficulty * health_mult
 	health = max_health
 	speed = speed * (1.0 + difficulty * 0.03)
 
@@ -320,10 +323,10 @@ func _start_death_sequence() -> void:
 				_game.spawn_pickup(global_position, 18, "heal")
 		if is_elite and _game.has_method("spawn_treasure_chest"):
 			_game.spawn_treasure_chest(global_position)
-		# Essence drops from elite/siege kills
-		if is_elite and _game.has_method("spawn_pickup"):
+		# Essence drops from elite/siege kills (throttled to reduce clutter)
+		if is_elite and randf() < 0.6 and _game.has_method("spawn_pickup"):
 			_game.spawn_pickup(global_position + Vector2(randf_range(-10, 10), randf_range(-10, 10)), 1, "essence")
-		if is_siege and not is_elite and randf() < 0.5 and _game.has_method("spawn_pickup"):
+		if is_siege and not is_elite and randf() < 0.35 and _game.has_method("spawn_pickup"):
 			_game.spawn_pickup(global_position + Vector2(randf_range(-10, 10), randf_range(-10, 10)), 1, "essence")
 		var xp_reward = 1
 		if is_siege:
@@ -514,7 +517,9 @@ func _create_elite_glow(color: Color) -> void:
 	_start_elite_glow_pulse(base_scale, color)
 
 func _start_elite_glow_pulse(base_scale: Vector2, color: Color) -> void:
-	if _elite_glow == null or not is_inside_tree():
+	if _elite_glow == null or not is_instance_valid(_elite_glow):
+		return
+	if not is_inside_tree() or not _elite_glow.is_inside_tree():
 		return
 	if _elite_glow_tween != null:
 		_elite_glow_tween.kill()

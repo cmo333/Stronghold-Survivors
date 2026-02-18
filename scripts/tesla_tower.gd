@@ -235,7 +235,8 @@ func _update_tower_specific_visuals() -> void:
 	if _secondary_coil != null:
 		var tween = create_tween()
 		if upgrade_level >= 2:
-			tween.tween_property(_secondary_coil, "modulate", Color(0.6, 0.8, 1.0, 0.7), 0.3)
+			_secondary_coil.scale = Vector2.ONE * 1.15
+			tween.tween_property(_secondary_coil, "modulate", Color(0.7, 0.9, 1.2, 0.9), 0.3)
 		else:
 			tween.tween_property(_secondary_coil, "modulate", Color(0.5, 0.7, 1.0, 0.0), 0.3)
 	
@@ -243,16 +244,18 @@ func _update_tower_specific_visuals() -> void:
 	if upgrade_level >= 3:
 		if _lightning_orb != null:
 			var orb_tween = create_tween()
-			orb_tween.tween_property(_lightning_orb, "modulate", Color(0.4, 0.9, 1.0, 0.9), 0.5)
+			_lightning_orb.scale = Vector2.ONE * 1.2
+			orb_tween.tween_property(_lightning_orb, "modulate", Color(0.5, 1.0, 1.0, 1.0), 0.5)
 		
 		for beam in _arc_beams:
 			if beam != null:
+				beam.width = 3.0
 				var beam_tween = create_tween()
-				beam_tween.tween_property(beam, "default_color:a", 0.6, 0.4)
+				beam_tween.tween_property(beam, "default_color:a", 0.75, 0.4)
 		
 		if _crackle_particles != null:
 			_crackle_particles.emitting = true
-			_crackle_particles.modulate = Color(0.4, 0.9, 1.0, 0.7)
+			_crackle_particles.modulate = Color(0.5, 1.0, 1.0, 0.85)
 	else:
 		if _lightning_orb != null:
 			_lightning_orb.modulate = Color(0.2, 0.8, 1.0, 0.0)

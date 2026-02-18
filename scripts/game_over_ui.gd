@@ -128,6 +128,8 @@ func _animate_stats_appear() -> void:
 		return
 	for i in range(children.size()):
 		var child = children[i]
+		if child == null or not is_instance_valid(child) or not child.is_inside_tree():
+			continue
 		var tween = create_tween()
 		tween.tween_interval(0.1 * i)
 		tween.tween_property(child, "modulate", Color(1, 1, 1, 1), 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)

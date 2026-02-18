@@ -205,7 +205,8 @@ func _update_tower_specific_visuals() -> void:
 	if _metal_bands != null:
 		var tween = create_tween()
 		if upgrade_level >= 2:
-			tween.tween_property(_metal_bands, "modulate", Color(0.7, 0.7, 0.8, 0.9), 0.3)
+			_metal_bands.scale = Vector2.ONE * 1.15
+			tween.tween_property(_metal_bands, "modulate", Color(0.8, 0.8, 0.9, 1.0), 0.3)
 		else:
 			tween.tween_property(_metal_bands, "modulate", Color(0.6, 0.6, 0.7, 0.0), 0.3)
 	
@@ -213,12 +214,14 @@ func _update_tower_specific_visuals() -> void:
 	if upgrade_level >= 3:
 		if _crystal_core != null:
 			var crystal_tween = create_tween()
-			crystal_tween.tween_property(_crystal_core, "modulate", Color(0.2, 0.9, 0.3, 0.9), 0.5)
+			_crystal_core.scale = Vector2.ONE * 1.25
+			crystal_tween.tween_property(_crystal_core, "modulate", Color(0.2, 0.95, 0.35, 1.0), 0.5)
 		
 		for arrow in _floating_arrows:
 			if arrow != null:
 				var arrow_tween = create_tween()
-				arrow_tween.tween_property(arrow, "modulate", Color(0.3, 0.9, 0.4, 0.85), 0.5)
+				arrow.scale = Vector2.ONE * 1.15
+				arrow_tween.tween_property(arrow, "modulate", Color(0.35, 0.95, 0.5, 0.95), 0.5)
 	else:
 		if _crystal_core != null:
 			_crystal_core.modulate = Color(0.2, 0.9, 0.3, 0.0)
