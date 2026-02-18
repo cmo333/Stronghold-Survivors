@@ -169,8 +169,8 @@ var _final_boss_spawned = false
 
 var spawn_radius_min = 500.0
 var spawn_radius_max = 750.0
-var max_enemies_cap_base = 140
-var max_enemies_cap = 140
+var max_enemies_cap_base = 250
+var max_enemies_cap = 250
 var max_projectiles = 150
 var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
@@ -206,22 +206,22 @@ var max_powerups: int = 3
 
 # Data-driven pacing curve (interpolated between points).
 const SPAWN_CURVE = [
-	{"time": 0.0, "interval": 1.6, "max_enemies": 8, "difficulty": 1.0, "elite": 0.01, "siege": 0.0},
-	{"time": 30.0, "interval": 1.35, "max_enemies": 12, "difficulty": 1.08, "elite": 0.015, "siege": 0.0},
-	{"time": 60.0, "interval": 1.15, "max_enemies": 18, "difficulty": 1.2, "elite": 0.02, "siege": 0.03},
-	{"time": 120.0, "interval": 0.9, "max_enemies": 28, "difficulty": 1.4, "elite": 0.03, "siege": 0.07},
-	{"time": 180.0, "interval": 0.74, "max_enemies": 42, "difficulty": 1.6, "elite": 0.045, "siege": 0.12},
-	{"time": 240.0, "interval": 0.62, "max_enemies": 58, "difficulty": 1.85, "elite": 0.06, "siege": 0.18},
-	{"time": 300.0, "interval": 0.54, "max_enemies": 78, "difficulty": 2.1, "elite": 0.075, "siege": 0.24},
-	{"time": 420.0, "interval": 0.48, "max_enemies": 110, "difficulty": 2.45, "elite": 0.095, "siege": 0.3},
-	{"time": 540.0, "interval": 0.44, "max_enemies": 145, "difficulty": 2.8, "elite": 0.12, "siege": 0.34},
-	{"time": 660.0, "interval": 0.41, "max_enemies": 170, "difficulty": 3.1, "elite": 0.12, "siege": 0.35},
-	{"time": 900.0, "interval": 0.37, "max_enemies": 190, "difficulty": 3.45, "elite": 0.13, "siege": 0.38},
-	{"time": 1200.0, "interval": 0.34, "max_enemies": 210, "difficulty": 3.9, "elite": 0.14, "siege": 0.40},
-	{"time": 1500.0, "interval": 0.31, "max_enemies": 230, "difficulty": 4.4, "elite": 0.15, "siege": 0.42},
-	{"time": 1800.0, "interval": 0.29, "max_enemies": 250, "difficulty": 4.9, "elite": 0.16, "siege": 0.44},
-	{"time": 2100.0, "interval": 0.27, "max_enemies": 270, "difficulty": 5.4, "elite": 0.16, "siege": 0.46},
-	{"time": 2400.0, "interval": 0.26, "max_enemies": 290, "difficulty": 5.9, "elite": 0.17, "siege": 0.48}
+	{"time": 0.0, "interval": 1.0, "max_enemies": 15, "difficulty": 1.0, "elite": 0.01, "siege": 0.0},
+	{"time": 30.0, "interval": 0.8, "max_enemies": 25, "difficulty": 1.08, "elite": 0.02, "siege": 0.0},
+	{"time": 60.0, "interval": 0.65, "max_enemies": 40, "difficulty": 1.2, "elite": 0.03, "siege": 0.04},
+	{"time": 120.0, "interval": 0.5, "max_enemies": 60, "difficulty": 1.4, "elite": 0.04, "siege": 0.08},
+	{"time": 180.0, "interval": 0.42, "max_enemies": 85, "difficulty": 1.6, "elite": 0.055, "siege": 0.14},
+	{"time": 240.0, "interval": 0.36, "max_enemies": 110, "difficulty": 1.85, "elite": 0.07, "siege": 0.2},
+	{"time": 300.0, "interval": 0.32, "max_enemies": 140, "difficulty": 2.1, "elite": 0.085, "siege": 0.26},
+	{"time": 420.0, "interval": 0.28, "max_enemies": 180, "difficulty": 2.45, "elite": 0.1, "siege": 0.32},
+	{"time": 540.0, "interval": 0.25, "max_enemies": 220, "difficulty": 2.8, "elite": 0.13, "siege": 0.36},
+	{"time": 660.0, "interval": 0.23, "max_enemies": 260, "difficulty": 3.1, "elite": 0.14, "siege": 0.38},
+	{"time": 900.0, "interval": 0.2, "max_enemies": 300, "difficulty": 3.45, "elite": 0.15, "siege": 0.4},
+	{"time": 1200.0, "interval": 0.18, "max_enemies": 350, "difficulty": 3.9, "elite": 0.16, "siege": 0.42},
+	{"time": 1500.0, "interval": 0.16, "max_enemies": 380, "difficulty": 4.4, "elite": 0.17, "siege": 0.44},
+	{"time": 1800.0, "interval": 0.15, "max_enemies": 400, "difficulty": 4.9, "elite": 0.18, "siege": 0.46},
+	{"time": 2100.0, "interval": 0.14, "max_enemies": 420, "difficulty": 5.4, "elite": 0.18, "siege": 0.48},
+	{"time": 2400.0, "interval": 0.13, "max_enemies": 440, "difficulty": 5.9, "elite": 0.19, "siege": 0.5}
 ]
 
 const BOSS_SCHEDULE = [

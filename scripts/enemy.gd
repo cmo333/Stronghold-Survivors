@@ -315,9 +315,11 @@ func _start_death_sequence() -> void:
 		if is_elite and elite_modifier == "splitter" and not is_split_child:
 			_spawn_split_minions()
 		if _game.has_method("spawn_pickup"):
-			var gold_amount = 1
+			var gold_amount = 2
+			if is_siege:
+				gold_amount = 4
 			if is_elite:
-				gold_amount = 3
+				gold_amount = 6
 			_game.spawn_pickup(global_position, gold_amount, "gold")
 			if is_elite and randf() < 0.35:
 				_game.spawn_pickup(global_position, 18, "heal")
