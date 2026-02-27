@@ -2778,6 +2778,7 @@ func _choose_tech(index: int, infused: bool = false) -> void:
 		_draft_telemetry["infuse_count"] = int(_draft_telemetry.get("infuse_count", 0)) + 1
 		_draft_telemetry["infuse_essence_spent"] = int(_draft_telemetry.get("infuse_essence_spent", 0)) + TECH_INFUSE_COST
 	_track_draft_pick(str(choice.get("rarity", "common")))
+	_play_tech_pick_feedback(choice, infused)
 	_apply_tech(id)
 	if infused and _can_level_tech(id):
 		_apply_tech(id)
@@ -2792,6 +2793,40 @@ func _choose_tech(index: int, infused: bool = false) -> void:
 	_set_pause_allowed(_can_pause_game())
 	_apply_base_time_scale()
 	_update_ui()
+
+func _play_tech_pick_feedback(choice: Dictionary, infused: bool) -> void:
+	var rarity = str(choice.get("rarity", "common"))
+	var name = str(choice.get("name", "Tech"))
+	var is_infused = infused
+	if ui != null and ui.has_method("show_announcement"):
+		var text = ""
+		var color = Color(0.85, 0.9, 1.0)
+		var size = 20
+		var duration = 1.25
+		if _rarity_index(rarity) >= _rarity_index("legendary"):
+			text = "BREAKTHROUGH: %s" % name
+			color = Color(1.0, 0.85, 0.3)
+			size = 30
+			duration = 1.6
+		elif _rarity_index(rarity) >= _rarity_index("epic"):
+			text = "EPIC TECH: %s" % name
+			color = Color(0.86, 0.45, 1.0)
+			size = 26
+			duration = 1.45
+		elif _rarity_index(rarity) >= _rarity_index("rare"):
+			text = "RARE TECH: %s" % name
+			color = Color(0.45, 0.7, 1.0)
+			size = 22
+			duration = 1.25
+		if text != "":
+			if is_infused:
+				text = "INFUSED %s" % text
+			ui.show_announcement(text, color, size, duration)
+	if _rarity_index(rarity) >= _rarity_index("epic"):
+		shake_camera(4.5 if _rarity_index(rarity) >= _rarity_index("legendary") else 3.0, 0.18)
+	if _rarity_index(rarity) >= _rarity_index("legendary"):
+		trigger_time_accent(0.5, 0.16)
+		flash_screen(Color(1.0, 0.85, 0.35, 0.14), 0.16)
 
 func _apply_tech(id: String) -> void:
 	tech_levels[id] = int(tech_levels.get(id, 0)) + 1

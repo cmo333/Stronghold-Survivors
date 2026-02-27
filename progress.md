@@ -74,6 +74,9 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - Added run-reset stability pass:
 - new `_reset_run_modifiers()` in `scripts/main.gd` to clear run-scoped chest/diamond modifiers each reset.
 - new `clear_run_modifiers()` in `scripts/player.gd` to clear run-scoped player weapon/combat modifiers.
+- Added upgrade-moment feedback pass:
+- rare/epic/legendary tech picks now trigger stronger announcement + camera/time accents in `scripts/main.gd` (`_play_tech_pick_feedback`).
+- infused picks now surface explicit infused rarity callouts.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.
