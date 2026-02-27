@@ -10,11 +10,11 @@ var damage = 15.0
 var projectile_speed = 720.0
 var projectile_range = 420.0
 
-var max_health = 100.0
-var health = 100.0
+var max_health = 130.0
+var health = 130.0
 var _base_speed = 250.0
 var _speed_bonus = 0.0
-var _base_max_health = 100.0
+var _base_max_health = 130.0
 var _max_health_bonus = 0.0
 
 var _attack_cooldown = 0.0

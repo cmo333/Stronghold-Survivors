@@ -93,6 +93,10 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - added a persistent world-space player HP bar under the character in `scripts/player.gd`.
 - added adaptive runtime performance scaling in `scripts/main.gd` (FX density, particle cap, projectile cap, damage-number budget, and flow-field rebuild pacing react to FPS/load).
 - switched player/tower enemy queries to shared cached-enemy access paths to reduce repeated group-query/allocation pressure.
+- Stability + pacing follow-up:
+- fixed Tesla death-time crash by sanitizing/safe-sorting enemy lists in `scripts/tesla_tower.gd` before comparator access.
+- increased starting player HP baseline (`130`) in `scripts/player.gd`.
+- eased first-5-minute pressure in `scripts/main.gd` via early horde ramp smoothing and an early enemy-health grace ramp while preserving long-run scaling targets.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

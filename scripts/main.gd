@@ -65,6 +65,8 @@ const XP_GAIN_MULT = 1.5
 const ENEMY_HEALTH_BASE_MULT = 2.0
 const ENEMY_HEALTH_GROWTH_PER_30S = 0.25
 const ENGINEER_VITALITY_HP_PER_LEVEL = 20.0
+const EARLY_GAME_HORDE_RAMP_TIME = 300.0
+const EARLY_GAME_ENEMY_HEALTH_GRACE_MIN = 0.60
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
@@ -1809,7 +1811,11 @@ func _handle_tech_input() -> void:
 
 func _get_horde_count_multiplier(time_sec: float) -> float:
 	var minutes = int(floor(max(time_sec, 0.0) / 60.0))
-	return clampf(1.0 + float(minutes) * HORDE_MINUTE_MULT_STEP, 1.0, HORDE_MULT_MAX)
+	var target = clampf(1.0 + float(minutes) * HORDE_MINUTE_MULT_STEP, 1.0, HORDE_MULT_MAX)
+	if time_sec < EARLY_GAME_HORDE_RAMP_TIME:
+		var t = clampf(time_sec / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
+		return lerpf(1.0, target, t)
+	return target
 
 func _scale_horde_enemy_count(base_count: int, time_sec: float) -> int:
 	var scaled = int(round(float(base_count) * _get_horde_count_multiplier(time_sec)))
@@ -3179,7 +3185,11 @@ func get_heal_drop_amount(is_elite: bool = false, is_siege: bool = false, source
 
 func get_enemy_health_mult() -> float:
 	var growth = 1.0 + (max(elapsed, 0.0) / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
-	return ENEMY_HEALTH_BASE_MULT * growth
+	var mult = ENEMY_HEALTH_BASE_MULT * growth
+	if elapsed < EARLY_GAME_HORDE_RAMP_TIME:
+		var t = clampf(elapsed / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
+		mult *= lerpf(EARLY_GAME_ENEMY_HEALTH_GRACE_MIN, 1.0, t)
+	return mult
 
 func _get_available_tech_ids() -> Array:
 	var available: Array = []

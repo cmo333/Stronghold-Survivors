@@ -380,8 +380,18 @@ func _fire_at(target: Node2D) -> void:
 		_fire_arc_conduit(target)
 		return
 
-	var enemies = _get_enemies().duplicate()  # Copy before sorting — don't mutate shared cache
+	# Copy + sanitize before sorting to avoid freed-instance access inside comparator.
+	var enemies: Array = []
+	for raw_enemy in _get_enemies():
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
+			continue
+		if raw_enemy is Node2D:
+			enemies.append(raw_enemy)
 	enemies.sort_custom(func(a, b):
+		if a == null or not is_instance_valid(a):
+			return false
+		if b == null or not is_instance_valid(b):
+			return true
 		return global_position.distance_squared_to(a.global_position) < global_position.distance_squared_to(b.global_position)
 	)
 	var dmg_bonus = 0.0
