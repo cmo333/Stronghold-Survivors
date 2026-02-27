@@ -123,9 +123,12 @@ func _physics_process(delta: float) -> void:
 func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = attack_range * attack_range
-	for enemy: Node2D in get_tree().get_nodes_in_group("enemies"):
-		if enemy == null:
+	for raw_enemy in get_tree().get_nodes_in_group("enemies"):
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
 			continue
+		if not (raw_enemy is Node2D):
+			continue
+		var enemy := raw_enemy as Node2D
 		var dist = global_position.distance_squared_to(enemy.global_position)
 		if dist <= best_dist:
 			best = enemy

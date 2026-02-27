@@ -1414,7 +1414,7 @@ func _process(delta: float) -> void:
 	_maybe_minute_announcement()
 	_update_dynamic_caps()
 	# Update cached enemy list once per frame (used by all towers)
-	cached_enemies = get_tree().get_nodes_in_group("enemies")
+	_refresh_cached_enemies()
 	_update_flow_field(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
@@ -1425,6 +1425,13 @@ func _process(delta: float) -> void:
 	_update_essence_announcement(delta)
 	_update_ui()
 	_update_debug_flow(delta)
+
+func _refresh_cached_enemies() -> void:
+	cached_enemies.clear()
+	for raw_enemy in get_tree().get_nodes_in_group("enemies"):
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
+			continue
+		cached_enemies.append(raw_enemy)
 
 func _update_debug_flow(delta: float) -> void:
 	if not debug_flow_enabled:
@@ -3374,6 +3381,7 @@ func _reset_game_state() -> void:
 	# Clear enemies
 	for enemy in enemies_root.get_children():
 		enemy.queue_free()
+	cached_enemies.clear()
 	
 	# Clear projectiles
 	for proj in projectiles_root.get_children():

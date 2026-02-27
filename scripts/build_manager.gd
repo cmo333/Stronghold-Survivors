@@ -272,9 +272,12 @@ func _try_select() -> void:
 	var pos = _get_mouse_world_position()
 	var best_dist = INF
 	var buildings_found = get_tree().get_nodes_in_group("buildings")
-	for building: Node2D in buildings_found:
-		if building == null:
+	for raw_building in buildings_found:
+		if raw_building == null or not is_instance_valid(raw_building):
 			continue
+		if not (raw_building is Node2D):
+			continue
+		var building := raw_building as Node2D
 		var radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			radius = building.get_footprint_radius()
@@ -580,9 +583,12 @@ func _is_clear(position: Vector2, radius: float) -> bool:
 	var hits: Array = space.intersect_shape(params, 1)
 	if not hits.is_empty():
 		return false
-	for building: Node2D in get_tree().get_nodes_in_group("buildings"):
-		if building == null or not is_instance_valid(building):
+	for raw_building in get_tree().get_nodes_in_group("buildings"):
+		if raw_building == null or not is_instance_valid(raw_building):
 			continue
+		if not (raw_building is Node2D):
+			continue
+		var building := raw_building as Node2D
 		var other_radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			other_radius = building.get_footprint_radius()
