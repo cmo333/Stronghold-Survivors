@@ -1,16 +1,18 @@
 # Tasks
 
 ## Now
-- Playtest maze feel with walls + gates + siege pressure.
-- Tune XP curve and tech pick frequency.
-- Add pickup visibility polish (glow or size pass).
+- Instrument placement + flow rebuild timings and capture hitch sources.
+- Fix adjacent-tower preview false `X` and first-hover flicker in build mode.
+- Wire runtime quality toggles (FX density, trail density, shake intensity) to real systems.
+- Redesign level-up/upgrade card layout for scan speed and space-industrial visual language.
 
 ## Next
-- Add chest loot tables + Diamond event drop.
-- Add more tower path techs (Cannon, Flamethrower, Mortar).
-- Add enemy variants: flyer, tank, disruptor.
+- Ship Mars terrain base kit (regolith, basalt seams, high-contrast path readability).
+- Replace zone visuals with abyss/amorphous extraction field treatment.
+- Complete missile turret and cannon tower visual identity pass.
+- Integrate pause/settings menu flow and ensure settings persistence + live apply.
 
 ## Later
+- Animation standardization pass (player/enemy/tower timing table, smoother loops).
 - Meta progression and unlocks.
-- Map modifiers and biomes.
-- Art pass with pixel assets.
+- Additional biomes, map modifiers, and content expansions.

@@ -21,6 +21,8 @@ const POWER_UP_SCENE = preload("res://scenes/power_up.tscn")
 const DEATH_STATS_SCENE = preload("res://scenes/death_stats_screen.tscn")
 const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
 const GAME_OVER_SCENE = preload("res://scenes/game_over.tscn")
+const PAUSE_MENU_SCENE = preload("res://scenes/pause_menu.tscn")
+const SETTINGS_MENU_SCENE = preload("res://scenes/settings_menu.tscn")
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
 const WaveManager = preload("res://scripts/wave_manager.gd")
 const FXManager = preload("res://scripts/fx_manager.gd")
@@ -40,6 +42,10 @@ const Minimap = preload("res://scripts/minimap.gd")
 @onready var ui: CanvasLayer = $UI
 @onready var build_manager: Node = $BuildManager
 @onready var game_over_ui: CanvasLayer = null
+@onready var pause_menu: CanvasLayer = null
+@onready var settings_menu: CanvasLayer = null
+
+var _settings_manager: Node = null
 
 # FX Manager
 var fx_manager: FXManager = null
@@ -64,20 +70,42 @@ var _essence_tip_shown: bool = false
 var play_radius: float = 2200.0
 
 # Flow-field pathing (lightweight maze navigation)
-const FLOW_CELL_SIZE = 32.0
-const FLOW_RADIUS_CELLS = 60
+const FLOW_CELL_SIZE = 16.0
+const FLOW_MIN_RADIUS_CELLS = 56
+const FLOW_MAX_RADIUS_CELLS = 120
+const FLOW_RADIUS_PADDING = 320.0
 const FLOW_REBUILD_INTERVAL = 0.35
-const FLOW_DIRS = [
+const FLOW_BLOCK_MARGIN = 0.0
+const FLOW_AGENT_RADIUS = 7.0
+const FLOW_CLEARANCE_MARGIN = 1.0
+const DEBUG_FLOW_ACTION = "debug_flow"
+const DEBUG_FLOW_DRAW_RADIUS = 60
+const DEBUG_FLOW_STRIDE = 2
+const DEBUG_FLOW_LINE_LEN = 8.0
+const DEBUG_FLOW_DIR_COLOR = Color(0.2, 1.0, 0.5, 0.55)
+const DEBUG_FLOW_BLOCK_COLOR = Color(1.0, 0.2, 0.2, 0.2)
+const DEBUG_FLOW_PLAYER_COLOR = Color(1.0, 1.0, 0.2, 0.6)
+
+const CLEARANCE_DIRS = [
 	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
 	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
 ]
+const FLOW_DIRS = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)
+]
 var _flow_dist: PackedInt32Array = PackedInt32Array()
 var _flow_blocked: PackedByteArray = PackedByteArray()
+var _flow_clearance: PackedInt32Array = PackedInt32Array()
+var _flow_radius_cells: int = FLOW_MAX_RADIUS_CELLS
 var _flow_size: Vector2i = Vector2i.ZERO
 var _flow_origin_cell: Vector2i = Vector2i.ZERO
 var _flow_player_cell: Vector2i = Vector2i(999999, 999999)
 var _flow_dirty: bool = true
 var _flow_timer: float = 0.0
+var _flow_required_cells: int = 1
+var debug_flow_enabled: bool = false
+var _debug_flow_timer: float = 0.0
+var _debug_toggle_cooldown: float = 0.0
 
 # Cached enemy list — updated once per frame, used by all towers
 var cached_enemies: Array = []
@@ -843,8 +871,15 @@ func _validate_fx_defs() -> void:
 func _ready() -> void:
 	randomize()
 	add_to_group("game")
+	set_process_unhandled_input(true)
 	_ensure_input_map()
+	_settings_manager = _get_settings_manager()
+	_instantiate_pause_menu()
+	_instantiate_settings_menu()
+	_connect_settings_manager()
+	_sync_runtime_settings()
 	_load_damage_font()
+	_damage_number_budget = _get_damage_budget_per_sec()
 	
 	# Initialize audio system
 	if camera != null:
@@ -863,7 +898,7 @@ func _ready() -> void:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
 		$World.add_child(allies_root)
-	resources = 40
+	resources = 200
 	
 	# Initialize game over UI (hidden initially)
 	_instantiate_game_over_ui()
@@ -889,9 +924,11 @@ func _ready() -> void:
 	_spawn_resource_zones()
 	_apply_play_bounds()
 	_reset_run_stats()
+	_set_pause_allowed(false)
 	mark_flow_field_dirty()
 
 func _process(delta: float) -> void:
+	_check_debug_toggle(delta)
 	if game_over:
 		_handle_game_over_input()
 		return
@@ -900,6 +937,7 @@ func _process(delta: float) -> void:
 		return
 	if tech_open:
 		_handle_tech_input()
+		return
 	# Camera zoom controls
 	_handle_zoom_input()
 	start_timer += delta
@@ -919,6 +957,15 @@ func _process(delta: float) -> void:
 	_handle_powerup_spawning(delta)  # Power-up spawn logic
 	_update_essence_announcement(delta)
 	_update_ui()
+	_update_debug_flow(delta)
+
+func _update_debug_flow(delta: float) -> void:
+	if not debug_flow_enabled:
+		return
+	_debug_flow_timer = max(0.0, _debug_flow_timer - delta)
+	if _debug_flow_timer <= 0.0:
+		_debug_flow_timer = 0.2
+		queue_redraw()
 
 func _handle_start_input(delta: float) -> void:
 	if Input.is_action_just_pressed("build_1"):
@@ -927,6 +974,17 @@ func _handle_start_input(delta: float) -> void:
 		_set_selected_character(1)
 	if Input.is_action_just_pressed("start_game"):
 		_start_game()
+
+func _check_debug_toggle(delta: float) -> void:
+	_debug_toggle_cooldown = max(0.0, _debug_toggle_cooldown - delta)
+	if _debug_toggle_cooldown > 0.0:
+		return
+	if Input.is_action_just_pressed(DEBUG_FLOW_ACTION):
+		_debug_toggle_cooldown = 0.25
+		debug_flow_enabled = not debug_flow_enabled
+		queue_redraw()
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("FLOW DEBUG: %s" % ("ON" if debug_flow_enabled else "OFF"), Color(0.2, 1.0, 0.6), 18, 1.2)
 
 func _handle_zoom_input() -> void:
 	if camera == null:
@@ -952,6 +1010,7 @@ func _start_game() -> void:
 	game_started = true
 	start_timer = 0.0
 	_apply_base_time_scale()
+	_set_pause_allowed(true)
 	_apply_selected_character()
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(false)
@@ -989,7 +1048,7 @@ func _get_base_time_scale() -> float:
 	if game_over:
 		return 1.0
 	if tech_open:
-		return FeedbackConfig.TECH_SLOW_TIME_SCALE
+		return 0.0
 	return 1.0
 
 func _apply_base_time_scale() -> void:
@@ -1021,8 +1080,139 @@ func trigger_time_accent(slow_scale: float, duration: float) -> void:
 	_time_scale_tween = create_tween()
 	_time_scale_tween.tween_property(Engine, "time_scale", base_scale, duration).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
+func _get_settings_manager() -> Node:
+	var node = get_node_or_null("/root/SettingsManager")
+	if node != null:
+		return node
+	return _settings_manager
+
+func _connect_settings_manager() -> void:
+	var manager = _get_settings_manager()
+	if manager == null:
+		return
+	_settings_manager = manager
+	if manager.has_signal("settings_changed") and not manager.settings_changed.is_connected(_on_settings_changed):
+		manager.settings_changed.connect(_on_settings_changed)
+	if manager.has_signal("settings_loaded") and not manager.settings_loaded.is_connected(_sync_runtime_settings):
+		manager.settings_loaded.connect(_sync_runtime_settings)
+
+func _sync_runtime_settings(_category: String = "", _key: String = "", _value: Variant = null) -> void:
+	var manager = _get_settings_manager()
+	if manager == null:
+		return
+	var show_tower_range = bool(manager.get_setting("gameplay", "show_tower_range", true))
+	if build_manager != null and build_manager.has_method("set_show_tower_range"):
+		build_manager.set_show_tower_range(show_tower_range)
+	var show_wave_preview = bool(manager.get_setting("gameplay", "wave_preview", true))
+	if ui != null and ui.has_method("set_wave_preview_enabled"):
+		ui.set_wave_preview_enabled(show_wave_preview)
+	if ui != null and ui.has_method("set_tech_ledger_visible"):
+		ui.set_tech_ledger_visible(false)
+	var fx_scale = _get_fx_density_scale()
+	max_particles = max(90, int(round(150.0 * fx_scale)))
+
+func _on_settings_changed(category: String, key: String, value: Variant) -> void:
+	_sync_runtime_settings(category, key, value)
+
+func _get_damage_budget_per_sec() -> int:
+	var budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_damage_budget_scale"):
+		budget = int(round(float(budget) * float(manager.get_damage_budget_scale())))
+	return max(4, budget)
+
+func _get_fx_density_scale() -> float:
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_fx_density_scale"):
+		return clampf(float(manager.get_fx_density_scale()), 0.25, 1.5)
+	return 1.0
+
+func _should_spawn_optional_fx() -> bool:
+	var density = _get_fx_density_scale()
+	if density >= 1.0:
+		return true
+	return randf() <= density
+
+func _instantiate_pause_menu() -> void:
+	if PAUSE_MENU_SCENE == null:
+		push_warning("Pause menu scene is null")
+		return
+	pause_menu = PAUSE_MENU_SCENE.instantiate()
+	if pause_menu == null:
+		push_error("Failed to instantiate pause menu scene")
+		return
+	add_child(pause_menu)
+	if pause_menu.has_method("setup"):
+		pause_menu.setup(self)
+	if pause_menu.has_signal("resumed"):
+		pause_menu.resumed.connect(_on_pause_resumed)
+	if pause_menu.has_signal("settings_opened"):
+		pause_menu.settings_opened.connect(_on_pause_settings_opened)
+	if pause_menu.has_signal("quit_to_menu"):
+		pause_menu.quit_to_menu.connect(_on_main_menu_pressed)
+
+func _instantiate_settings_menu() -> void:
+	if SETTINGS_MENU_SCENE == null:
+		push_warning("Settings menu scene is null")
+		return
+	settings_menu = SETTINGS_MENU_SCENE.instantiate()
+	if settings_menu == null:
+		push_error("Failed to instantiate settings menu scene")
+		return
+	add_child(settings_menu)
+	if settings_menu.has_signal("closed"):
+		settings_menu.closed.connect(_on_settings_menu_closed)
+	if settings_menu.has_signal("settings_applied"):
+		settings_menu.settings_applied.connect(_sync_runtime_settings)
+
+func _on_pause_resumed() -> void:
+	_set_pause_allowed(_can_pause_game())
+	_apply_base_time_scale()
+
+func _on_pause_settings_opened() -> void:
+	if settings_menu == null or not is_instance_valid(settings_menu):
+		return
+	if pause_menu != null and pause_menu.has_method("set_can_pause"):
+		pause_menu.set_can_pause(false)
+	if settings_menu.has_method("show_menu"):
+		settings_menu.show_menu(true)
+
+func _on_settings_menu_closed() -> void:
+	_sync_runtime_settings()
+	if pause_menu == null or not is_instance_valid(pause_menu):
+		return
+	if pause_menu.has_method("is_paused") and pause_menu.is_paused():
+		_set_pause_allowed(_can_pause_game())
+
+func _can_pause_game() -> bool:
+	if not game_started:
+		return false
+	if game_over:
+		return false
+	if tech_open:
+		return false
+	if settings_menu != null and is_instance_valid(settings_menu) and settings_menu.visible:
+		return false
+	return true
+
+func _set_pause_allowed(allowed: bool) -> void:
+	if pause_menu == null or not is_instance_valid(pause_menu):
+		return
+	if pause_menu.has_method("set_can_pause"):
+		pause_menu.set_can_pause(allowed)
+
 func is_tech_open() -> bool:
 	return tech_open
+
+func is_menu_open() -> bool:
+	if tech_open:
+		return true
+	if pause_menu != null and is_instance_valid(pause_menu):
+		if pause_menu.has_method("is_paused") and pause_menu.is_paused():
+			return true
+	if settings_menu != null and is_instance_valid(settings_menu) and settings_menu.visible:
+		return true
+	return false
 
 func is_game_started() -> bool:
 	return game_started
@@ -1227,9 +1417,8 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	if randf() < siege_chance:
 		scene = SIEGE_ENEMY_SCENE
 	var enemy = scene.instantiate()
-	var angle = randf() * TAU
-	var distance = randf_range(spawn_radius_min, spawn_radius_max)
-	enemy.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
+	var spawn_pos = _pick_reachable_spawn_position()
+	enemy.global_position = spawn_pos
 	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
@@ -1240,6 +1429,21 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	if _count_elites() < elite_cap and randf() < elite_chance and enemy.has_method("set_elite"):
 		enemy.set_elite(elite_health_mult)
 	enemies_root.add_child(enemy)
+
+func _pick_reachable_spawn_position() -> Vector2:
+	if player == null:
+		return Vector2.ZERO
+	var origin = player.global_position
+	var attempts = 32
+	for i in range(attempts):
+		var angle = randf() * TAU
+		var distance = randf_range(spawn_radius_min, spawn_radius_max)
+		var pos = origin + Vector2.RIGHT.rotated(angle) * distance
+		if is_flow_reachable(pos):
+			return pos
+	# Fallback: spawn at max radius in a random direction
+	var fallback_angle = randf() * TAU
+	return origin + Vector2.RIGHT.rotated(fallback_angle) * spawn_radius_max
 
 func spawn_minion(position: Vector2) -> void:
 	if enemies_root.get_child_count() >= max_enemies_cap:
@@ -1386,8 +1590,9 @@ func _rebuild_flow_field(player_cell: Vector2i) -> void:
 	_flow_dirty = false
 	_flow_player_cell = player_cell
 
-	_flow_size = Vector2i(FLOW_RADIUS_CELLS * 2 + 1, FLOW_RADIUS_CELLS * 2 + 1)
-	_flow_origin_cell = player_cell - Vector2i(FLOW_RADIUS_CELLS, FLOW_RADIUS_CELLS)
+	_flow_radius_cells = _compute_flow_radius_cells()
+	_flow_size = Vector2i(_flow_radius_cells * 2 + 1, _flow_radius_cells * 2 + 1)
+	_flow_origin_cell = player_cell - Vector2i(_flow_radius_cells, _flow_radius_cells)
 
 	var total = _flow_size.x * _flow_size.y
 	_flow_dist = PackedInt32Array()
@@ -1411,7 +1616,7 @@ func _rebuild_flow_field(player_cell: Vector2i) -> void:
 		var radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			radius = float(building.get_footprint_radius())
-		var pad = radius + 2.0
+		var pad = radius + FLOW_AGENT_RADIUS + FLOW_BLOCK_MARGIN
 		var min_cell = _world_to_flow_cell(building.global_position - Vector2(pad, pad))
 		var max_cell = _world_to_flow_cell(building.global_position + Vector2(pad, pad))
 		for cx in range(min_cell.x, max_cell.x + 1):
@@ -1421,11 +1626,20 @@ func _rebuild_flow_field(player_cell: Vector2i) -> void:
 				if idx < 0:
 					continue
 				var center = _flow_cell_to_world_center(cell)
-				if center.distance_squared_to(building.global_position) <= pad * pad:
+				if abs(center.x - building.global_position.x) <= pad and abs(center.y - building.global_position.y) <= pad:
 					_flow_blocked[idx] = 1
 
-	# BFS from player to build distance field
+	_compute_flow_clearance()
+	_flow_required_cells = _get_required_clearance_cells()
+
+	# Ensure player cell is always reachable
 	var start_idx = _flow_index(player_cell)
+	if start_idx >= 0:
+		_flow_blocked[start_idx] = 0
+		if _flow_clearance.size() > start_idx:
+			_flow_clearance[start_idx] = max(_flow_clearance[start_idx], _flow_required_cells)
+
+	# BFS from player to build distance field
 	if start_idx < 0:
 		return
 	_flow_dist[start_idx] = 0
@@ -1444,6 +1658,8 @@ func _rebuild_flow_field(player_cell: Vector2i) -> void:
 			var nidx = ny * _flow_size.x + nx
 			if _flow_blocked[nidx] == 1:
 				continue
+			if _flow_clearance[nidx] < _flow_required_cells:
+				continue
 			if _flow_dist[nidx] >= 0:
 				continue
 			var cell = Vector2i(nx + _flow_origin_cell.x, ny + _flow_origin_cell.y)
@@ -1452,10 +1668,159 @@ func _rebuild_flow_field(player_cell: Vector2i) -> void:
 			_flow_dist[nidx] = _flow_dist[idx] + 1
 			queue.append(nidx)
 
+func _compute_flow_clearance() -> void:
+	var total = _flow_size.x * _flow_size.y
+	_flow_clearance = PackedInt32Array()
+	_flow_clearance.resize(total)
+	for i in range(total):
+		_flow_clearance[i] = -1
+
+	var queue: Array = []
+	for i in range(total):
+		if _flow_blocked[i] == 1:
+			_flow_clearance[i] = 0
+			queue.append(i)
+
+	if queue.is_empty():
+		for i in range(total):
+			_flow_clearance[i] = _flow_radius_cells
+		return
+
+	var head = 0
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % _flow_size.x
+		var y = int(idx / _flow_size.x)
+		for dir in CLEARANCE_DIRS:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= _flow_size.x or ny >= _flow_size.y:
+				continue
+			var nidx = ny * _flow_size.x + nx
+			if _flow_clearance[nidx] >= 0:
+				continue
+			_flow_clearance[nidx] = _flow_clearance[idx] + 1
+			queue.append(nidx)
+
+func _get_required_clearance_cells() -> int:
+	var required = (FLOW_AGENT_RADIUS + FLOW_CLEARANCE_MARGIN + FLOW_CELL_SIZE * 0.5) / FLOW_CELL_SIZE
+	return int(ceil(required))
+
+func _compute_flow_radius_cells() -> int:
+	# Keep enough radius around active spawn ring while avoiding oversized rebuilds.
+	var desired_world_radius = max(spawn_radius_max + FLOW_RADIUS_PADDING, 960.0)
+	if play_radius > 0.0:
+		desired_world_radius = min(desired_world_radius, play_radius + FLOW_CELL_SIZE)
+	var cells = int(ceil(desired_world_radius / FLOW_CELL_SIZE))
+	return clampi(cells, FLOW_MIN_RADIUS_CELLS, FLOW_MAX_RADIUS_CELLS)
+
 func get_flow_direction(world_pos: Vector2) -> Vector2:
 	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
 		return Vector2.ZERO
 	var cell = _world_to_flow_cell(world_pos)
+	var idx = _flow_index(cell)
+	if idx < 0:
+		return Vector2.ZERO
+	if _flow_clearance[idx] < _flow_required_cells:
+		return Vector2.ZERO
+	var dist = _flow_dist[idx]
+	if dist < 0:
+		var fallback_cell = _find_nearest_reachable_cell(cell, 8)
+		if fallback_cell != cell:
+			var fallback_target = _flow_cell_to_world_center(fallback_cell)
+			return (fallback_target - world_pos).normalized()
+		return Vector2.ZERO
+	var best_dir = Vector2i.ZERO
+	var best_dist = dist
+	for dir in FLOW_DIRS:
+		var ncell = cell + dir
+		var nidx = _flow_index(ncell)
+		if nidx < 0:
+			continue
+		if _flow_clearance[nidx] < _flow_required_cells:
+			continue
+		var ndist = _flow_dist[nidx]
+		if ndist >= 0 and ndist < best_dist:
+			best_dist = ndist
+			best_dir = dir
+	if best_dir == Vector2i.ZERO:
+		return Vector2.ZERO
+	var target = _flow_cell_to_world_center(cell + best_dir)
+	return (target - world_pos).normalized()
+
+func _find_nearest_reachable_cell(cell: Vector2i, max_radius: int) -> Vector2i:
+	var best_cell = cell
+	var best_dist = INF
+	for r in range(1, max_radius + 1):
+		for dx in range(-r, r + 1):
+			for dy in range(-r, r + 1):
+				if abs(dx) != r and abs(dy) != r:
+					continue
+				var candidate = Vector2i(cell.x + dx, cell.y + dy)
+				var idx = _flow_index(candidate)
+				if idx < 0:
+					continue
+				if _flow_clearance[idx] < _flow_required_cells:
+					continue
+				var dist = _flow_dist[idx]
+				if dist >= 0 and dist < best_dist:
+					best_dist = dist
+					best_cell = candidate
+		if best_cell != cell:
+			return best_cell
+	return best_cell
+
+func is_flow_reachable(world_pos: Vector2) -> bool:
+	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
+		return true
+	var cell = _world_to_flow_cell(world_pos)
+	var idx = _flow_index(cell)
+	if idx < 0:
+		return false
+	if _flow_clearance[idx] < _flow_required_cells:
+		return false
+	return _flow_dist[idx] >= 0
+
+func _draw() -> void:
+	if not debug_flow_enabled:
+		return
+	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
+		return
+	var center_cell = _flow_player_cell
+	var radius = min(DEBUG_FLOW_DRAW_RADIUS, _flow_radius_cells)
+	var min_cell = Vector2i(center_cell.x - radius, center_cell.y - radius)
+	var max_cell = Vector2i(center_cell.x + radius, center_cell.y + radius)
+
+	for cy in range(min_cell.y, max_cell.y + 1, DEBUG_FLOW_STRIDE):
+		for cx in range(min_cell.x, max_cell.x + 1, DEBUG_FLOW_STRIDE):
+			var cell = Vector2i(cx, cy)
+			var idx = _flow_index(cell)
+			if idx < 0:
+				continue
+			var center = _flow_cell_to_world_center(cell)
+			if play_radius > 0.0 and center.length() > play_radius:
+				continue
+			if _flow_clearance.size() > idx and _flow_clearance[idx] < _flow_required_cells:
+				var tight_rect = Rect2(center - Vector2(FLOW_CELL_SIZE * 0.5, FLOW_CELL_SIZE * 0.5), Vector2(FLOW_CELL_SIZE, FLOW_CELL_SIZE))
+				draw_rect(tight_rect, DEBUG_FLOW_BLOCK_COLOR, true)
+				continue
+			if _flow_blocked[idx] == 1:
+				var rect = Rect2(center - Vector2(FLOW_CELL_SIZE * 0.5, FLOW_CELL_SIZE * 0.5), Vector2(FLOW_CELL_SIZE, FLOW_CELL_SIZE))
+				draw_rect(rect, DEBUG_FLOW_BLOCK_COLOR, true)
+				continue
+			var dist = _flow_dist[idx]
+			if dist < 0:
+				continue
+			var dir = _get_flow_dir_for_cell(cell)
+			if dir != Vector2.ZERO:
+				draw_line(center, center + dir * DEBUG_FLOW_LINE_LEN, DEBUG_FLOW_DIR_COLOR, 1.0)
+
+	# Highlight player cell
+	var player_center = _flow_cell_to_world_center(center_cell)
+	draw_circle(player_center, 6.0, DEBUG_FLOW_PLAYER_COLOR)
+
+func _get_flow_dir_for_cell(cell: Vector2i) -> Vector2:
 	var idx = _flow_index(cell)
 	if idx < 0:
 		return Vector2.ZERO
@@ -1469,14 +1834,15 @@ func get_flow_direction(world_pos: Vector2) -> Vector2:
 		var nidx = _flow_index(ncell)
 		if nidx < 0:
 			continue
+		if _flow_clearance[nidx] < _flow_required_cells:
+			continue
 		var ndist = _flow_dist[nidx]
 		if ndist >= 0 and ndist < best_dist:
 			best_dist = ndist
 			best_dir = dir
 	if best_dir == Vector2i.ZERO:
 		return Vector2.ZERO
-	var target = _flow_cell_to_world_center(cell + best_dir)
-	return (target - world_pos).normalized()
+	return Vector2(best_dir.x, best_dir.y).normalized()
 
 func _world_to_flow_cell(world_pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(world_pos.x / FLOW_CELL_SIZE)), int(floor(world_pos.y / FLOW_CELL_SIZE)))
@@ -1611,6 +1977,8 @@ func _update_essence_announcement(delta: float) -> void:
 func spawn_fx(kind: String, position: Vector2) -> void:
 	if fx_root == null or not fx_defs.has(kind):
 		return
+	if not _should_spawn_optional_fx():
+		return
 	# Cap FX nodes to prevent runaway memory/crash
 	if fx_root.get_child_count() >= max_particles:
 		return
@@ -1641,6 +2009,8 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lifetime: float = 0.45, velocity: Vector2 = Vector2.ZERO, bloom: float = 1.6, trail_strength: float = 0.7, trail_length: float = 0.9, z: int = 1) -> Node:
 	if fx_root == null:
 		return null
+	if not _should_spawn_optional_fx():
+		return null
 	# Cap particles to prevent memory issues in long games
 	if fx_root.get_child_count() >= max_particles:
 		return null
@@ -1654,7 +2024,9 @@ func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lif
 func _spawn_glow_burst(position: Vector2, base_color: Color, count: int, size: float, lifetime: float, speed: float, bloom: float) -> void:
 	if fx_root == null:
 		return
-	for i in count:
+	var density = _get_fx_density_scale()
+	var scaled_count = max(1, int(round(float(count) * density)))
+	for i in scaled_count:
 		var dir = Vector2.RIGHT.rotated(randf() * TAU)
 		var vel = dir * randf_range(speed * 0.4, speed)
 		var tint = base_color.lerp(Color.WHITE, randf_range(0.05, 0.35))
@@ -1672,6 +2044,9 @@ func _spawn_glow_burst(position: Vector2, base_color: Color, count: int, size: f
 
 func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0.0, is_crit: bool = false, is_kill: bool = false, is_elite: bool = false, damage_type: String = "normal") -> void:
 	if not FeedbackConfig.ENABLE_DAMAGE_NUMBERS:
+		return
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("show_damage_numbers") and not manager.show_damage_numbers():
 		return
 	if amount < FeedbackConfig.DAMAGE_NUMBER_MIN:
 		return
@@ -1775,7 +2150,7 @@ func _consume_damage_number_budget() -> bool:
 	var now_ms = Time.get_ticks_msec()
 	if now_ms - _damage_number_window_ms > 1000:
 		_damage_number_window_ms = now_ms
-		_damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
+		_damage_number_budget = _get_damage_budget_per_sec()
 	if _damage_number_budget <= 0:
 		return false
 	_damage_number_budget -= 1
@@ -1845,6 +2220,7 @@ func _open_tech_menu() -> void:
 	if available.is_empty():
 		pending_picks = 0
 		tech_open = false
+		_set_pause_allowed(_can_pause_game())
 		return
 	var picks: Array = []
 	var unlocks: Array = []
@@ -1870,6 +2246,7 @@ func _open_tech_menu() -> void:
 			"level": int(tech_levels.get(id, 0))
 		})
 	tech_open = true
+	_set_pause_allowed(false)
 	if ui.has_method("show_tech"):
 		ui.show_tech(tech_choices)
 	_apply_base_time_scale()
@@ -1885,14 +2262,12 @@ func _choose_tech(index: int) -> void:
 	tech_open = false
 	if ui.has_method("hide_tech"):
 		ui.hide_tech()
-	# Tween time_scale back to 1.0 smoothly instead of instant
-	if _time_scale_tween != null:
-		_time_scale_tween.kill()
-	_time_scale_tween = create_tween()
-	_time_scale_tween.tween_property(Engine, "time_scale", 1.0, 0.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	pending_picks = max(0, pending_picks - 1)
 	if pending_picks > 0:
 		_open_tech_menu()
+		return
+	_set_pause_allowed(_can_pause_game())
+	_apply_base_time_scale()
 
 func _apply_tech(id: String) -> void:
 	tech_levels[id] = int(tech_levels.get(id, 0)) + 1
@@ -2039,18 +2414,10 @@ func get_pickup_range_mult() -> float:
 
 func get_enemy_health_mult() -> float:
 	if elapsed <= 300.0:
-		return 1.0
-	if elapsed <= 600.0:
-		var t = clamp((elapsed - 300.0) / 300.0, 0.0, 1.0)
-		return lerp(1.0, 2.0, t)
-	if elapsed <= 1200.0:
-		var t = clamp((elapsed - 600.0) / 600.0, 0.0, 1.0)
-		return lerp(2.0, 4.5, t)
-	if elapsed <= 1800.0:
-		var t = clamp((elapsed - 1200.0) / 600.0, 0.0, 1.0)
-		return lerp(4.5, 8.0, t)
-	var t = clamp((elapsed - 1800.0) / 600.0, 0.0, 1.0)
-	return lerp(8.0, 12.0, t)
+		var t = clamp(elapsed / 300.0, 0.0, 1.0)
+		return lerp(1.0, 1.5, t)
+	var steps = int(floor((elapsed - 300.0) / 60.0))
+	return 1.5 + steps * 0.1
 
 func _get_available_tech_ids() -> Array:
 	var available: Array = []
@@ -2088,9 +2455,15 @@ func _update_ui() -> void:
 func shake_camera(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE_DURATION) -> void:
 	if camera == null:
 		return
+	var shake_strength = strength
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_screenshake_multiplier"):
+		shake_strength *= float(manager.get_screenshake_multiplier())
+	if shake_strength <= 0.01:
+		return
 	# Use dynamic camera controller shake
 	if camera.has_method("shake"):
-		camera.shake(strength, duration)
+		camera.shake(shake_strength, duration)
 
 func _refresh_build_palette() -> void:
 	if ui == null:
@@ -2139,8 +2512,10 @@ func start_death_camera_zoom(player_position: Vector2) -> void:
 
 func on_death_animation_complete() -> void:
 	"""Called by player.gd when death animation finishes"""
+	_force_close_menus()
 	game_over = true
 	Engine.time_scale = 1.0
+	_set_pause_allowed(false)
 	
 	# Audio: Game over sound
 	AudioManager.play_one_shot("game_over", player.global_position, AudioManager.CRITICAL_PRIORITY)
@@ -2227,6 +2602,7 @@ func _on_try_again() -> void:
 
 func _on_main_menu_pressed() -> void:
 	"""Return to main menu"""
+	_force_close_menus()
 	# Hide game over UI
 	if game_over_ui != null:
 		game_over_ui.hide_game_over()
@@ -2249,11 +2625,12 @@ func _handle_game_over_input() -> void:
 	# Allow quick restart with Enter/R keys
 	if Input.is_action_just_pressed("start_game"):
 		_on_try_again()
-	if Input.is_action_just_pressed("cancel"):
+	if Input.is_action_just_pressed("cancel") or Input.is_action_just_pressed("pause"):
 		_on_main_menu_pressed()
 
 func _restart_game() -> void:
 	"""Restart the game while keeping meta-progress"""
+	_force_close_menus()
 	# Hide game over UI
 	if game_over_ui != null:
 		game_over_ui.hide_game_over()
@@ -2281,12 +2658,13 @@ func _restart_game() -> void:
 
 func _reset_game_state() -> void:
 	"""Reset all game state for a new run"""
+	_force_close_menus()
 	game_over = false
 	game_started = false
 	elapsed = 0.0
 	spawn_accumulator = 0.0
 	start_timer = 0.0
-	resources = 40
+	resources = 200
 	
 	# Clear enemies
 	for enemy in enemies_root.get_children():
@@ -2311,8 +2689,19 @@ func _reset_game_state() -> void:
 	# Reset wave manager
 	if wave_manager != null and wave_manager.has_method("reset"):
 		wave_manager.reset()
-	
+
+	_set_pause_allowed(false)
 	Engine.time_scale = 1.0
+
+func _force_close_menus() -> void:
+	get_tree().paused = false
+	if settings_menu != null and is_instance_valid(settings_menu):
+		settings_menu.visible = false
+	if pause_menu != null and is_instance_valid(pause_menu):
+		if pause_menu.has_method("is_paused") and pause_menu.is_paused():
+			pause_menu.unpause()
+		else:
+			pause_menu.visible = false
 
 func _reset_run_stats() -> void:
 	"""Reset stats for a new run"""
@@ -2689,8 +3078,17 @@ func _animate_floating_text(label: Label) -> void:
 func flash_screen(color: Color, duration: float = 0.3) -> void:
 	if not is_inside_tree():
 		return
+	var final_color = color
+	var final_duration = duration
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_screen_flash_reduction"):
+		var reduction = clampf(float(manager.get_screen_flash_reduction()), 0.0, 1.0)
+		final_color.a *= (1.0 - reduction)
+		final_duration = max(0.05, duration * (1.0 - reduction * 0.5))
+	if final_color.a <= 0.01:
+		return
 	var flash = ColorRect.new()
-	flash.color = color
+	flash.color = final_color
 	flash.anchors_preset = Control.PRESET_FULL_RECT
 	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(flash)
@@ -2698,7 +3096,7 @@ func flash_screen(color: Color, duration: float = 0.3) -> void:
 		flash.queue_free()
 		return
 	var tween = flash.create_tween()
-	tween.tween_property(flash, "modulate:a", 0.0, duration).from(color.a).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(flash, "modulate:a", 0.0, final_duration).from(final_color.a).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(flash.queue_free)
 
 func set_death_vignette(intensity: float) -> void:
@@ -2924,12 +3322,15 @@ func _ensure_input_map() -> void:
 	_ensure_action("toggle_gate", [KEY_G])
 	_ensure_action("interact", [KEY_F])
 	_ensure_action("cancel", [KEY_ESCAPE])
+	_ensure_action("pause", [KEY_P])
+	_ensure_action("ui_cancel", [KEY_ESCAPE])
+	_ensure_action(DEBUG_FLOW_ACTION, [KEY_F8, KEY_F9, KEY_F10])
 
 func _ensure_action(name: String, keys: Array) -> void:
-	if InputMap.has_action(name):
-		return
-	InputMap.add_action(name)
+	if not InputMap.has_action(name):
+		InputMap.add_action(name)
 	for key in keys:
 		var ev = InputEventKey.new()
 		ev.physical_keycode = key
-		InputMap.action_add_event(name, ev)
+		if not InputMap.action_has_event(name, ev):
+			InputMap.action_add_event(name, ev)

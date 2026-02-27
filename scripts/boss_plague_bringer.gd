@@ -33,8 +33,8 @@ func _ready() -> void:
 	attack_rate = 1.2
 	attack_range = 40.0
 	
-	# Flying enemies ignore terrain collisions
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY  # Don't collide with buildings
+	# Obeys maze collisions like all enemies (phases through player body).
+	collision_mask = GameLayers.ALLY | GameLayers.BUILDING
 	
 	super._ready()
 

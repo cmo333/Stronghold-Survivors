@@ -28,23 +28,49 @@ func _ready() -> void:
 
 func _physics_process(delta: float) -> void:
 	var step = speed * delta
-	global_position += direction * step
+	var next_pos = global_position + direction * step
+	var hit = _raycast_hit(global_position, next_pos)
+	if not hit.is_empty():
+		_handle_hit(hit.get("collider"), hit.get("position", next_pos))
+		return
+	global_position = next_pos
 	_travelled += step
 	_spawn_trail()
 	if _travelled >= max_range:
 		queue_free()
 
 func _on_body_entered(body: Node) -> void:
+	_handle_hit(body, global_position)
+
+func _raycast_hit(from: Vector2, to: Vector2) -> Dictionary:
+	var space = get_world_2d().direct_space_state
+	var params = PhysicsRayQueryParameters2D.create(from, to, collision_mask)
+	params.exclude = [self]
+	params.collide_with_areas = true
+	params.collide_with_bodies = true
+	return space.intersect_ray(params)
+
+func _handle_hit(body: Node, hit_pos: Vector2) -> void:
 	if body == null:
 		return
-	if body.is_in_group("buildings"):
+	var target = _resolve_hit_target(body)
+	if target == null:
+		return
+	if target.is_in_group("buildings"):
 		queue_free()
 		return
-	if not (body.is_in_group("player") or body.is_in_group("allies")):
-		return
-	if body.has_method("take_damage"):
-		body.take_damage(damage, global_position, true)
-	queue_free()
+	if target.is_in_group("player") or target.is_in_group("allies"):
+		if target.has_method("take_damage"):
+			target.take_damage(damage, hit_pos, true)
+		queue_free()
+
+func _resolve_hit_target(body: Node) -> Node:
+	if body.is_in_group("player") or body.is_in_group("allies") or body.is_in_group("buildings"):
+		return body
+	var parent = body.get_parent()
+	if parent != null and parent.is_in_group("buildings"):
+		return parent
+	return body
 
 func _spawn_trail() -> void:
 	if _game == null or not _game.has_method("spawn_glow_particle"):

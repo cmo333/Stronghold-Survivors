@@ -83,7 +83,10 @@ var _upgrade_popup_timer: Timer = null
 var _tech_ledger_panel: TextureRect = null
 var _tech_ledger_container: HBoxContainer = null
 var _tech_ledger_label: Label = null
+var _tech_ledger_visible: bool = false
 var _wave_announce_label: Label = null
+var _wave_preview_enabled: bool = true
+var _tech_backdrop: ColorRect = null
 
 # Low health vignette
 var _vignette: ColorRect = null
@@ -108,6 +111,7 @@ func _ready() -> void:
 	_build_wave_announcement()
 	_setup_upgrade_popup_timer()
 	_build_tech_ledger()
+	set_tech_ledger_visible(false)
 	_build_vignette()
 	_build_streak_label()
 
@@ -318,6 +322,9 @@ func show_wave_announcement(text: String, time_left: float, active: bool) -> voi
 	if _wave_announce_label == null:
 		_build_wave_announcement()
 	if _wave_announce_label == null or not is_instance_valid(_wave_announce_label):
+		return
+	if not _wave_preview_enabled:
+		_wave_announce_label.visible = false
 		return
 	if not active or text == "":
 		_wave_announce_label.visible = false
@@ -996,8 +1003,32 @@ func _add_tech_rarity_frames() -> void:
 		tech_panel.move_child(frame, 0)
 		tech_frames.append(frame)
 
+func _ensure_tech_backdrop() -> void:
+	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
+		return
+	_tech_backdrop = ColorRect.new()
+	_tech_backdrop.name = "TechBackdrop"
+	_tech_backdrop.color = Color(0.0, 0.0, 0.0, 0.88)
+	_tech_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tech_backdrop.anchor_left = 0.0
+	_tech_backdrop.anchor_top = 0.0
+	_tech_backdrop.anchor_right = 1.0
+	_tech_backdrop.anchor_bottom = 1.0
+	_tech_backdrop.offset_left = 0.0
+	_tech_backdrop.offset_top = 0.0
+	_tech_backdrop.offset_right = 0.0
+	_tech_backdrop.offset_bottom = 0.0
+	_tech_backdrop.visible = false
+	$HUD.add_child(_tech_backdrop)
+	$HUD.move_child(_tech_backdrop, 0)
+
 func show_tech(options: Array) -> void:
+	_ensure_tech_backdrop()
+	if _tech_backdrop != null:
+		_tech_backdrop.visible = true
 	tech_panel.visible = true
+	tech_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
+	tech_panel.scale = Vector2.ONE
 	tech_option1.text = _format_option(1, options, 0)
 	tech_option2.text = _format_option(2, options, 1)
 	tech_option3.text = _format_option(3, options, 2)
@@ -1011,6 +1042,8 @@ func show_tech(options: Array) -> void:
 
 func hide_tech() -> void:
 	tech_panel.visible = false
+	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
+		_tech_backdrop.visible = false
 
 func _build_tech_ledger() -> void:
 	if _tech_ledger_panel != null and is_instance_valid(_tech_ledger_panel):
@@ -1030,6 +1063,7 @@ func _build_tech_ledger() -> void:
 	_tech_ledger_panel.offset_right = -12.0
 	_tech_ledger_panel.offset_top = 160.0
 	_tech_ledger_panel.offset_bottom = 216.0
+	_tech_ledger_panel.visible = _tech_ledger_visible
 	hud.add_child(_tech_ledger_panel)
 
 	_tech_ledger_label = Label.new()
@@ -1089,12 +1123,23 @@ func update_tech_ledger(levels: Dictionary, defs: Dictionary) -> void:
 		more.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.8))
 		more.add_theme_constant_override("outline_size", 1)
 		_tech_ledger_container.add_child(more)
+	set_tech_ledger_visible(_tech_ledger_visible)
 
 func clear_tech_ledger() -> void:
 	if _tech_ledger_container == null:
 		return
 	for child in _tech_ledger_container.get_children():
 		child.queue_free()
+
+func set_tech_ledger_visible(visible: bool) -> void:
+	_tech_ledger_visible = visible
+	if _tech_ledger_panel != null and is_instance_valid(_tech_ledger_panel):
+		_tech_ledger_panel.visible = visible
+
+func set_wave_preview_enabled(enabled: bool) -> void:
+	_wave_preview_enabled = enabled
+	if not enabled and _wave_announce_label != null and is_instance_valid(_wave_announce_label):
+		_wave_announce_label.visible = false
 
 func _build_tech_chip(icon_path: String, level: int, rarity: String) -> Control:
 	var chip = Control.new()
@@ -1256,6 +1301,11 @@ func _style_tech_panel() -> void:
 	_style_label(tech_option2, Vector2(112, 150), Vector2(300, 54), true)
 	_style_label(tech_option3, Vector2(112, 238), Vector2(300, 54), true)
 	_style_label(tech_hint, Vector2(20, 298), Vector2(440, 16), false)
+	for lbl in [tech_title, tech_hint, tech_option1, tech_option2, tech_option3]:
+		if lbl == null:
+			continue
+		lbl.add_theme_constant_override("outline_size", 2)
+		lbl.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
 
 	for icon in [tech_icon1, tech_icon2, tech_icon3]:
 		if icon == null:

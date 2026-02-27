@@ -76,12 +76,13 @@ func setup(game_ref: Node, difficulty: float) -> void:
 		health_mult = float(_game.get_enemy_health_mult())
 	max_health = max_health * difficulty * health_mult
 	health = max_health
-	speed = speed * (1.0 + difficulty * 0.03) * 0.9  # Slightly slower to reduce pile-ups
+	speed = speed * (1.0 + difficulty * 0.03) * 0.72  # 20% slower than current baseline
 
 func _ready() -> void:
 	add_to_group("enemies")
 	collision_layer = GameLayers.ENEMY
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY | GameLayers.BUILDING
+	# Enemies collide with allies/buildings, but not the player body.
+	collision_mask = GameLayers.ALLY | GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	if body != null:
 		_base_color = body.modulate

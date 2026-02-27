@@ -204,11 +204,12 @@ func _animate_floating_elements(delta: float) -> void:
 		barrel.rotation = base_angle + PI / 2
 	
 	# Pulse the runes
+	var t = Time.get_ticks_msec() * 0.001
 	for i in range(_rune_glows.size()):
 		var rune = _rune_glows[i]
 		if rune == null:
 			continue
-		var pulse = 0.7 + sin(Time.get_time_dict_from_system()["second"] * 4.0 + i) * 0.3
+		var pulse = 0.7 + sin(t * 4.0 + i) * 0.3
 		rune.modulate = Color(1.0, 0.3, 0.1, 0.8 * pulse)
 	
 	# Enable smoke trails

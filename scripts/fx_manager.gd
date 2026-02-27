@@ -19,6 +19,7 @@ const CORPSE_FADE_SCENE = preload("res://scenes/fx/corpse_fade.tscn")
 # Parent nodes
 var _fx_root: Node2D
 var _game: Node
+var _settings_manager: Node = null
 
 # Color constants for damage types
 const COLOR_FIRE = Color(1.0, 0.3, 0.1, 1.0)
@@ -37,12 +38,22 @@ const MAX_FX_CHILDREN = 150  # Global cap on FX to prevent memory issues
 func setup(game: Node, fx_root: Node2D) -> void:
     _game = game
     _fx_root = fx_root
+    _settings_manager = get_node_or_null("/root/SettingsManager")
 
 func _can_spawn_fx() -> bool:
     """Check if we can spawn more FX without exceeding limits"""
     if _fx_root == null:
         return false
-    return _fx_root.get_child_count() < MAX_FX_CHILDREN
+    var density = _get_fx_density_scale()
+    var cap = max(60, int(round(float(MAX_FX_CHILDREN) * density)))
+    return _fx_root.get_child_count() < cap
+
+func _get_fx_density_scale() -> float:
+    if _settings_manager == null:
+        _settings_manager = get_node_or_null("/root/SettingsManager")
+    if _settings_manager != null and _settings_manager.has_method("get_fx_density_scale"):
+        return clampf(float(_settings_manager.get_fx_density_scale()), 0.25, 1.5)
+    return 1.0
 
 # ============================================
 # PROJECTILE TRAILS
@@ -89,6 +100,7 @@ func spawn_impact(position: Vector2, damage_type: String = "normal", is_crit: bo
     var spark_count = randi_range(4, 8)
     if is_crit:
         spark_count = randi_range(8, 14)
+    spark_count = max(2, int(round(float(spark_count) * _get_fx_density_scale())))
     
     spawn_impact_sparks(position, spark_count, damage_type, impact_normal)
     

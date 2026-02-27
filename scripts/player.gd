@@ -1,6 +1,7 @@
 extends CharacterBody2D
 
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
+const PLAYER_HALO_TEXTURE = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 
 var speed = 250.0
 var attack_range = 520.0
@@ -50,17 +51,21 @@ var _berserk_active = false
 var _berserk_multiplier = 1.0
 var _berserk_timer = 0.0
 var _berserk_glow: Sprite2D = null
+var _visibility_halo: Sprite2D = null
+var _visibility_halo_time: float = 0.0
 
 func _ready() -> void:
 	_ensure_game_ref()
 	add_to_group("player")
 	collision_layer = GameLayers.PLAYER
-	collision_mask = GameLayers.ENEMY | GameLayers.BUILDING
+	# Player should phase through enemy bodies in frantic maze-survivor combat.
+	collision_mask = GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	_base_damage = damage
 	_base_attack_rate = attack_rate
 	_base_speed = speed
 	_base_max_health = max_health
+	_setup_visibility_halo()
 
 func set_character(base_path: String, prefix: String) -> void:
 	if sprite != null and sprite.has_method("configure"):
@@ -68,6 +73,7 @@ func set_character(base_path: String, prefix: String) -> void:
 
 func _physics_process(delta: float) -> void:
 	_ensure_game_ref()
+	_update_visibility_halo(delta)
 	if _slow_timer > 0.0:
 		_slow_timer = max(0.0, _slow_timer - delta)
 	else:
@@ -255,6 +261,29 @@ func _ensure_game_ref() -> void:
 	if _game == null:
 		_game = get_tree().get_first_node_in_group("game")
 
+func _setup_visibility_halo() -> void:
+	if _visibility_halo != null:
+		return
+	_visibility_halo = Sprite2D.new()
+	_visibility_halo.name = "VisibilityHalo"
+	_visibility_halo.texture = PLAYER_HALO_TEXTURE
+	_visibility_halo.z_index = 80
+	_visibility_halo.position = Vector2(0, 2)
+	_visibility_halo.scale = Vector2.ONE * 0.82
+	_visibility_halo.modulate = Color(0.25, 1.0, 0.9, 0.62)
+	var mat = CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_visibility_halo.material = mat
+	add_child(_visibility_halo)
+
+func _update_visibility_halo(delta: float) -> void:
+	if _visibility_halo == null:
+		return
+	_visibility_halo_time += delta
+	var pulse = 0.5 + 0.5 * sin(_visibility_halo_time * 5.2)
+	_visibility_halo.scale = Vector2.ONE * (0.78 + pulse * 0.08)
+	_visibility_halo.modulate = Color(0.25, 1.0, 0.9, 0.52 + pulse * 0.22)
+
 # ============================================
 # DRAMATIC ROGUELIKE DEATH SEQUENCE
 # ============================================
@@ -274,6 +303,8 @@ func start_death_animation() -> void:
 	
 	# Stop all movement
 	velocity = Vector2.ZERO
+	if _visibility_halo != null:
+		_visibility_halo.visible = false
 	
 	# Phase 0: The fatal blow - dramatic impact
 	_spawn_fatal_blow_effect()
@@ -496,6 +527,9 @@ func reset() -> void:
 	scale = _original_scale if _original_scale != Vector2.ZERO else Vector2.ONE
 	if sprite != null:
 		sprite.modulate = Color.WHITE
+	if _visibility_halo != null:
+		_visibility_halo.visible = true
+		_visibility_halo_time = 0.0
 	health = max_health
 	velocity = Vector2.ZERO
 

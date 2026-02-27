@@ -194,7 +194,8 @@ func _animate_floating_elements(delta: float) -> void:
 	
 	# Pulse the crystal core
 	if _crystal_core != null:
-		var pulse = 0.8 + sin(Time.get_time_dict_from_system()["second"] * 5.0) * 0.2
+		var t = Time.get_ticks_msec() * 0.001
+		var pulse = 0.8 + sin(t * 5.0) * 0.2
 		_crystal_core.scale = Vector2.ONE * (0.9 + pulse * 0.2)
 		_crystal_core.modulate = Color(0.2, 0.9, 0.3, 0.8 * pulse)
 

@@ -9,6 +9,8 @@ signal boss_phase_changed(phase: int)
 @export var intro_duration: float = 0.6
 @export var boss_scale: float = 2.6
 
+const PLAYER_COLLISION_RADIUS = 7.0
+
 var boss_name: String = "Boss"
 var boss_title: String = ""
 var boss_wave: int = 0
@@ -19,11 +21,14 @@ var _intro_timer: float = 0.0
 
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
+	var global_health_mult = 1.0
+	if _game != null and _game.has_method("get_enemy_health_mult"):
+		global_health_mult = float(_game.get_enemy_health_mult())
 	var diff = max(1.0, difficulty)
-	var health_mult = 1.0 + (diff - 1.0) * 0.45
+	var diff_health_mult = 1.0 + (diff - 1.0) * 0.45
 	var damage_mult = 1.0 + (diff - 1.0) * 0.2
 	var speed_mult = 1.0 + (diff - 1.0) * 0.1
-	max_health *= health_mult
+	max_health *= global_health_mult * diff_health_mult
 	health = max_health
 	attack_damage *= damage_mult
 	speed *= speed_mult
@@ -89,7 +94,7 @@ func _style_boss() -> void:
 		body.modulate = body.modulate.lerp(boss_color, 0.35)
 	if collision_shape != null and collision_shape.shape is CircleShape2D:
 		var shape: CircleShape2D = collision_shape.shape
-		shape.radius = max(shape.radius, 18.0)
+		shape.radius = PLAYER_COLLISION_RADIUS
 	if _health_bar_bg != null:
 		_health_bar_bg.position.y -= 6.0
 		_health_bar_bg.size = Vector2(HEALTH_BAR_WIDTH * 2.0, HEALTH_BAR_HEIGHT * 1.4)

@@ -50,6 +50,7 @@ var _is_popup: bool = false
 
 func _ready() -> void:
 	layer = 101
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = false
 	
 	_settings_manager = get_node_or_null("/root/SettingsManager")
@@ -233,6 +234,6 @@ func _on_reset_defaults() -> void:
 	_pending_changes.clear()
 
 func _input(event: InputEvent) -> void:
-	if visible and event.is_action_pressed("ui_cancel"):
+	if visible and (event.is_action_pressed("ui_cancel") or event.is_action_pressed("pause")):
 		close()
 		get_viewport().set_input_as_handled()

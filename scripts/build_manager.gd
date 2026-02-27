@@ -18,10 +18,19 @@ const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
 const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
 const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
 const RANGE_PREVIEW_IDS = ["arrow_turret", "cannon_tower", "tesla_tower"]
+const PREVIEW_STATUS_REFRESH_INTERVAL = 0.08
 
 # Pathfinding constants
-const PATH_CHECK_RESOLUTION = 16.0  # Grid size for pathfinding check (smaller = more accurate)
-const PATH_CHECK_RADIUS_OFFSET = 4.0  # How much to shrink building radius for path checks
+const PATH_CHECK_RESOLUTION = 16.0  # Match flow-field grid size for consistent path validity
+const PATH_AGENT_RADIUS = 7.0
+const PATH_CLEARANCE_MARGIN = 1.0
+const PATH_MIN_REACHABLE_SPAWN_CELLS = 16
+const PATH_MIN_REACHABLE_SPAWN_FRACTION = 0.02
+const PATH_CLEARANCE_DIRS = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
+]
+const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
 
 var game: Node2D = null
 var buildings_root: Node2D = null
@@ -36,6 +45,12 @@ var preview: Node2D = null
 var selection_ring: Sprite2D = null
 var range_ring: Sprite2D = null
 var _evo_input_cooldown: float = 0.0
+var _preview_status_timer: float = 0.0
+var _preview_cached_pos: Vector2 = Vector2(999999.0, 999999.0)
+var _preview_cached_id: String = ""
+var _preview_cached_resources: int = -999999
+var _preview_cached_status: Dictionary = {}
+var _show_tower_range: bool = true
 
 func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
@@ -52,9 +67,18 @@ func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void
 	_refresh_palette()
 
 func _process(delta: float) -> void:
+	_preview_status_timer = max(0.0, _preview_status_timer - delta)
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		if preview != null:
 			preview.visible = false
+		return
+	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
+		if preview != null:
+			preview.visible = false
+		if selection_ring != null:
+			selection_ring.visible = false
+		if range_ring != null:
+			range_ring.visible = false
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
 		if preview != null:
@@ -95,6 +119,8 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
+		return
+	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
 		return
@@ -169,7 +195,7 @@ func _update_preview_position() -> void:
 	if current_id != "" and preview.has_method("set_color"):
 		var def = StructureDB.get_def(current_id)
 		if not def.is_empty():
-			var status = _evaluate_placement(snapped, def)
+			var status = _get_preview_status(snapped, def)
 			if status["clear"] and status["path_clear"] and status["affordable"]:
 				preview.set_color(PREVIEW_COLOR_OK)
 			elif status["clear"] and status["path_clear"] and not status["affordable"]:
@@ -186,10 +212,11 @@ func _update_preview_visuals() -> void:
 		return
 	if not _is_unlocked(current_id):
 		return
+	_invalidate_preview_cache()
 	var def = StructureDB.get_def(current_id)
 	if def.is_empty():
 		return
-	var radius = float(def.get("footprint_radius", 12))
+	var radius = _get_effective_footprint_radius(def)
 	if preview.has_method("set_radius"):
 		preview.set_radius(radius)
 	if preview.has_method("set_color"):
@@ -198,7 +225,7 @@ func _update_preview_visuals() -> void:
 		var path = str(def.get("preview", ""))
 		preview.set_ghost_texture(path)
 	if preview.has_method("set_range_radius"):
-		if RANGE_PREVIEW_IDS.has(current_id):
+		if _show_tower_range and RANGE_PREVIEW_IDS.has(current_id):
 			preview.set_range_radius(float(def.get("range", 0.0)))
 		else:
 			preview.set_range_radius(0.0)
@@ -237,6 +264,7 @@ func _try_place() -> void:
 		# Track tower built
 		if game.has_method("track_tower_built"):
 			game.track_tower_built()
+	_invalidate_preview_cache()
 	_set_selection_text("Built %s" % def.get("name", current_id))
 
 func _try_select() -> void:
@@ -395,7 +423,22 @@ func _try_toggle_selected() -> void:
 	if selected_building == null:
 		return
 	if selected_building.has_method("toggle"):
+		var was_blocks_path = bool(selected_building.blocks_path) if "blocks_path" in selected_building else false
 		selected_building.toggle()
+		# Prevent closing gates (or other toggles) from sealing enemy routes.
+		var now_blocks_path = bool(selected_building.blocks_path) if "blocks_path" in selected_building else false
+		if not was_blocks_path and now_blocks_path:
+			var radius = 12.0
+			if selected_building.has_method("get_footprint_radius"):
+				radius = float(selected_building.get_footprint_radius())
+			if not _check_path_validity(selected_building.global_position, radius):
+				selected_building.toggle()
+				_set_selection_text("Must leave path open!")
+				_invalidate_preview_cache()
+				return
+		if game != null and game.has_method("mark_flow_field_dirty"):
+			game.mark_flow_field_dirty()
+		_invalidate_preview_cache()
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 
@@ -412,6 +455,7 @@ func _try_sell_selected() -> void:
 	_clear_selection()
 	_hide_upgrade_panel()
 	bld.sell()
+	_invalidate_preview_cache()
 	_set_selection_text("Sold for %d resources" % refund)
 
 func _describe_building(building: Node) -> String:
@@ -496,6 +540,9 @@ func _update_selection_ring() -> void:
 func _update_range_ring() -> void:
 	if range_ring == null or selected_building == null:
 		return
+	if not _show_tower_range:
+		range_ring.visible = false
+		return
 	if not selected_building.has_method("get_range"):
 		range_ring.visible = false
 		return
@@ -506,12 +553,24 @@ func _update_range_ring() -> void:
 	range_ring.global_position = selected_building.global_position
 	range_ring.visible = true
 
+func set_show_tower_range(enabled: bool) -> void:
+	_show_tower_range = enabled
+	if not enabled and range_ring != null:
+		range_ring.visible = false
+	if preview != null and preview.has_method("set_range_radius"):
+		if not enabled:
+			preview.set_range_radius(0.0)
+		else:
+			_update_preview_visuals()
+
 func _is_clear(position: Vector2, radius: float) -> bool:
 	if game == null:
 		return true
 	var space: PhysicsDirectSpaceState2D = game.get_world_2d().direct_space_state
-	var shape = CircleShape2D.new()
-	shape.radius = radius
+	var shape = RectangleShape2D.new()
+	# Slight inset so edge-touching grid-aligned towers are allowed (flush placement for maze building).
+	var query_size = max(1.0, radius * 2.0 - 0.2)
+	shape.size = Vector2(query_size, query_size)
 	var params = PhysicsShapeQueryParameters2D.new()
 	params.shape = shape
 	params.transform = Transform2D(0.0, position)
@@ -528,7 +587,7 @@ func _is_clear(position: Vector2, radius: float) -> bool:
 		if building.has_method("get_footprint_radius"):
 			other_radius = building.get_footprint_radius()
 		var min_dist = radius + other_radius
-		if position.distance_squared_to(building.global_position) < min_dist * min_dist:
+		if abs(position.x - building.global_position.x) < min_dist and abs(position.y - building.global_position.y) < min_dist:
 			return false
 	return true
 
@@ -551,6 +610,7 @@ func _is_unlocked(id: String) -> bool:
 
 func _set_build_mode(active: bool) -> void:
 	build_mode = active
+	_invalidate_preview_cache()
 	_update_preview_state()
 
 func _clear_selection() -> void:
@@ -560,6 +620,39 @@ func _clear_selection() -> void:
 	if range_ring != null:
 		range_ring.visible = false
 	_hide_upgrade_panel()
+
+func _invalidate_preview_cache() -> void:
+	_preview_status_timer = 0.0
+	_preview_cached_id = ""
+	_preview_cached_resources = -999999
+	_preview_cached_pos = Vector2(999999.0, 999999.0)
+	_preview_cached_status = {}
+
+func _get_resource_snapshot() -> int:
+	if game == null:
+		return -1
+	if "resources" in game:
+		return int(game.resources)
+	return -1
+
+func _get_preview_status(snapped: Vector2, def: Dictionary) -> Dictionary:
+	var resources_now = _get_resource_snapshot()
+	var needs_refresh = _preview_cached_status.is_empty()
+	if current_id != _preview_cached_id:
+		needs_refresh = true
+	elif snapped != _preview_cached_pos:
+		needs_refresh = true
+	elif resources_now != _preview_cached_resources:
+		needs_refresh = true
+	elif _preview_status_timer <= 0.0:
+		needs_refresh = true
+	if needs_refresh:
+		_preview_cached_status = _evaluate_placement(snapped, def)
+		_preview_cached_pos = snapped
+		_preview_cached_id = current_id
+		_preview_cached_resources = resources_now
+		_preview_status_timer = PREVIEW_STATUS_REFRESH_INTERVAL
+	return _preview_cached_status
 
 func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	var result = {
@@ -577,7 +670,7 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
 	result["cost"] = cost
-	result["footprint"] = float(def.get("footprint_radius", 12))
+	result["footprint"] = _get_effective_footprint_radius(def)
 	if game != null and not game.can_afford(cost):
 		result["affordable"] = false
 		result["reason"] = "Not enough resources"
@@ -595,9 +688,202 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	result["can_place"] = result["affordable"] and result["clear"] and result["path_clear"]
 	return result
 
+func _get_effective_footprint_radius(def: Dictionary) -> float:
+	var radius = float(def.get("footprint_radius", 12))
+	var blocks_path = bool(def.get("blocks_path", true))
+	# Keep preview/placement checks aligned with Building.configure() collider sizing.
+	if blocks_path:
+		radius = max(radius, 16.0)
+	return radius
+
 func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
-	"""Check if placing a building would block paths. Disabled for now."""
-	return true
+	"""Check if placing a building would block paths to the player."""
+	if game == null or game.player == null:
+		return true
+
+	var player_pos: Vector2 = game.player.global_position
+	var cell_size = PATH_CHECK_RESOLUTION
+	var spawn_min = 500.0
+	var spawn_max = 750.0
+	var play_radius = 0.0
+	var spawn_min_prop = game.get("spawn_radius_min")
+	var spawn_max_prop = game.get("spawn_radius_max")
+	if typeof(spawn_min_prop) in [TYPE_FLOAT, TYPE_INT]:
+		spawn_min = float(spawn_min_prop)
+	if typeof(spawn_max_prop) in [TYPE_FLOAT, TYPE_INT]:
+		spawn_max = float(spawn_max_prop)
+	var play_radius_prop = game.get("play_radius")
+	if typeof(play_radius_prop) in [TYPE_FLOAT, TYPE_INT]:
+		play_radius = float(play_radius_prop)
+
+	if spawn_max <= 0.0:
+		return true
+
+	var max_radius = spawn_max + cell_size * 2.0
+	var grid_radius = int(ceil(max_radius / cell_size))
+	var grid_size = grid_radius * 2 + 1
+	# Snap the validation grid to world cells so preview validity doesn't flicker
+	# when the player moves sub-pixel amounts between frames.
+	var player_cell_center = Vector2i(
+		int(floor(player_pos.x / cell_size)),
+		int(floor(player_pos.y / cell_size))
+	)
+	var origin = Vector2(
+		float(player_cell_center.x - grid_radius) * cell_size,
+		float(player_cell_center.y - grid_radius) * cell_size
+	)
+
+	var total = grid_size * grid_size
+	var blocked = PackedByteArray()
+	blocked.resize(total)
+	for i in range(total):
+		blocked[i] = 0
+
+	# Mark blocked cells from existing buildings
+	for building in get_tree().get_nodes_in_group("buildings"):
+		if building == null or not is_instance_valid(building):
+			continue
+		var blocks_path = true
+		if "blocks_path" in building:
+			blocks_path = bool(building.blocks_path)
+		if not blocks_path:
+			continue
+		var radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			radius = float(building.get_footprint_radius())
+		_mark_blocked_circle(blocked, origin, grid_size, cell_size, building.global_position, radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+
+	# Mark blocked cells for proposed building
+	_mark_blocked_circle(blocked, origin, grid_size, cell_size, proposed_pos, proposed_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+
+	# Clearance field (distance from nearest obstacle cell)
+	var clearance = _compute_clearance_field(blocked, grid_size)
+	var required_cells = _get_required_clearance_cells(cell_size)
+
+	# BFS from player
+	var dist = PackedInt32Array()
+	dist.resize(total)
+	for i in range(total):
+		dist[i] = -1
+	var start_cell = _world_to_path_cell(player_pos, origin, cell_size)
+	if start_cell.x < 0 or start_cell.y < 0 or start_cell.x >= grid_size or start_cell.y >= grid_size:
+		return true
+	var start_idx = start_cell.y * grid_size + start_cell.x
+	if blocked[start_idx] == 1 or clearance[start_idx] < required_cells:
+		return false
+	dist[start_idx] = 0
+	var queue: Array = [start_idx]
+	var head = 0
+	var dirs = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		for dir in dirs:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if blocked[nidx] == 1 or clearance[nidx] < required_cells:
+				continue
+			if dist[nidx] >= 0:
+				continue
+			if play_radius > 0.0:
+				var world = _path_cell_center(Vector2i(nx, ny), origin, cell_size)
+				if world.length() > play_radius:
+					continue
+			dist[nidx] = dist[idx] + 1
+			queue.append(nidx)
+
+	# Validate enough reachable spawn ring cells to keep spawning reliable.
+	var min_dist_sq = spawn_min * spawn_min
+	var max_dist_sq = spawn_max * spawn_max
+	var total_spawn_cells = 0
+	var reachable_spawn_cells = 0
+	for y in range(grid_size):
+		for x in range(grid_size):
+			var world = _path_cell_center(Vector2i(x, y), origin, cell_size)
+			if play_radius > 0.0 and world.length() > play_radius:
+				continue
+			var d2 = world.distance_squared_to(player_pos)
+			if d2 < min_dist_sq or d2 > max_dist_sq:
+				continue
+			total_spawn_cells += 1
+			var idx = y * grid_size + x
+			if dist[idx] < 0:
+				continue
+			reachable_spawn_cells += 1
+
+	if total_spawn_cells <= 0:
+		return false
+	var min_reachable_cells = max(PATH_MIN_REACHABLE_SPAWN_CELLS, int(ceil(float(total_spawn_cells) * PATH_MIN_REACHABLE_SPAWN_FRACTION)))
+	return reachable_spawn_cells >= min_reachable_cells
+
+func _world_to_path_cell(world_pos: Vector2, origin: Vector2, cell_size: float) -> Vector2i:
+	return Vector2i(
+		int(floor((world_pos.x - origin.x) / cell_size)),
+		int(floor((world_pos.y - origin.y) / cell_size))
+	)
+
+func _path_cell_center(cell: Vector2i, origin: Vector2, cell_size: float) -> Vector2:
+	return origin + Vector2((float(cell.x) + 0.5) * cell_size, (float(cell.y) + 0.5) * cell_size)
+
+func _mark_blocked_circle(blocked: PackedByteArray, origin: Vector2, grid_size: int, cell_size: float, center: Vector2, radius: float, play_radius: float) -> void:
+	if radius <= 0.0:
+		return
+	var min_cell = _world_to_path_cell(center - Vector2(radius, radius), origin, cell_size)
+	var max_cell = _world_to_path_cell(center + Vector2(radius, radius), origin, cell_size)
+	for x in range(min_cell.x, max_cell.x + 1):
+		if x < 0 or x >= grid_size:
+			continue
+		for y in range(min_cell.y, max_cell.y + 1):
+			if y < 0 or y >= grid_size:
+				continue
+			var idx = y * grid_size + x
+			var world = _path_cell_center(Vector2i(x, y), origin, cell_size)
+			if play_radius > 0.0 and world.length() > play_radius:
+				continue
+			if abs(world.x - center.x) <= radius and abs(world.y - center.y) <= radius:
+				blocked[idx] = 1
+
+func _compute_clearance_field(blocked: PackedByteArray, grid_size: int) -> PackedInt32Array:
+	var total = grid_size * grid_size
+	var clearance = PackedInt32Array()
+	clearance.resize(total)
+	for i in range(total):
+		clearance[i] = -1
+	var queue: Array = []
+	for i in range(total):
+		if blocked[i] == 1:
+			clearance[i] = 0
+			queue.append(i)
+	if queue.is_empty():
+		for i in range(total):
+			clearance[i] = grid_size
+		return clearance
+	var head = 0
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		for dir in PATH_CLEARANCE_DIRS:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if clearance[nidx] >= 0:
+				continue
+			clearance[nidx] = clearance[idx] + 1
+			queue.append(nidx)
+	return clearance
+
+func _get_required_clearance_cells(cell_size: float) -> int:
+	var required = (PATH_AGENT_RADIUS + PATH_CLEARANCE_MARGIN + cell_size * 0.5) / cell_size
+	return int(ceil(required))
 
 func _apply_cost_mult(cost: int) -> int:
 	var final_cost = cost
@@ -606,4 +892,4 @@ func _apply_cost_mult(cost: int) -> int:
 	return max(0, final_cost)
 
 func _controls_text() -> String:
-	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build"
+	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build | P: pause"

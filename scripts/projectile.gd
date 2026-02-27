@@ -20,6 +20,7 @@ var _last_position = Vector2.ZERO
 var _trail_timer = 0.0
 var _has_impacted = false
 var _trail: Node2D = null
+var _trail_interval_scale: float = 1.0
 @onready var sprite: AnimatedSprite2D = $Body
 
 func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: float, explode_radius: float, pierce_count: int = 0, slow_factor_in: float = 1.0, slow_duration_in: float = 0.0, damage_type_in: String = "normal") -> void:
@@ -34,6 +35,7 @@ func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: f
 	slow_factor = slow_factor_in
 	slow_duration = slow_duration_in
 	damage_type = damage_type_in
+	_update_trail_interval_scale()
 
 func _ready() -> void:
 	collision_layer = GameLayers.PROJECTILE
@@ -59,7 +61,7 @@ func _physics_process(delta: float) -> void:
 	_trail_timer -= delta
 	if _trail_timer <= 0.0:
 		_spawn_trail()
-		_trail_timer = FeedbackConfig.PROJECTILE_TRAIL_INTERVAL
+		_trail_timer = FeedbackConfig.PROJECTILE_TRAIL_INTERVAL * _trail_interval_scale
 	
 	var hit = _raycast_hit(from, to)
 	if hit:
@@ -97,6 +99,14 @@ func _spawn_trail() -> void:
 		elif damage_type == "ice":
 			trail_color = Color(0.5, 0.8, 1.0, 0.6)
 		_game.spawn_glow_particle(global_position, trail_color, 4.0, 0.15, Vector2.ZERO, 1.2, 0.5, 0.8, -1)
+
+func _update_trail_interval_scale() -> void:
+	_trail_interval_scale = 1.0
+	if _game == null:
+		return
+	var settings_manager = _game.get_node_or_null("/root/SettingsManager")
+	if settings_manager != null and settings_manager.has_method("get_trail_interval_scale"):
+		_trail_interval_scale = clampf(float(settings_manager.get_trail_interval_scale()), 0.7, 3.0)
 
 func _handle_hit(body: Node) -> bool:
 	if body == null or not body.is_in_group("enemies"):
