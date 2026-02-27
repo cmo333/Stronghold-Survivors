@@ -58,6 +58,11 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - level-up supports Essence reroll on `R` with scaling cost and dynamic UI hinting.
 - added run telemetry counters for offered/chosen rarity, rerolls, reroll Essence spend, dead-screen proxy, and pity state (logged at run end).
 - added new higher-tier draft cards to support rarity spread (`tower_overclock`, `tower_ordnance`, `orbital_overdrive`, `essence_cache`).
+- Added draft-agency controls (Essence spend layer) in level-up:
+- `Z/X/C` lock option `1/2/3` for next draft
+- `A/S/D` infuse pick `1/2/3` (extra stack for multi-rank cards)
+- `Q/W/E` force next reroll into `tower/engineer/economy` category
+- Added category-aware offer generation and surfaced category tags in draft options.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

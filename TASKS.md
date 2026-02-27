@@ -12,10 +12,15 @@
 - rarity floor + pity draft generation scaffolding
 - Essence reroll action in draft UI with cost scaling
 - run telemetry counters for rarity distribution and rerolls
+- Phase C v0 draft-agency pass:
+- Essence lock for next draft option
+- Essence infuse for extra stack on multi-rank picks
+- Essence force-category reroll (tower/engineer/economy)
+- category tags surfaced in draft cards for readability
 
 ## Next
 - Implement draft generator v1 with no-dead-screen and pity logic.
-- Implement Essence actions in draft UI (reroll, lock, infuse, force category).
+- Balance/tune Essence costs and cap behavior for reroll/lock/infuse/force actions.
 - Rework elite/boss chest pipeline into 3-option reward flow.
 - Simplify tower upgrades to specialization breakpoint model.
 - Add life pickup drop system with missing-health scaling.

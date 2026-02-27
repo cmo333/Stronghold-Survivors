@@ -46,6 +46,19 @@ const TECH_REROLL_ACTION = "tech_reroll"
 const TECH_REROLL_BASE_COST = 2
 const TECH_REROLL_COST_STEP = 1
 const TECH_REROLL_MAX_COST = 9
+const TECH_LOCK_COST = 2
+const TECH_FORCE_CATEGORY_COST = 2
+const TECH_INFUSE_COST = 3
+const TECH_INFUSE_1_ACTION = "tech_infuse_1"
+const TECH_INFUSE_2_ACTION = "tech_infuse_2"
+const TECH_INFUSE_3_ACTION = "tech_infuse_3"
+const TECH_LOCK_1_ACTION = "tech_lock_1"
+const TECH_LOCK_2_ACTION = "tech_lock_2"
+const TECH_LOCK_3_ACTION = "tech_lock_3"
+const TECH_FORCE_TOWER_ACTION = "tech_force_tower"
+const TECH_FORCE_ENGINEER_ACTION = "tech_force_engineer"
+const TECH_FORCE_ECONOMY_ACTION = "tech_force_economy"
+const TECH_CATEGORY_ORDER = ["tower", "engineer", "economy"]
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
@@ -166,6 +179,9 @@ var _tech_rerolls_this_pick: int = 0
 var _tech_rerolls_this_run: int = 0
 var _tech_base_rate_mult: float = 1.0
 var _tech_dead_screen_threshold_index: int = 0
+var _tech_locked_id: String = ""
+var _tech_locked_name: String = ""
+var _tech_forced_category_once: String = ""
 var _draft_pity: Dictionary = {
 	"rare_miss": 0,
 	"epic_miss": 0,
@@ -427,7 +443,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_wood_32_v001.png",
 		"rarity": "common",
-		"min_level": 1
+		"min_level": 1,
+		"category": "tower"
 	},
 	"gun_pierce": {
 		"name": "Gun: Piercing",
@@ -435,7 +452,8 @@ var tech_defs = {
 		"max": 2,
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "common",
-		"min_level": 1
+		"min_level": 1,
+		"category": "engineer"
 	},
 	"gun_burst": {
 		"name": "Gun: Burst Volley",
@@ -443,7 +461,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "rare",
-		"min_level": 2
+		"min_level": 2,
+		"category": "engineer"
 	},
 	"gun_slow": {
 		"name": "Gun: Cryo Rounds",
@@ -451,7 +470,8 @@ var tech_defs = {
 		"max": 2,
 		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
 		"rarity": "rare",
-		"min_level": 2
+		"min_level": 2,
+		"category": "engineer"
 	},
 	"unlock_cannon": {
 		"name": "Unlock: Cannon Tower",
@@ -460,7 +480,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2,
-		"unlock_build": "cannon_tower"
+		"unlock_build": "cannon_tower",
+		"category": "tower"
 	},
 	"unlock_mine": {
 		"name": "Unlock: Mine Trap",
@@ -469,7 +490,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "common",
 		"min_level": 2,
-		"unlock_build": "mine_trap"
+		"unlock_build": "mine_trap",
+		"category": "tower"
 	},
 	"unlock_ice_trap": {
 		"name": "Unlock: Ice Trap",
@@ -478,7 +500,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
 		"rarity": "rare",
 		"min_level": 3,
-		"unlock_build": "ice_trap"
+		"unlock_build": "ice_trap",
+		"category": "tower"
 	},
 	"unlock_barracks": {
 		"name": "Unlock: Barracks",
@@ -487,7 +510,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_bone_32_v001.png",
 		"rarity": "rare",
 		"min_level": 4,
-		"unlock_build": "barracks"
+		"unlock_build": "barracks",
+		"category": "tower"
 	},
 	"unlock_tech_lab": {
 		"name": "Unlock: Tech Lab",
@@ -496,7 +520,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "rare",
 		"min_level": 4,
-		"unlock_build": "tech_lab"
+		"unlock_build": "tech_lab",
+		"category": "tower"
 	},
 	"unlock_tesla": {
 		"name": "Unlock: Tesla Tower",
@@ -505,7 +530,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "epic",
 		"min_level": 4,
-		"unlock_build": "tesla_tower"
+		"unlock_build": "tesla_tower",
+		"category": "tower"
 	},
 	"unlock_armory": {
 		"name": "Unlock: Armory",
@@ -514,7 +540,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
-		"unlock_build": "armory"
+		"unlock_build": "armory",
+		"category": "tower"
 	},
 	"unlock_shrine": {
 		"name": "Unlock: Shrine",
@@ -523,7 +550,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_skull_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
-		"unlock_build": "shrine"
+		"unlock_build": "shrine",
+		"category": "tower"
 	},
 	"unlock_acid_trap": {
 		"name": "Unlock: Acid Burst",
@@ -532,7 +560,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "rare",
 		"min_level": 3,
-		"unlock_build": "acid_trap"
+		"unlock_build": "acid_trap",
+		"category": "tower"
 	},
 	"tesla_emp": {
 		"name": "Tesla: EMP",
@@ -541,7 +570,8 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 6,
-		"requires_build": "tesla_tower"
+		"requires_build": "tesla_tower",
+		"category": "tower"
 	},
 	"tower_range": {
 		"name": "Towers: Long Range",
@@ -549,7 +579,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_stone_32_v001.png",
 		"rarity": "common",
-		"min_level": 2
+		"min_level": 2,
+		"category": "tower"
 	},
 	"tower_damage": {
 		"name": "Towers: Brutality",
@@ -557,7 +588,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "rare",
-		"min_level": 2
+		"min_level": 2,
+		"category": "tower"
 	},
 	"tower_overclock": {
 		"name": "Towers: Overclock",
@@ -565,7 +597,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "epic",
-		"min_level": 4
+		"min_level": 4,
+		"category": "tower"
 	},
 	"tower_ordnance": {
 		"name": "Towers: Heavy Ordnance",
@@ -573,7 +606,8 @@ var tech_defs = {
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "epic",
-		"min_level": 5
+		"min_level": 5,
+		"category": "tower"
 	},
 	"orbital_overdrive": {
 		"name": "Relic: Orbital Overdrive",
@@ -581,7 +615,26 @@ var tech_defs = {
 		"max": 2,
 		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
-		"min_level": 8
+		"min_level": 8,
+		"category": "tower"
+	},
+	"resource_cache": {
+		"name": "Supply Cache",
+		"desc": "Gain a burst of resources now",
+		"max": 8,
+		"icon": "res://assets/ui/ui_icon_gold_32_v001.png",
+		"rarity": "common",
+		"min_level": 1,
+		"category": "economy"
+	},
+	"field_repairs": {
+		"name": "Field Repairs",
+		"desc": "Restore health immediately",
+		"max": 5,
+		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
+		"rarity": "common",
+		"min_level": 1,
+		"category": "economy"
 	},
 	"essence_cache": {
 		"name": "Essence Cache",
@@ -589,7 +642,8 @@ var tech_defs = {
 		"max": 4,
 		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "rare",
-		"min_level": 3
+		"min_level": 3,
+		"category": "economy"
 	}
 }
 
@@ -933,6 +987,26 @@ func _new_rarity_count_dict() -> Dictionary:
 		counts[rarity] = 0
 	return counts
 
+func _blank_draft_telemetry() -> Dictionary:
+	return {
+		"draft_count": 0,
+		"dead_screens": 0,
+		"reroll_count": 0,
+		"reroll_essence_spent": 0,
+		"lock_count": 0,
+		"lock_essence_spent": 0,
+		"force_count": 0,
+		"force_essence_spent": 0,
+		"infuse_count": 0,
+		"infuse_essence_spent": 0,
+		"offered": _new_rarity_count_dict(),
+		"chosen": _new_rarity_count_dict()
+	}
+
+func _ensure_draft_telemetry() -> void:
+	if _draft_telemetry.is_empty():
+		_draft_telemetry = _blank_draft_telemetry()
+
 func _rarity_index(rarity: String) -> int:
 	var index = TECH_RARITY_ORDER.find(rarity)
 	if index < 0:
@@ -942,6 +1016,20 @@ func _rarity_index(rarity: String) -> int:
 func _rarity_for_tech(id: String) -> String:
 	var def: Dictionary = tech_defs.get(id, {})
 	return str(def.get("rarity", "common"))
+
+func _tech_category_for(id: String) -> String:
+	var def: Dictionary = tech_defs.get(id, {})
+	return str(def.get("category", "engineer"))
+
+func _category_label(category: String) -> String:
+	match category:
+		"tower":
+			return "Tower"
+		"engineer":
+			return "Engineer"
+		"economy":
+			return "Economy"
+	return category.capitalize()
 
 func _max_rarity(a: String, b: String) -> String:
 	return a if _rarity_index(a) >= _rarity_index(b) else b
@@ -956,14 +1044,10 @@ func _reset_progression_state() -> void:
 		"epic_miss": 0,
 		"legendary_miss": 0
 	}
-	_draft_telemetry = {
-		"draft_count": 0,
-		"dead_screens": 0,
-		"reroll_count": 0,
-		"reroll_essence_spent": 0,
-		"offered": _new_rarity_count_dict(),
-		"chosen": _new_rarity_count_dict()
-	}
+	_tech_locked_id = ""
+	_tech_locked_name = ""
+	_tech_forced_category_once = ""
+	_draft_telemetry = _blank_draft_telemetry()
 
 func _unlock_core_builds() -> void:
 	unlocked_builds.clear()
@@ -1010,6 +1094,61 @@ func _roll_tech_picks(available: Array, option_count: int, floor_rarity: String)
 	picks += _pick_weighted_choices(fallback_pool, option_count - picks.size())
 	return picks
 
+func _filter_ids_by_category(pool: Array, category: String) -> Array:
+	var filtered: Array = []
+	for raw_id in pool:
+		var id = str(raw_id)
+		if _tech_category_for(id) == category:
+			filtered.append(id)
+	return filtered
+
+func _can_level_tech(id: String) -> bool:
+	var def: Dictionary = tech_defs.get(id, {})
+	var max_level = int(def.get("max", 1))
+	var current = int(tech_levels.get(id, 0))
+	return current < max_level
+
+func _can_infuse_tech(id: String) -> bool:
+	if not _can_level_tech(id):
+		return false
+	var def: Dictionary = tech_defs.get(id, {})
+	var max_level = int(def.get("max", 1))
+	var current = int(tech_levels.get(id, 0))
+	return current + 1 < max_level
+
+func _build_tech_pick_ids(available_ids: Array, floor_rarity: String, locked_id: String = "", forced_category: String = "") -> Array:
+	var picks: Array = []
+	var available: Array = available_ids.duplicate()
+	if locked_id != "" and available.has(locked_id):
+		picks.append(locked_id)
+		available.erase(locked_id)
+	if forced_category != "" and picks.size() < 3:
+		var forced_pool = _pool_with_rarity_floor(_filter_ids_by_category(available, forced_category), floor_rarity, 1)
+		if not forced_pool.is_empty():
+			var forced_pick = _pick_weighted_id(forced_pool)
+			picks.append(forced_pick)
+			available.erase(forced_pick)
+	var represented_categories: Array = []
+	for raw_id in picks:
+		var cat = _tech_category_for(str(raw_id))
+		if not represented_categories.has(cat):
+			represented_categories.append(cat)
+	for category in TECH_CATEGORY_ORDER:
+		if picks.size() >= 3:
+			break
+		if represented_categories.has(category):
+			continue
+		var category_pool = _pool_with_rarity_floor(_filter_ids_by_category(available, category), floor_rarity, 1)
+		if category_pool.is_empty():
+			continue
+		var category_pick = _pick_weighted_id(category_pool)
+		picks.append(category_pick)
+		available.erase(category_pick)
+		represented_categories.append(category)
+	if picks.size() < 3 and not available.is_empty():
+		picks += _roll_tech_picks(available, 3 - picks.size(), floor_rarity)
+	return picks
+
 func _same_choice_ids(a: Array, b: Array) -> bool:
 	if a.size() != b.size():
 		return false
@@ -1024,15 +1163,7 @@ func _same_choice_ids(a: Array, b: Array) -> bool:
 	return aa == bb
 
 func _track_draft_offer(picks: Array, _floor_rarity: String) -> void:
-	if _draft_telemetry.is_empty():
-		_draft_telemetry = {
-			"draft_count": 0,
-			"dead_screens": 0,
-			"reroll_count": 0,
-			"reroll_essence_spent": 0,
-			"offered": _new_rarity_count_dict(),
-			"chosen": _new_rarity_count_dict()
-		}
+	_ensure_draft_telemetry()
 	_draft_telemetry["draft_count"] = int(_draft_telemetry.get("draft_count", 0)) + 1
 	var offered: Dictionary = _draft_telemetry.get("offered", _new_rarity_count_dict())
 	var best = "common"
@@ -1059,18 +1190,19 @@ func _track_draft_offer(picks: Array, _floor_rarity: String) -> void:
 		_draft_pity["legendary_miss"] = int(_draft_pity.get("legendary_miss", 0)) + 1
 
 func _track_draft_pick(rarity: String) -> void:
-	if _draft_telemetry.is_empty():
-		_draft_telemetry = {
-			"draft_count": 0,
-			"dead_screens": 0,
-			"reroll_count": 0,
-			"reroll_essence_spent": 0,
-			"offered": _new_rarity_count_dict(),
-			"chosen": _new_rarity_count_dict()
-		}
+	_ensure_draft_telemetry()
 	var chosen: Dictionary = _draft_telemetry.get("chosen", _new_rarity_count_dict())
 	chosen[rarity] = int(chosen.get(rarity, 0)) + 1
 	_draft_telemetry["chosen"] = chosen
+
+func _build_tech_ui_meta(forced_category: String = "") -> Dictionary:
+	return {
+		"infuse_cost": TECH_INFUSE_COST,
+		"lock_cost": TECH_LOCK_COST,
+		"force_cost": TECH_FORCE_CATEGORY_COST,
+		"locked_name": _tech_locked_name,
+		"forced_category": forced_category
+	}
 
 func _refresh_tech_scalars() -> void:
 	tower_range_mult = 1.0 + 0.12 * int(tech_levels.get("tower_range", 0))
@@ -1104,6 +1236,7 @@ func _try_reroll_tech() -> void:
 			ui.show_announcement("Need %d Essence to reroll" % cost, Color(0.9, 0.45, 1.0), 20, 1.5)
 		return
 	essence -= cost
+	_ensure_draft_telemetry()
 	_tech_rerolls_this_pick += 1
 	_tech_rerolls_this_run += 1
 	_draft_telemetry["reroll_count"] = int(_draft_telemetry.get("reroll_count", 0)) + 1
@@ -1111,15 +1244,71 @@ func _try_reroll_tech() -> void:
 	_open_tech_menu(true)
 	_update_ui()
 
+func _try_lock_tech(index: int) -> void:
+	if not tech_open:
+		return
+	if index < 0 or index >= tech_choices.size():
+		return
+	if essence < TECH_LOCK_COST:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("Need %d Essence to lock" % TECH_LOCK_COST, Color(0.9, 0.45, 1.0), 20, 1.3)
+		return
+	var choice: Dictionary = tech_choices[index]
+	var id = str(choice.get("id", ""))
+	if id == "":
+		return
+	essence -= TECH_LOCK_COST
+	_tech_locked_id = id
+	_tech_locked_name = str(choice.get("name", id))
+	_ensure_draft_telemetry()
+	_draft_telemetry["lock_count"] = int(_draft_telemetry.get("lock_count", 0)) + 1
+	_draft_telemetry["lock_essence_spent"] = int(_draft_telemetry.get("lock_essence_spent", 0)) + TECH_LOCK_COST
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("Locked next draft: %s" % _tech_locked_name, Color(0.8, 0.9, 1.0), 18, 1.5)
+	if ui != null and ui.has_method("show_tech"):
+		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost(), _build_tech_ui_meta())
+	_update_ui()
+
+func _try_force_category(category: String) -> void:
+	if not tech_open:
+		return
+	var available = _filter_ids_by_category(_get_available_tech_ids(), category)
+	if available.is_empty():
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("No %s upgrades available" % _category_label(category), Color(0.9, 0.6, 0.35), 20, 1.4)
+		return
+	if essence < TECH_FORCE_CATEGORY_COST:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("Need %d Essence to force category" % TECH_FORCE_CATEGORY_COST, Color(0.9, 0.45, 1.0), 20, 1.3)
+		return
+	essence -= TECH_FORCE_CATEGORY_COST
+	_tech_forced_category_once = category
+	_ensure_draft_telemetry()
+	_draft_telemetry["force_count"] = int(_draft_telemetry.get("force_count", 0)) + 1
+	_draft_telemetry["force_essence_spent"] = int(_draft_telemetry.get("force_essence_spent", 0)) + TECH_FORCE_CATEGORY_COST
+	_open_tech_menu(true)
+	_update_ui()
+
+func _try_choose_infused(index: int) -> void:
+	if not tech_open:
+		return
+	_choose_tech(index, true)
+
 func _log_draft_telemetry() -> void:
 	if _draft_telemetry.is_empty():
 		return
 	print(
-		"[DraftTelemetry] drafts=%d dead=%d rerolls=%d reroll_essence=%d offered=%s chosen=%s pity=%s" % [
+		"[DraftTelemetry] drafts=%d dead=%d rerolls=%d reroll_essence=%d lock=%d lock_essence=%d force=%d force_essence=%d infuse=%d infuse_essence=%d offered=%s chosen=%s pity=%s" % [
 			int(_draft_telemetry.get("draft_count", 0)),
 			int(_draft_telemetry.get("dead_screens", 0)),
 			int(_draft_telemetry.get("reroll_count", 0)),
 			int(_draft_telemetry.get("reroll_essence_spent", 0)),
+			int(_draft_telemetry.get("lock_count", 0)),
+			int(_draft_telemetry.get("lock_essence_spent", 0)),
+			int(_draft_telemetry.get("force_count", 0)),
+			int(_draft_telemetry.get("force_essence_spent", 0)),
+			int(_draft_telemetry.get("infuse_count", 0)),
+			int(_draft_telemetry.get("infuse_essence_spent", 0)),
 			str(_draft_telemetry.get("offered", {})),
 			str(_draft_telemetry.get("chosen", {})),
 			str(_draft_pity)
@@ -1496,6 +1685,24 @@ func _handle_tech_input() -> void:
 		_choose_tech(1)
 	elif Input.is_action_just_pressed("build_3"):
 		_choose_tech(2)
+	elif Input.is_action_just_pressed(TECH_INFUSE_1_ACTION):
+		_try_choose_infused(0)
+	elif Input.is_action_just_pressed(TECH_INFUSE_2_ACTION):
+		_try_choose_infused(1)
+	elif Input.is_action_just_pressed(TECH_INFUSE_3_ACTION):
+		_try_choose_infused(2)
+	elif Input.is_action_just_pressed(TECH_LOCK_1_ACTION):
+		_try_lock_tech(0)
+	elif Input.is_action_just_pressed(TECH_LOCK_2_ACTION):
+		_try_lock_tech(1)
+	elif Input.is_action_just_pressed(TECH_LOCK_3_ACTION):
+		_try_lock_tech(2)
+	elif Input.is_action_just_pressed(TECH_FORCE_TOWER_ACTION):
+		_try_force_category("tower")
+	elif Input.is_action_just_pressed(TECH_FORCE_ENGINEER_ACTION):
+		_try_force_category("engineer")
+	elif Input.is_action_just_pressed(TECH_FORCE_ECONOMY_ACTION):
+		_try_force_category("economy")
 	elif Input.is_action_just_pressed(TECH_REROLL_ACTION):
 		_try_reroll_tech()
 
@@ -2494,12 +2701,26 @@ func _open_tech_menu(is_reroll: bool = false) -> void:
 		_set_pause_allowed(_can_pause_game())
 		return
 	var floor_rarity = _target_draft_floor_rarity()
-	var picks: Array = _roll_tech_picks(available, 3, floor_rarity)
+	var forced_category_for_roll = _tech_forced_category_once
+	_tech_forced_category_once = ""
+	var locked_id_for_roll = ""
+	if not is_reroll and _tech_locked_id != "":
+		locked_id_for_roll = _tech_locked_id
+		_tech_locked_id = ""
+		_tech_locked_name = ""
+	var picks: Array = _build_tech_pick_ids(available, floor_rarity, locked_id_for_roll, forced_category_for_roll)
 	if is_reroll and available.size() > picks.size() and _same_choice_ids(previous_ids, picks):
 		var attempts = 0
 		while attempts < 3 and _same_choice_ids(previous_ids, picks):
-			picks = _roll_tech_picks(available, 3, floor_rarity)
+			picks = _build_tech_pick_ids(available, floor_rarity, "", forced_category_for_roll)
 			attempts += 1
+	if picks.is_empty():
+		pending_picks = 0
+		tech_open = false
+		if ui != null and ui.has_method("hide_tech"):
+			ui.hide_tech()
+		_set_pause_allowed(_can_pause_game())
+		return
 	_track_draft_offer(picks, floor_rarity)
 	for id in picks:
 		var def: Dictionary = tech_defs.get(id, {})
@@ -2509,32 +2730,51 @@ func _open_tech_menu(is_reroll: bool = false) -> void:
 			"desc": def.get("desc", ""),
 			"icon": def.get("icon", ""),
 			"rarity": def.get("rarity", "common"),
-			"level": int(tech_levels.get(id, 0))
+			"category": def.get("category", "engineer"),
+			"level": int(tech_levels.get(id, 0)),
+			"infusable": _can_infuse_tech(str(id))
 		})
 	tech_open = true
 	_set_pause_allowed(false)
 	if ui.has_method("show_tech"):
-		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost())
+		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost(), _build_tech_ui_meta(forced_category_for_roll))
 	_apply_base_time_scale()
 
-func _choose_tech(index: int) -> void:
+func _choose_tech(index: int, infused: bool = false) -> void:
 	if index < 0 or index >= tech_choices.size():
 		return
 	var choice: Dictionary = tech_choices[index]
 	var id: String = str(choice.get("id", ""))
 	if id == "":
 		return
+	if infused:
+		if not _can_infuse_tech(id):
+			if ui != null and ui.has_method("show_announcement"):
+				ui.show_announcement("Infuse requires a multi-rank upgrade", Color(0.9, 0.6, 0.35), 18, 1.3)
+			return
+		if essence < TECH_INFUSE_COST:
+			if ui != null and ui.has_method("show_announcement"):
+				ui.show_announcement("Need %d Essence to infuse" % TECH_INFUSE_COST, Color(0.9, 0.45, 1.0), 20, 1.3)
+			return
+		essence -= TECH_INFUSE_COST
+		_ensure_draft_telemetry()
+		_draft_telemetry["infuse_count"] = int(_draft_telemetry.get("infuse_count", 0)) + 1
+		_draft_telemetry["infuse_essence_spent"] = int(_draft_telemetry.get("infuse_essence_spent", 0)) + TECH_INFUSE_COST
 	_track_draft_pick(str(choice.get("rarity", "common")))
 	_apply_tech(id)
+	if infused and _can_level_tech(id):
+		_apply_tech(id)
 	tech_open = false
 	if ui.has_method("hide_tech"):
 		ui.hide_tech()
 	pending_picks = max(0, pending_picks - 1)
 	if pending_picks > 0:
 		_open_tech_menu()
+		_update_ui()
 		return
 	_set_pause_allowed(_can_pause_game())
 	_apply_base_time_scale()
+	_update_ui()
 
 func _apply_tech(id: String) -> void:
 	tech_levels[id] = int(tech_levels.get(id, 0)) + 1
@@ -2547,6 +2787,12 @@ func _apply_tech(id: String) -> void:
 		_refresh_build_palette()
 	if id == "essence_cache":
 		add_essence(2)
+	elif id == "resource_cache":
+		var resource_gain = 45 + 15 * int(tech_levels.get(id, 1))
+		add_resources(resource_gain)
+	elif id == "field_repairs":
+		var heal_amount = 8.0 + 6.0 * float(int(tech_levels.get(id, 1)))
+		heal_player(heal_amount)
 	_refresh_tech_scalars()
 	if player != null and player.has_method("apply_gun_tech"):
 		player.apply_gun_tech(id, tech_levels[id])
@@ -3603,6 +3849,15 @@ func _ensure_input_map() -> void:
 	_ensure_action("build_tech_lab", [KEY_R])
 	_ensure_action("build_shrine", [KEY_T])
 	_ensure_action(TECH_REROLL_ACTION, [KEY_R])
+	_ensure_action(TECH_INFUSE_1_ACTION, [KEY_A])
+	_ensure_action(TECH_INFUSE_2_ACTION, [KEY_S])
+	_ensure_action(TECH_INFUSE_3_ACTION, [KEY_D])
+	_ensure_action(TECH_LOCK_1_ACTION, [KEY_Z])
+	_ensure_action(TECH_LOCK_2_ACTION, [KEY_X])
+	_ensure_action(TECH_LOCK_3_ACTION, [KEY_C])
+	_ensure_action(TECH_FORCE_TOWER_ACTION, [KEY_Q])
+	_ensure_action(TECH_FORCE_ENGINEER_ACTION, [KEY_W])
+	_ensure_action(TECH_FORCE_ECONOMY_ACTION, [KEY_E])
 	_ensure_action("upgrade", [KEY_U])
 	_ensure_action("toggle_gate", [KEY_G])
 	_ensure_action("interact", [KEY_F])

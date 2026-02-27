@@ -33,6 +33,7 @@ const TECH_ICON_SIZE = Vector2(42, 42)
 @onready var tech_icon1: TextureRect = $HUD/TechPanel/Option1Icon
 @onready var tech_icon2: TextureRect = $HUD/TechPanel/Option2Icon
 @onready var tech_icon3: TextureRect = $HUD/TechPanel/Option3Icon
+@onready var tech_title_label: Label = $HUD/TechPanel/Title
 @onready var tech_hint_label: Label = $HUD/TechPanel/Hint
 @onready var start_panel: TextureRect = $HUD/StartPanel
 @onready var start_title: Label = $HUD/StartPanel/StartTitle
@@ -1023,7 +1024,7 @@ func _ensure_tech_backdrop() -> void:
 	$HUD.add_child(_tech_backdrop)
 	$HUD.move_child(_tech_backdrop, 0)
 
-func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0) -> void:
+func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
 	_ensure_tech_backdrop()
 	if _tech_backdrop != null:
 		_tech_backdrop.visible = true
@@ -1040,18 +1041,30 @@ func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0) ->
 	_apply_rarity_style(tech_option2, tech_icon2, options, 1)
 	_apply_rarity_style(tech_option3, tech_icon3, options, 2)
 	_apply_tech_frames(options)
+	if tech_title_label != null:
+		var title = "Tech Pick - Choose 1"
+		var locked_name = str(meta.get("locked_name", ""))
+		var forced_category = str(meta.get("forced_category", ""))
+		if locked_name != "":
+			title += " | Next lock: %s" % locked_name
+		if forced_category != "":
+			title += " | Forced: %s" % forced_category.capitalize()
+		tech_title_label.text = title
 	if tech_hint_label != null:
-		if reroll_cost <= 0:
-			tech_hint_label.text = "Press 1, 2, or 3"
-		elif essence_amount >= reroll_cost:
-			tech_hint_label.text = "Press 1, 2, or 3  |  R: reroll (%d Essence)" % reroll_cost
-		else:
-			tech_hint_label.text = "Press 1, 2, or 3  |  R: reroll (%d needed)" % reroll_cost
+		var reroll_hint = "R reroll"
+		if reroll_cost > 0:
+			if essence_amount >= reroll_cost:
+				reroll_hint = "R reroll (%d)" % reroll_cost
+			else:
+				reroll_hint = "R reroll (%d needed)" % reroll_cost
+		tech_hint_label.text = "1-3 pick | A/S/D infuse | Z/X/C lock | Q/W/E force | %s" % reroll_hint
 
 func hide_tech() -> void:
 	tech_panel.visible = false
 	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
 		_tech_backdrop.visible = false
+	if tech_title_label != null:
+		tech_title_label.text = "Tech Pick - Choose 1"
 	if tech_hint_label != null:
 		tech_hint_label.text = "Press 1, 2, or 3"
 
@@ -1183,9 +1196,12 @@ func _format_option(number: int, options: Array, index: int) -> String:
 		return "%d) --" % number
 	var option: Dictionary = options[index]
 	var name = str(option.get("name", ""))
+	var category = str(option.get("category", ""))
+	var category_tag = "[%s] " % category.capitalize() if category != "" else ""
 	var level = int(option.get("level", 0))
 	var level_tag = " [Lv %d]" % level if level > 0 else ""
-	return "%d) %s%s\n   %s" % [number, name, level_tag, option.get("desc", "")]
+	var infuse_tag = " *" if bool(option.get("infusable", false)) else ""
+	return "%d) %s%s%s%s\n   %s" % [number, category_tag, name, level_tag, infuse_tag, option.get("desc", "")]
 
 func _set_icon(icon: TextureRect, options: Array, index: int) -> void:
 	if icon == null:
@@ -1274,7 +1290,7 @@ func _apply_ui_fonts() -> void:
 	var tech_title: Label = $HUD/TechPanel/Title
 	var tech_hint: Label = $HUD/TechPanel/Hint
 	_apply_font(tech_title, 14)
-	_apply_font(tech_hint, 10)
+	_apply_font(tech_hint, 9)
 
 func _style_label(label: Label, pos: Vector2, size: Vector2, wrap: bool = true) -> void:
 	if label == null:
@@ -1310,7 +1326,7 @@ func _style_tech_panel() -> void:
 	_style_label(tech_option1, Vector2(112, 62), Vector2(300, 54), true)
 	_style_label(tech_option2, Vector2(112, 150), Vector2(300, 54), true)
 	_style_label(tech_option3, Vector2(112, 238), Vector2(300, 54), true)
-	_style_label(tech_hint, Vector2(20, 298), Vector2(440, 16), false)
+	_style_label(tech_hint, Vector2(20, 294), Vector2(440, 24), false)
 	for lbl in [tech_title, tech_hint, tech_option1, tech_option2, tech_option3]:
 		if lbl == null:
 			continue
