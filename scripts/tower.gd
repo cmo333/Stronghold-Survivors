@@ -684,9 +684,12 @@ func _find_target() -> Node2D:
 	var effective_range = range * range_mult
 	var best_dist = effective_range * effective_range
 	var enemies: Array = _get_enemies()
-	for enemy: Node2D in enemies:
-		if enemy == null:
+	for raw_enemy in enemies:
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
 			continue
+		if not (raw_enemy is Node2D):
+			continue
+		var enemy := raw_enemy as Node2D
 		var dist = global_position.distance_squared_to(enemy.global_position)
 		if dist <= best_dist:
 			best = enemy
@@ -694,9 +697,18 @@ func _find_target() -> Node2D:
 	return best
 
 func _get_enemies() -> Array:
+	var source: Array = []
 	if _game != null and "cached_enemies" in _game:
-		return _game.cached_enemies
-	return get_tree().get_nodes_in_group("enemies")
+		source = _game.cached_enemies
+	else:
+		source = get_tree().get_nodes_in_group("enemies")
+	var valid_enemies: Array = []
+	for raw_enemy in source:
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
+			continue
+		if raw_enemy is Node2D:
+			valid_enemies.append(raw_enemy)
+	return valid_enemies
 
 func get_range() -> float:
 	var range_mult = 1.0
