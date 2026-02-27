@@ -49,11 +49,12 @@ func _on_body_entered(body: Node) -> void:
 		if _game != null:
 			_game.add_resources(value)
 			_game.add_xp(xp)
-			var heal_chance = 0.12
-			if is_chest:
-				heal_chance = 0.4
-			if _game.has_method("spawn_pickup") and randf() < heal_chance:
-				_game.spawn_pickup(global_position, 14 if is_chest else 12, "heal")
+			if _game.has_method("spawn_pickup") and _game.has_method("should_spawn_heal_drop"):
+				if _game.should_spawn_heal_drop(false, false, "breakable", is_chest):
+					var heal_amount = 14 if is_chest else 12
+					if _game.has_method("get_heal_drop_amount"):
+						heal_amount = int(_game.get_heal_drop_amount(false, false, "breakable", is_chest))
+					_game.spawn_pickup(global_position, heal_amount, "heal")
 		queue_free()
 
 func _apply_style() -> void:

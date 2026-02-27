@@ -219,6 +219,8 @@ var chest_damage_bonus = 0.0
 var chest_speed_bonus = 0.0
 var chest_max_hp_bonus = 0.0
 var chest_tower_range_mult = 1.0
+var chest_tower_damage_bonus = 0.0
+var chest_tower_rate_mult = 1.0
 var build_cost_mult = 1.0
 
 # Chest upgrade system - new stats
@@ -271,6 +273,20 @@ var max_pickups = 60
 var chest_drop_chance = 0.50
 var chest_drop_cooldown = 12.0
 var _next_chest_time = 0.0
+
+# Dynamic sustain tuning (life pickup chance/amount).
+var heal_drop_chance_enemy = 0.04
+var heal_drop_chance_siege = 0.10
+var heal_drop_chance_elite = 0.22
+var heal_drop_chance_breakable = 0.12
+var heal_drop_chance_chest = 0.25
+var heal_drop_chance_missing_health_bonus = 0.30
+var heal_drop_pct_enemy = 0.045
+var heal_drop_pct_siege = 0.07
+var heal_drop_pct_elite = 0.10
+var heal_drop_pct_breakable = 0.08
+var heal_drop_pct_chest = 0.12
+var heal_drop_pct_missing_health_bonus = 0.06
 
 var _essence_announce_count = 0
 var _essence_announce_timer = 0.0
@@ -1207,7 +1223,8 @@ func _build_tech_ui_meta(forced_category: String = "") -> Dictionary:
 func _refresh_tech_scalars() -> void:
 	tower_range_mult = 1.0 + 0.12 * int(tech_levels.get("tower_range", 0))
 	tower_damage_bonus = (
-		2.0 * int(tech_levels.get("tower_damage", 0))
+		chest_tower_damage_bonus
+		+ 2.0 * int(tech_levels.get("tower_damage", 0))
 		+ 3.0 * int(tech_levels.get("tower_ordnance", 0))
 		+ 5.0 * int(tech_levels.get("orbital_overdrive", 0))
 	)
@@ -2835,6 +2852,11 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 			cooldown_mult *= 0.88 if rarity == "rare" else 0.82
 		"pickup_range":
 			pickup_range_mult *= 1.30
+		"tower_core_damage":
+			chest_tower_damage_bonus += 3.0 if rarity == "rare" else 4.0
+		"tower_targeting":
+			var rate_mult = 1.10 if rarity == "rare" else 1.15
+			chest_tower_rate_mult = min(2.5, chest_tower_rate_mult * rate_mult)
 		
 		# Epic upgrades
 		"multishot":
@@ -2856,6 +2878,9 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 		"vampiric":
 			has_vampiric = true
 			vampiric_percent = max(vampiric_percent, 0.08)
+		"tower_barrage":
+			chest_tower_rate_mult = min(2.8, chest_tower_rate_mult * 1.18)
+			chest_tower_damage_bonus += 2.0
 		
 		# DIAMOND upgrades - game changers
 		"multishot_split":
@@ -2877,7 +2902,12 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 			has_fortress = true
 			tower_hp_mult = 1.5
 			towers_self_repair = true
+		"orbital_matrix":
+			chest_tower_rate_mult = min(3.0, chest_tower_rate_mult * 1.35)
+			chest_tower_damage_bonus += 10.0
+			chest_tower_range_mult = min(2.0, chest_tower_range_mult * 1.2)
 	
+	_refresh_tech_scalars()
 	_update_ui()
 	if ui != null and ui.has_method("show_upgrade_popup"):
 		ui.show_upgrade_popup(id, rarity)
@@ -2902,7 +2932,7 @@ func _recalc_effects() -> void:
 	var rate_bonus = 0.0
 	for value in building_effects["tech_rate"].values():
 		rate_bonus += float(value)
-	tower_rate_mult = (1.0 + rate_bonus) * _tech_base_rate_mult
+	tower_rate_mult = (1.0 + rate_bonus) * _tech_base_rate_mult * chest_tower_rate_mult
 	_apply_player_damage_bonuses()
 
 func _apply_player_damage_bonuses() -> void:
@@ -2923,6 +2953,77 @@ func get_build_cost_mult() -> float:
 
 func get_pickup_range_mult() -> float:
 	return pickup_range_mult
+
+func get_player_missing_health_ratio() -> float:
+	if player == null:
+		return 0.0
+	var max_hp = 0.0
+	if "max_health" in player:
+		max_hp = max(1.0, float(player.max_health))
+	else:
+		return 0.0
+	var hp = max_hp
+	if "health" in player:
+		hp = float(player.health)
+	return clampf((max_hp - hp) / max_hp, 0.0, 1.0)
+
+func _heal_drop_urgency(missing_ratio: float) -> float:
+	var t = clampf((missing_ratio - 0.10) / 0.75, 0.0, 1.0)
+	# Smoothstep response: low at healthy HP, ramps quickly near danger.
+	return t * t * (3.0 - 2.0 * t)
+
+func get_heal_drop_chance(is_elite: bool = false, is_siege: bool = false, source: String = "enemy", is_chest: bool = false) -> float:
+	var base_chance = heal_drop_chance_enemy
+	if source == "breakable":
+		base_chance = heal_drop_chance_breakable
+	if is_siege:
+		base_chance = heal_drop_chance_siege
+	if is_elite:
+		base_chance = heal_drop_chance_elite
+	if is_chest:
+		base_chance = heal_drop_chance_chest
+	var missing_ratio = get_player_missing_health_ratio()
+	var urgency = _heal_drop_urgency(missing_ratio)
+	var bonus = heal_drop_chance_missing_health_bonus
+	if source == "breakable":
+		bonus *= 0.85
+	if is_chest:
+		bonus *= 1.15
+	var chance = base_chance + bonus * urgency
+	# Avoid excessive life drop noise when nearly full HP.
+	if missing_ratio < 0.05:
+		chance *= 0.55
+	return clampf(chance, 0.01, 0.85)
+
+func should_spawn_heal_drop(is_elite: bool = false, is_siege: bool = false, source: String = "enemy", is_chest: bool = false) -> bool:
+	return randf() < get_heal_drop_chance(is_elite, is_siege, source, is_chest)
+
+func get_heal_drop_amount(is_elite: bool = false, is_siege: bool = false, source: String = "enemy", is_chest: bool = false) -> int:
+	var base_pct = heal_drop_pct_enemy
+	var min_amount = 4
+	var max_amount = 20
+	if source == "breakable":
+		base_pct = heal_drop_pct_breakable
+		min_amount = 6
+		max_amount = 28
+	if is_siege:
+		base_pct = heal_drop_pct_siege
+		min_amount = 7
+		max_amount = 26
+	if is_elite:
+		base_pct = heal_drop_pct_elite
+		min_amount = 10
+		max_amount = 34
+	if is_chest:
+		base_pct = heal_drop_pct_chest
+		min_amount = 12
+		max_amount = 40
+	var target_max_hp = 100.0
+	if player != null and "max_health" in player:
+		target_max_hp = max(40.0, float(player.max_health))
+	var urgency = _heal_drop_urgency(get_player_missing_health_ratio())
+	var amount = int(round(target_max_hp * (base_pct + heal_drop_pct_missing_health_bonus * urgency)))
+	return clampi(amount, min_amount, max_amount)
 
 func get_enemy_health_mult() -> float:
 	if elapsed <= 300.0:

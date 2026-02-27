@@ -13,10 +13,13 @@ const UPGRADES = {
 	"pierce": {"name": "Penetration", "rarity": "rare", "value": 1, "desc": "+1 pierce"},
 	"cooldown": {"name": "Haste", "rarity": "rare", "value": 0.88, "desc": "-12% cooldowns"},
 	"pickup_range": {"name": "Magnetism", "rarity": "rare", "value": 1.30, "desc": "+30% pickup range"},
+	"tower_core_damage": {"name": "Warheads", "rarity": "rare", "value": 3, "desc": "+3 tower damage"},
+	"tower_targeting": {"name": "Targeting Uplink", "rarity": "rare", "value": 1.10, "desc": "+10% tower fire rate"},
 	"multishot": {"name": "Double Tap", "rarity": "epic", "value": 1, "desc": "Fire 2 projectiles"},
 	"explosive": {"name": "Combustion", "rarity": "epic", "value": 1, "desc": "Projectiles explode on hit"},
 	"chain": {"name": "Arc", "rarity": "epic", "value": 3, "desc": "Lightning chains to 3 targets"},
 	"vampiric": {"name": "Life Drain", "rarity": "epic", "value": 0.08, "desc": "Heal 8% of damage dealt"},
+	"tower_barrage": {"name": "Orbital Barrage", "rarity": "epic", "value": 1.18, "desc": "+18% tower fire rate and +2 damage"},
 }
 
 const DIAMOND_UPGRADES = {
@@ -26,6 +29,7 @@ const DIAMOND_UPGRADES = {
 	"time_dilation": {"name": "⏱️ Chronos", "rarity": "diamond", "desc": "Tech pick slow-mo lasts 2x longer"},
 	"phoenix": {"name": "🔥 Phoenix", "rarity": "diamond", "desc": "Once per wave, survive at 1 HP"},
 	"fortress": {"name": "🏰 Fortress", "rarity": "diamond", "desc": "Towers gain +50% HP and self-repair"},
+	"orbital_matrix": {"name": "🛰️ Orbital Matrix", "rarity": "diamond", "desc": "Towers gain +35% fire rate, +10 damage, +20% range"},
 }
 
 const RARITY_COLORS = {

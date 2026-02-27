@@ -44,6 +44,8 @@ func _on_body_entered(body: Node) -> void:
             if kind == "heal":
                 if _game.has_method("heal_player"):
                     _game.heal_player(value)
+                if _game.has_method("show_floating_text"):
+                    _game.show_floating_text("+%d HP" % value, global_position + Vector2(0.0, -10.0), Color(0.45, 1.0, 0.55, 1.0))
             elif kind == "essence":
                 if _game.has_method("add_essence"):
                     _game.add_essence(value)
@@ -57,20 +59,36 @@ func _apply_visual() -> void:
     if _pulse_tween != null:
         _pulse_tween.kill()
         _pulse_tween = null
+    sprite.scale = Vector2.ONE
+    sprite.modulate = Color.WHITE
     if kind == "heal":
         sprite.texture = HEAL_TEX
-    elif kind == "essence":
-        sprite.texture = HEAL_TEX  # Reuse crystal texture
-        sprite.modulate = Color(0.7, 0.3, 1.0, 1.0)  # Purple tint
-        # Add pulsing glow
+        sprite.modulate = Color(0.45, 1.0, 0.58, 0.98)
+        sprite.scale = Vector2.ONE * 1.16
         if not is_inside_tree():
             return
         if not sprite.is_inside_tree():
             return
         _pulse_tween = create_tween()
         _pulse_tween.set_loops()
-        _pulse_tween.tween_property(sprite, "modulate:a", 0.6, 0.4).set_trans(Tween.TRANS_SINE)
-        _pulse_tween.tween_property(sprite, "modulate:a", 1.0, 0.4).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE * 1.28, 0.32).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.parallel().tween_property(sprite, "modulate:a", 0.78, 0.32).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE * 1.16, 0.32).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.parallel().tween_property(sprite, "modulate:a", 1.0, 0.32).set_trans(Tween.TRANS_SINE)
+    elif kind == "essence":
+        sprite.texture = HEAL_TEX
+        sprite.modulate = Color(0.7, 0.3, 1.0, 1.0)
+        sprite.scale = Vector2.ONE * 1.08
+        if not is_inside_tree():
+            return
+        if not sprite.is_inside_tree():
+            return
+        _pulse_tween = create_tween()
+        _pulse_tween.set_loops()
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE * 1.18, 0.4).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.parallel().tween_property(sprite, "modulate:a", 0.62, 0.4).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE * 1.08, 0.4).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.parallel().tween_property(sprite, "modulate:a", 1.0, 0.4).set_trans(Tween.TRANS_SINE)
     else:
         sprite.texture = GOLD_TEX
         sprite.modulate = Color(1.0, 0.95, 0.7, 1.0)

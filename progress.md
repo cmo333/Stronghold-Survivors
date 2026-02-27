@@ -63,6 +63,14 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - `A/S/D` infuse pick `1/2/3` (extra stack for multi-rank cards)
 - `Q/W/E` force next reroll into `tower/engineer/economy` category
 - Added category-aware offer generation and surfaced category tags in draft options.
+- Implemented sustain-loop pass for health drops:
+- centralized heal drop policy in `scripts/main.gd` with missing-health scaling.
+- enemy and breakable/chest heal-drop spawns now call shared policy (`should_spawn_heal_drop`, `get_heal_drop_amount`) instead of fixed per-script chances.
+- added readable life pickup feedback (`scripts/pickup.gd`): distinct heal tint/pulse and `+HP` floating text on collect.
+- Implemented chest tower-impact pass:
+- added tower-focused chest upgrades in `scripts/treasure_chest.gd` (`tower_core_damage`, `tower_targeting`, `tower_barrage`, `orbital_matrix`).
+- wired chest tower damage/rate modifiers in `scripts/main.gd` via `chest_tower_damage_bonus` and `chest_tower_rate_mult`.
+- updated tower scalar calculations so chest tower upgrades stack cleanly with tech/building rate effects.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

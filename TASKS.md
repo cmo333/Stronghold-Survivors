@@ -17,13 +17,17 @@
 - Essence infuse for extra stack on multi-rank picks
 - Essence force-category reroll (tower/engineer/economy)
 - category tags surfaced in draft cards for readability
+- Phase C sustain + chest-impact pass:
+- centralized heal-drop policy with missing-health scaling (enemy + breakables/chests)
+- heal pickup readability pass (distinct life visuals + pickup feedback)
+- tower-focused chest upgrades (rare/epic/diamond) wired into tower damage/rate scalars
 
 ## Next
 - Implement draft generator v1 with no-dead-screen and pity logic.
 - Balance/tune Essence costs and cap behavior for reroll/lock/infuse/force actions.
 - Rework elite/boss chest pipeline into 3-option reward flow.
 - Simplify tower upgrades to specialization breakpoint model.
-- Add life pickup drop system with missing-health scaling.
+- Playtest/tune life-drop sustain numbers and chest tower-upgrade power bands.
 
 ## Later
 - Visual rarity language pass (card tiers, breakthrough reveal moments, relic chest treatment).
