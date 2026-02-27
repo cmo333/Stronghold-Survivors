@@ -89,6 +89,10 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - economy tightened to ~`-15%` income (`add_resources`) and lower start gold (`START_RESOURCES = 170`).
 - XP gain increased by ~`+50%` (`add_xp` multiplier).
 - added new tech card `engineer_vitality` (up to +100 max HP) so player can reach ~2x HP through level choices.
+- Player readability + performance sweep:
+- added a persistent world-space player HP bar under the character in `scripts/player.gd`.
+- added adaptive runtime performance scaling in `scripts/main.gd` (FX density, particle cap, projectile cap, damage-number budget, and flow-field rebuild pacing react to FPS/load).
+- switched player/tower enemy queries to shared cached-enemy access paths to reduce repeated group-query/allocation pressure.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

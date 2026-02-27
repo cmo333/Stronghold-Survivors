@@ -697,18 +697,9 @@ func _find_target() -> Node2D:
 	return best
 
 func _get_enemies() -> Array:
-	var source: Array = []
-	if _game != null and "cached_enemies" in _game:
-		source = _game.cached_enemies
-	else:
-		source = get_tree().get_nodes_in_group("enemies")
-	var valid_enemies: Array = []
-	for raw_enemy in source:
-		if raw_enemy == null or not is_instance_valid(raw_enemy):
-			continue
-		if raw_enemy is Node2D:
-			valid_enemies.append(raw_enemy)
-	return valid_enemies
+	if _game != null and _game.has_method("get_cached_enemies"):
+		return _game.get_cached_enemies()
+	return get_tree().get_nodes_in_group("enemies")
 
 func get_range() -> float:
 	var range_mult = 1.0

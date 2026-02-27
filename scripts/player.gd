@@ -53,6 +53,11 @@ var _berserk_timer = 0.0
 var _berserk_glow: Sprite2D = null
 var _visibility_halo: Sprite2D = null
 var _visibility_halo_time: float = 0.0
+var _health_bar_bg: ColorRect = null
+var _health_bar_fill: ColorRect = null
+const PLAYER_HP_BAR_WIDTH = 38.0
+const PLAYER_HP_BAR_HEIGHT = 4.0
+const PLAYER_HP_BAR_OFFSET_Y = 22.0
 
 func _ready() -> void:
 	_ensure_game_ref()
@@ -66,6 +71,8 @@ func _ready() -> void:
 	_base_speed = speed
 	_base_max_health = max_health
 	_setup_visibility_halo()
+	_create_health_bar()
+	_update_health_bar()
 
 func set_character(base_path: String, prefix: String) -> void:
 	if sprite != null and sprite.has_method("configure"):
@@ -74,6 +81,7 @@ func set_character(base_path: String, prefix: String) -> void:
 func _physics_process(delta: float) -> void:
 	_ensure_game_ref()
 	_update_visibility_halo(delta)
+	_update_health_bar()
 	if _slow_timer > 0.0:
 		_slow_timer = max(0.0, _slow_timer - delta)
 	else:
@@ -123,7 +131,12 @@ func _physics_process(delta: float) -> void:
 func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = attack_range * attack_range
-	for raw_enemy in get_tree().get_nodes_in_group("enemies"):
+	var enemies: Array = []
+	if _game != null and _game.has_method("get_cached_enemies"):
+		enemies = _game.get_cached_enemies()
+	else:
+		enemies = get_tree().get_nodes_in_group("enemies")
+	for raw_enemy in enemies:
 		if raw_enemy == null or not is_instance_valid(raw_enemy):
 			continue
 		if not (raw_enemy is Node2D):
@@ -202,9 +215,11 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 		health = 0.0
 		# Start death animation instead of immediate game over
 		start_death_animation()
+	_update_health_bar()
 
 func heal(amount: float) -> void:
 	health = min(max_health, health + amount)
+	_update_health_bar()
 
 func apply_gun_tech(id: String, level: int) -> void:
 	match id:
@@ -233,6 +248,7 @@ func apply_max_health_bonus(bonus: float) -> void:
 	if delta > 0.0:
 		health += delta
 	health = min(health, max_health)
+	_update_health_bar()
 
 func apply_slow(factor: float, duration: float) -> void:
 	_slow_factor = min(_slow_factor, factor)
@@ -287,6 +303,38 @@ func _update_visibility_halo(delta: float) -> void:
 	_visibility_halo.scale = Vector2.ONE * (0.78 + pulse * 0.08)
 	_visibility_halo.modulate = Color(0.25, 1.0, 0.9, 0.52 + pulse * 0.22)
 
+func _create_health_bar() -> void:
+	if _health_bar_bg != null and is_instance_valid(_health_bar_bg):
+		return
+	_health_bar_bg = ColorRect.new()
+	_health_bar_bg.name = "PlayerHealthBarBg"
+	_health_bar_bg.size = Vector2(PLAYER_HP_BAR_WIDTH, PLAYER_HP_BAR_HEIGHT)
+	_health_bar_bg.position = Vector2(-PLAYER_HP_BAR_WIDTH / 2.0, PLAYER_HP_BAR_OFFSET_Y)
+	_health_bar_bg.color = Color(0.05, 0.05, 0.05, 0.72)
+	_health_bar_bg.z_index = 95
+	add_child(_health_bar_bg)
+
+	_health_bar_fill = ColorRect.new()
+	_health_bar_fill.name = "PlayerHealthBarFill"
+	_health_bar_fill.size = Vector2(PLAYER_HP_BAR_WIDTH, PLAYER_HP_BAR_HEIGHT)
+	_health_bar_fill.position = Vector2.ZERO
+	_health_bar_fill.color = Color(0.22, 0.96, 0.35, 0.92)
+	_health_bar_bg.add_child(_health_bar_fill)
+
+func _update_health_bar() -> void:
+	if _health_bar_bg == null or _health_bar_fill == null:
+		return
+	var max_hp = max(max_health, 1.0)
+	var ratio = clampf(health / max_hp, 0.0, 1.0)
+	_health_bar_fill.size.x = PLAYER_HP_BAR_WIDTH * ratio
+	if ratio > 0.55:
+		_health_bar_fill.color = Color(0.22, 0.96, 0.35, 0.92)
+	elif ratio > 0.25:
+		_health_bar_fill.color = Color(0.96, 0.82, 0.24, 0.95)
+	else:
+		_health_bar_fill.color = Color(0.98, 0.22, 0.22, 0.98)
+	_health_bar_bg.visible = not _is_dying
+
 # ============================================
 # DRAMATIC ROGUELIKE DEATH SEQUENCE
 # ============================================
@@ -308,6 +356,8 @@ func start_death_animation() -> void:
 	velocity = Vector2.ZERO
 	if _visibility_halo != null:
 		_visibility_halo.visible = false
+	if _health_bar_bg != null:
+		_health_bar_bg.visible = false
 	
 	# Phase 0: The fatal blow - dramatic impact
 	_spawn_fatal_blow_effect()
@@ -543,6 +593,7 @@ func clear_run_modifiers() -> void:
 	_berserk_timer = 0.0
 	_remove_berserk_glow()
 	apply_global_bonuses(0.0)
+	_update_health_bar()
 
 func reset() -> void:
 	"""Reset player state for new game"""
@@ -556,6 +607,7 @@ func reset() -> void:
 		_visibility_halo_time = 0.0
 	health = max_health
 	velocity = Vector2.ZERO
+	_update_health_bar()
 
 # ============================================
 # BERSERK BUFF - Power-up effect

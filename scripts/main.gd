@@ -140,6 +140,7 @@ var _flow_origin_cell: Vector2i = Vector2i.ZERO
 var _flow_player_cell: Vector2i = Vector2i(999999, 999999)
 var _flow_dirty: bool = true
 var _flow_timer: float = 0.0
+var _flow_rebuild_interval_runtime: float = FLOW_REBUILD_INTERVAL
 var _flow_required_cells: int = 1
 var debug_flow_enabled: bool = false
 var _debug_flow_timer: float = 0.0
@@ -279,6 +280,13 @@ var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
 var max_allies = 16
 var max_pickups = 60
+const PERF_SAMPLE_INTERVAL = 0.45
+const PERF_FX_SCALE_MIN = 0.20
+const PERF_PROJECTILE_SCALE_MIN = 0.70
+const PERF_FLOW_INTERVAL_MAX = 0.55
+var _adaptive_perf_scale: float = 1.0
+var _adaptive_perf_smoothed_fps: float = 60.0
+var _adaptive_perf_sample_timer: float = 0.0
 
 var chest_drop_chance = 0.50
 var chest_drop_cooldown = 12.0
@@ -1361,6 +1369,7 @@ func _ready() -> void:
 	_instantiate_settings_menu()
 	_connect_settings_manager()
 	_sync_runtime_settings()
+	_apply_runtime_performance_budgets()
 	_load_damage_font()
 	_damage_number_budget = _get_damage_budget_per_sec()
 	
@@ -1431,6 +1440,7 @@ func _process(delta: float) -> void:
 		return
 	elapsed += delta
 	_maybe_minute_announcement()
+	_update_runtime_performance(delta)
 	_update_dynamic_caps()
 	# Update cached enemy list once per frame (used by all towers)
 	_refresh_cached_enemies()
@@ -1447,10 +1457,17 @@ func _process(delta: float) -> void:
 
 func _refresh_cached_enemies() -> void:
 	cached_enemies.clear()
-	for raw_enemy in get_tree().get_nodes_in_group("enemies"):
+	if enemies_root == null:
+		return
+	var count = enemies_root.get_child_count()
+	for i in range(count):
+		var raw_enemy = enemies_root.get_child(i)
 		if raw_enemy == null or not is_instance_valid(raw_enemy):
 			continue
 		cached_enemies.append(raw_enemy)
+
+func get_cached_enemies() -> Array:
+	return cached_enemies
 
 func _update_debug_flow(delta: float) -> void:
 	if not debug_flow_enabled:
@@ -1601,8 +1618,7 @@ func _sync_runtime_settings(_category: String = "", _key: String = "", _value: V
 		ui.set_wave_preview_enabled(show_wave_preview)
 	if ui != null and ui.has_method("set_tech_ledger_visible"):
 		ui.set_tech_ledger_visible(false)
-	var fx_scale = _get_fx_density_scale()
-	max_particles = max(90, int(round(150.0 * fx_scale)))
+	_apply_runtime_performance_budgets()
 
 func _on_settings_changed(category: String, key: String, value: Variant) -> void:
 	_sync_runtime_settings(category, key, value)
@@ -1612,6 +1628,7 @@ func _get_damage_budget_per_sec() -> int:
 	var manager = _get_settings_manager()
 	if manager != null and manager.has_method("get_damage_budget_scale"):
 		budget = int(round(float(budget) * float(manager.get_damage_budget_scale())))
+	budget = int(round(float(budget) * lerpf(0.55, 1.0, _adaptive_perf_scale)))
 	return max(4, budget)
 
 func _get_fx_density_scale() -> float:
@@ -1620,11 +1637,52 @@ func _get_fx_density_scale() -> float:
 		return clampf(float(manager.get_fx_density_scale()), 0.25, 1.5)
 	return 1.0
 
+func _get_effective_fx_density_scale() -> float:
+	return clampf(_get_fx_density_scale() * _adaptive_perf_scale, PERF_FX_SCALE_MIN, 1.5)
+
 func _should_spawn_optional_fx() -> bool:
-	var density = _get_fx_density_scale()
+	var density = _get_effective_fx_density_scale()
 	if density >= 1.0:
 		return true
 	return randf() <= density
+
+func _update_runtime_performance(delta: float) -> void:
+	if not game_started:
+		return
+	_adaptive_perf_sample_timer = max(0.0, _adaptive_perf_sample_timer - delta)
+	if _adaptive_perf_sample_timer > 0.0:
+		return
+	_adaptive_perf_sample_timer = PERF_SAMPLE_INTERVAL
+	var fps = float(Engine.get_frames_per_second())
+	if fps <= 1.0:
+		fps = _adaptive_perf_smoothed_fps
+	_adaptive_perf_smoothed_fps = lerpf(_adaptive_perf_smoothed_fps, fps, 0.35)
+	var target_scale = 1.0
+	if _adaptive_perf_smoothed_fps < 58.0:
+		target_scale = 0.92
+	if _adaptive_perf_smoothed_fps < 50.0:
+		target_scale = 0.78
+	if _adaptive_perf_smoothed_fps < 42.0:
+		target_scale = 0.62
+	if _adaptive_perf_smoothed_fps < 34.0:
+		target_scale = 0.48
+	if _adaptive_perf_smoothed_fps < 28.0:
+		target_scale = 0.36
+	if max_enemies_cap > 0 and enemies_root != null:
+		var load_ratio = float(enemies_root.get_child_count()) / float(max_enemies_cap)
+		if load_ratio > 0.82:
+			target_scale = min(target_scale, 0.85)
+		if load_ratio > 0.94:
+			target_scale = min(target_scale, 0.70)
+	_adaptive_perf_scale = lerpf(_adaptive_perf_scale, target_scale, 0.45)
+	_apply_runtime_performance_budgets()
+
+func _apply_runtime_performance_budgets() -> void:
+	var fx_scale = _get_effective_fx_density_scale()
+	max_particles = max(70, int(round(150.0 * fx_scale)))
+	var projectile_scale = lerpf(PERF_PROJECTILE_SCALE_MIN, 1.0, _adaptive_perf_scale)
+	max_projectiles = max(96, int(round(150.0 * projectile_scale)))
+	_flow_rebuild_interval_runtime = lerpf(FLOW_REBUILD_INTERVAL, PERF_FLOW_INTERVAL_MAX, 1.0 - _adaptive_perf_scale)
 
 func _instantiate_pause_menu() -> void:
 	if PAUSE_MENU_SCENE == null:
@@ -2119,7 +2177,7 @@ func _update_flow_field(delta: float) -> void:
 	_rebuild_flow_field(player_cell)
 
 func _rebuild_flow_field(player_cell: Vector2i) -> void:
-	_flow_timer = FLOW_REBUILD_INTERVAL
+	_flow_timer = _flow_rebuild_interval_runtime
 	_flow_dirty = false
 	_flow_player_cell = player_cell
 
@@ -2557,7 +2615,7 @@ func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lif
 func _spawn_glow_burst(position: Vector2, base_color: Color, count: int, size: float, lifetime: float, speed: float, bloom: float) -> void:
 	if fx_root == null:
 		return
-	var density = _get_fx_density_scale()
+	var density = _get_effective_fx_density_scale()
 	var scaled_count = max(1, int(round(float(count) * density)))
 	for i in scaled_count:
 		var dir = Vector2.RIGHT.rotated(randf() * TAU)
