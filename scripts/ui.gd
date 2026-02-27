@@ -33,6 +33,7 @@ const TECH_ICON_SIZE = Vector2(42, 42)
 @onready var tech_icon1: TextureRect = $HUD/TechPanel/Option1Icon
 @onready var tech_icon2: TextureRect = $HUD/TechPanel/Option2Icon
 @onready var tech_icon3: TextureRect = $HUD/TechPanel/Option3Icon
+@onready var tech_hint_label: Label = $HUD/TechPanel/Hint
 @onready var start_panel: TextureRect = $HUD/StartPanel
 @onready var start_title: Label = $HUD/StartPanel/StartTitle
 @onready var start_body: Label = $HUD/StartPanel/StartBody
@@ -1022,7 +1023,7 @@ func _ensure_tech_backdrop() -> void:
 	$HUD.add_child(_tech_backdrop)
 	$HUD.move_child(_tech_backdrop, 0)
 
-func show_tech(options: Array) -> void:
+func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0) -> void:
 	_ensure_tech_backdrop()
 	if _tech_backdrop != null:
 		_tech_backdrop.visible = true
@@ -1039,11 +1040,20 @@ func show_tech(options: Array) -> void:
 	_apply_rarity_style(tech_option2, tech_icon2, options, 1)
 	_apply_rarity_style(tech_option3, tech_icon3, options, 2)
 	_apply_tech_frames(options)
+	if tech_hint_label != null:
+		if reroll_cost <= 0:
+			tech_hint_label.text = "Press 1, 2, or 3"
+		elif essence_amount >= reroll_cost:
+			tech_hint_label.text = "Press 1, 2, or 3  |  R: reroll (%d Essence)" % reroll_cost
+		else:
+			tech_hint_label.text = "Press 1, 2, or 3  |  R: reroll (%d needed)" % reroll_cost
 
 func hide_tech() -> void:
 	tech_panel.visible = false
 	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
 		_tech_backdrop.visible = false
+	if tech_hint_label != null:
+		tech_hint_label.text = "Press 1, 2, or 3"
 
 func _build_tech_ledger() -> void:
 	if _tech_ledger_panel != null and is_instance_valid(_tech_ledger_panel):

@@ -28,6 +28,25 @@ const WaveManager = preload("res://scripts/wave_manager.gd")
 const FXManager = preload("res://scripts/fx_manager.gd")
 const Minimap = preload("res://scripts/minimap.gd")
 
+const CORE_BUILD_IDS = [
+	"arrow_turret",
+	"cannon_tower",
+	"tesla_tower",
+	"mine_trap",
+	"ice_trap",
+	"acid_trap",
+	"resource_generator",
+	"barracks",
+	"armory",
+	"tech_lab",
+	"shrine"
+]
+const TECH_RARITY_ORDER = ["common", "rare", "epic", "legendary", "mythic", "diamond"]
+const TECH_REROLL_ACTION = "tech_reroll"
+const TECH_REROLL_BASE_COST = 2
+const TECH_REROLL_COST_STEP = 1
+const TECH_REROLL_MAX_COST = 9
+
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
 @onready var enemies_root: Node2D = $World/Enemies
@@ -142,9 +161,17 @@ var pending_picks = 0
 var tech_open = false
 var tech_choices: Array = []
 var tech_levels: Dictionary = {}
-var unlocked_builds: Dictionary = {
-	"arrow_turret": true
+var unlocked_builds: Dictionary = {}
+var _tech_rerolls_this_pick: int = 0
+var _tech_rerolls_this_run: int = 0
+var _tech_base_rate_mult: float = 1.0
+var _tech_dead_screen_threshold_index: int = 0
+var _draft_pity: Dictionary = {
+	"rare_miss": 0,
+	"epic_miss": 0,
+	"legendary_miss": 0
 }
+var _draft_telemetry: Dictionary = {}
 var characters = [
 	{
 		"id": "hunter",
@@ -531,6 +558,38 @@ var tech_defs = {
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2
+	},
+	"tower_overclock": {
+		"name": "Towers: Overclock",
+		"desc": "All towers gain +10% fire rate",
+		"max": 3,
+		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
+		"rarity": "epic",
+		"min_level": 4
+	},
+	"tower_ordnance": {
+		"name": "Towers: Heavy Ordnance",
+		"desc": "All towers gain +3 damage",
+		"max": 3,
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
+		"rarity": "epic",
+		"min_level": 5
+	},
+	"orbital_overdrive": {
+		"name": "Relic: Orbital Overdrive",
+		"desc": "All towers gain +20% fire rate and +5 damage",
+		"max": 2,
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
+		"rarity": "legendary",
+		"min_level": 8
+	},
+	"essence_cache": {
+		"name": "Essence Cache",
+		"desc": "Gain +2 Essence immediately",
+		"max": 4,
+		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
+		"rarity": "rare",
+		"min_level": 3
 	}
 }
 
@@ -868,6 +927,205 @@ func _validate_fx_defs() -> void:
 	for kind in invalid_kinds:
 		fx_defs.erase(kind)
 
+func _new_rarity_count_dict() -> Dictionary:
+	var counts: Dictionary = {}
+	for rarity in TECH_RARITY_ORDER:
+		counts[rarity] = 0
+	return counts
+
+func _rarity_index(rarity: String) -> int:
+	var index = TECH_RARITY_ORDER.find(rarity)
+	if index < 0:
+		return 0
+	return index
+
+func _rarity_for_tech(id: String) -> String:
+	var def: Dictionary = tech_defs.get(id, {})
+	return str(def.get("rarity", "common"))
+
+func _max_rarity(a: String, b: String) -> String:
+	return a if _rarity_index(a) >= _rarity_index(b) else b
+
+func _reset_progression_state() -> void:
+	_tech_rerolls_this_pick = 0
+	_tech_rerolls_this_run = 0
+	_tech_base_rate_mult = 1.0
+	_tech_dead_screen_threshold_index = _rarity_index("rare")
+	_draft_pity = {
+		"rare_miss": 0,
+		"epic_miss": 0,
+		"legendary_miss": 0
+	}
+	_draft_telemetry = {
+		"draft_count": 0,
+		"dead_screens": 0,
+		"reroll_count": 0,
+		"reroll_essence_spent": 0,
+		"offered": _new_rarity_count_dict(),
+		"chosen": _new_rarity_count_dict()
+	}
+
+func _unlock_core_builds() -> void:
+	unlocked_builds.clear()
+	for id in CORE_BUILD_IDS:
+		unlocked_builds[id] = true
+
+func _target_draft_floor_rarity() -> String:
+	var floor_rarity = "common"
+	if level >= 10:
+		floor_rarity = "rare"
+	if level >= 18:
+		floor_rarity = "epic"
+	if level >= 24:
+		floor_rarity = "legendary"
+	if int(_draft_pity.get("rare_miss", 0)) >= 2:
+		floor_rarity = _max_rarity(floor_rarity, "rare")
+	if int(_draft_pity.get("epic_miss", 0)) >= 4:
+		floor_rarity = _max_rarity(floor_rarity, "epic")
+	if int(_draft_pity.get("legendary_miss", 0)) >= 7:
+		floor_rarity = _max_rarity(floor_rarity, "legendary")
+	return floor_rarity
+
+func _pool_with_rarity_floor(available: Array, floor_rarity: String, option_count: int) -> Array:
+	var required = min(option_count, available.size())
+	var floor_index = _rarity_index(floor_rarity)
+	for rarity_index in range(floor_index, -1, -1):
+		var filtered: Array = []
+		for raw_id in available:
+			var id = str(raw_id)
+			if _rarity_index(_rarity_for_tech(id)) >= rarity_index:
+				filtered.append(id)
+		if filtered.size() >= required:
+			return filtered
+	return available.duplicate()
+
+func _roll_tech_picks(available: Array, option_count: int, floor_rarity: String) -> Array:
+	var pool = _pool_with_rarity_floor(available, floor_rarity, option_count)
+	var picks: Array = _pick_weighted_choices(pool, min(option_count, pool.size()))
+	if picks.size() >= option_count or available.size() <= picks.size():
+		return picks
+	var fallback_pool: Array = available.duplicate()
+	for id in picks:
+		fallback_pool.erase(id)
+	picks += _pick_weighted_choices(fallback_pool, option_count - picks.size())
+	return picks
+
+func _same_choice_ids(a: Array, b: Array) -> bool:
+	if a.size() != b.size():
+		return false
+	var aa: Array = []
+	var bb: Array = []
+	for value in a:
+		aa.append(str(value))
+	for value in b:
+		bb.append(str(value))
+	aa.sort()
+	bb.sort()
+	return aa == bb
+
+func _track_draft_offer(picks: Array, _floor_rarity: String) -> void:
+	if _draft_telemetry.is_empty():
+		_draft_telemetry = {
+			"draft_count": 0,
+			"dead_screens": 0,
+			"reroll_count": 0,
+			"reroll_essence_spent": 0,
+			"offered": _new_rarity_count_dict(),
+			"chosen": _new_rarity_count_dict()
+		}
+	_draft_telemetry["draft_count"] = int(_draft_telemetry.get("draft_count", 0)) + 1
+	var offered: Dictionary = _draft_telemetry.get("offered", _new_rarity_count_dict())
+	var best = "common"
+	for raw_id in picks:
+		var id = str(raw_id)
+		var rarity = _rarity_for_tech(id)
+		offered[rarity] = int(offered.get(rarity, 0)) + 1
+		if _rarity_index(rarity) > _rarity_index(best):
+			best = rarity
+	_draft_telemetry["offered"] = offered
+	if _rarity_index(best) < _tech_dead_screen_threshold_index:
+		_draft_telemetry["dead_screens"] = int(_draft_telemetry.get("dead_screens", 0)) + 1
+	if _rarity_index(best) >= _rarity_index("rare"):
+		_draft_pity["rare_miss"] = 0
+	else:
+		_draft_pity["rare_miss"] = int(_draft_pity.get("rare_miss", 0)) + 1
+	if _rarity_index(best) >= _rarity_index("epic"):
+		_draft_pity["epic_miss"] = 0
+	else:
+		_draft_pity["epic_miss"] = int(_draft_pity.get("epic_miss", 0)) + 1
+	if _rarity_index(best) >= _rarity_index("legendary"):
+		_draft_pity["legendary_miss"] = 0
+	else:
+		_draft_pity["legendary_miss"] = int(_draft_pity.get("legendary_miss", 0)) + 1
+
+func _track_draft_pick(rarity: String) -> void:
+	if _draft_telemetry.is_empty():
+		_draft_telemetry = {
+			"draft_count": 0,
+			"dead_screens": 0,
+			"reroll_count": 0,
+			"reroll_essence_spent": 0,
+			"offered": _new_rarity_count_dict(),
+			"chosen": _new_rarity_count_dict()
+		}
+	var chosen: Dictionary = _draft_telemetry.get("chosen", _new_rarity_count_dict())
+	chosen[rarity] = int(chosen.get(rarity, 0)) + 1
+	_draft_telemetry["chosen"] = chosen
+
+func _refresh_tech_scalars() -> void:
+	tower_range_mult = 1.0 + 0.12 * int(tech_levels.get("tower_range", 0))
+	tower_damage_bonus = (
+		2.0 * int(tech_levels.get("tower_damage", 0))
+		+ 3.0 * int(tech_levels.get("tower_ordnance", 0))
+		+ 5.0 * int(tech_levels.get("orbital_overdrive", 0))
+	)
+	_tech_base_rate_mult = (
+		1.0
+		+ 0.10 * int(tech_levels.get("tower_overclock", 0))
+		+ 0.20 * int(tech_levels.get("orbital_overdrive", 0))
+	)
+	_recalc_effects()
+
+func _get_tech_reroll_cost() -> int:
+	var cost = TECH_REROLL_BASE_COST + _tech_rerolls_this_pick * TECH_REROLL_COST_STEP
+	return min(TECH_REROLL_MAX_COST, cost)
+
+func _try_reroll_tech() -> void:
+	if not tech_open:
+		return
+	var available: Array = _get_available_tech_ids()
+	if available.size() <= 1:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("No alternate upgrades available", Color(0.9, 0.6, 0.3), 20, 1.5)
+		return
+	var cost = _get_tech_reroll_cost()
+	if essence < cost:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("Need %d Essence to reroll" % cost, Color(0.9, 0.45, 1.0), 20, 1.5)
+		return
+	essence -= cost
+	_tech_rerolls_this_pick += 1
+	_tech_rerolls_this_run += 1
+	_draft_telemetry["reroll_count"] = int(_draft_telemetry.get("reroll_count", 0)) + 1
+	_draft_telemetry["reroll_essence_spent"] = int(_draft_telemetry.get("reroll_essence_spent", 0)) + cost
+	_open_tech_menu(true)
+	_update_ui()
+
+func _log_draft_telemetry() -> void:
+	if _draft_telemetry.is_empty():
+		return
+	print(
+		"[DraftTelemetry] drafts=%d dead=%d rerolls=%d reroll_essence=%d offered=%s chosen=%s pity=%s" % [
+			int(_draft_telemetry.get("draft_count", 0)),
+			int(_draft_telemetry.get("dead_screens", 0)),
+			int(_draft_telemetry.get("reroll_count", 0)),
+			int(_draft_telemetry.get("reroll_essence_spent", 0)),
+			str(_draft_telemetry.get("offered", {})),
+			str(_draft_telemetry.get("chosen", {})),
+			str(_draft_pity)
+		]
+	)
+
 func _ready() -> void:
 	randomize()
 	add_to_group("game")
@@ -899,6 +1157,9 @@ func _ready() -> void:
 		allies_root.name = "Allies"
 		$World.add_child(allies_root)
 	resources = 200
+	_unlock_core_builds()
+	_reset_progression_state()
+	_refresh_tech_scalars()
 	
 	# Initialize game over UI (hidden initially)
 	_instantiate_game_over_ui()
@@ -1235,6 +1496,8 @@ func _handle_tech_input() -> void:
 		_choose_tech(1)
 	elif Input.is_action_just_pressed("build_3"):
 		_choose_tech(2)
+	elif Input.is_action_just_pressed(TECH_REROLL_ACTION):
+		_try_reroll_tech()
 
 func _get_spawn_settings(time_sec: float) -> Dictionary:
 	if SPAWN_CURVE.is_empty():
@@ -2214,27 +2477,30 @@ func spend(cost: int) -> bool:
 	_update_ui()
 	return true
 
-func _open_tech_menu() -> void:
+func _open_tech_menu(is_reroll: bool = false) -> void:
+	var previous_ids: Array = []
+	if is_reroll:
+		for choice in tech_choices:
+			previous_ids.append(str(choice.get("id", "")))
+	else:
+		_tech_rerolls_this_pick = 0
 	tech_choices.clear()
 	var available: Array = _get_available_tech_ids()
 	if available.is_empty():
 		pending_picks = 0
 		tech_open = false
+		if ui != null and ui.has_method("hide_tech"):
+			ui.hide_tech()
 		_set_pause_allowed(_can_pause_game())
 		return
-	var picks: Array = []
-	var unlocks: Array = []
-	for id in available:
-		var def = tech_defs.get(id, {})
-		if def.has("unlock_build"):
-			unlocks.append(id)
-	if not unlocks.is_empty():
-		var unlock_pick = _pick_weighted_id(unlocks)
-		picks.append(unlock_pick)
-		available.erase(unlock_pick)
-	var remaining = 3 - picks.size()
-	if remaining > 0:
-		picks += _pick_weighted_choices(available, remaining)
+	var floor_rarity = _target_draft_floor_rarity()
+	var picks: Array = _roll_tech_picks(available, 3, floor_rarity)
+	if is_reroll and available.size() > picks.size() and _same_choice_ids(previous_ids, picks):
+		var attempts = 0
+		while attempts < 3 and _same_choice_ids(previous_ids, picks):
+			picks = _roll_tech_picks(available, 3, floor_rarity)
+			attempts += 1
+	_track_draft_offer(picks, floor_rarity)
 	for id in picks:
 		var def: Dictionary = tech_defs.get(id, {})
 		tech_choices.append({
@@ -2248,7 +2514,7 @@ func _open_tech_menu() -> void:
 	tech_open = true
 	_set_pause_allowed(false)
 	if ui.has_method("show_tech"):
-		ui.show_tech(tech_choices)
+		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost())
 	_apply_base_time_scale()
 
 func _choose_tech(index: int) -> void:
@@ -2258,6 +2524,7 @@ func _choose_tech(index: int) -> void:
 	var id: String = str(choice.get("id", ""))
 	if id == "":
 		return
+	_track_draft_pick(str(choice.get("rarity", "common")))
 	_apply_tech(id)
 	tech_open = false
 	if ui.has_method("hide_tech"):
@@ -2278,10 +2545,9 @@ func _apply_tech(id: String) -> void:
 		if build_manager != null and build_manager.has_method("refresh_controls"):
 			build_manager.refresh_controls()
 		_refresh_build_palette()
-	if id == "tower_range":
-		tower_range_mult = 1.0 + 0.12 * tech_levels[id]
-	if id == "tower_damage":
-		tower_damage_bonus = 2.0 * tech_levels[id]
+	if id == "essence_cache":
+		add_essence(2)
+	_refresh_tech_scalars()
 	if player != null and player.has_method("apply_gun_tech"):
 		player.apply_gun_tech(id, tech_levels[id])
 	if ui != null and ui.has_method("update_tech_ledger"):
@@ -2390,7 +2656,7 @@ func _recalc_effects() -> void:
 	var rate_bonus = 0.0
 	for value in building_effects["tech_rate"].values():
 		rate_bonus += float(value)
-	tower_rate_mult = 1.0 + rate_bonus
+	tower_rate_mult = (1.0 + rate_bonus) * _tech_base_rate_mult
 	_apply_player_damage_bonuses()
 
 func _apply_player_damage_bonuses() -> void:
@@ -2573,6 +2839,7 @@ func _show_game_over_screen() -> void:
 	
 	# Check for new records
 	var is_new_record = _check_and_save_record(stats)
+	_log_draft_telemetry()
 	
 	# Show the game over UI
 	if game_over_ui.has_method("show_game_over"):
@@ -2665,6 +2932,22 @@ func _reset_game_state() -> void:
 	spawn_accumulator = 0.0
 	start_timer = 0.0
 	resources = 200
+	essence = 0
+	xp = 0
+	level = 1
+	xp_next = 12
+	pending_picks = 0
+	tech_open = false
+	tech_choices.clear()
+	tech_levels.clear()
+	_unlock_core_builds()
+	_reset_progression_state()
+	_refresh_tech_scalars()
+	if ui != null and ui.has_method("hide_tech"):
+		ui.hide_tech()
+	if build_manager != null and build_manager.has_method("refresh_controls"):
+		build_manager.refresh_controls()
+	_refresh_build_palette()
 	
 	# Clear enemies
 	for enemy in enemies_root.get_children():
@@ -2719,6 +3002,7 @@ func _reset_run_stats() -> void:
 	_last_minute_announcement = -1
 	_essence_tip_shown = false
 	_final_boss_spawned = false
+	_reset_progression_state()
 	if ui != null and ui.has_method("clear_tech_ledger"):
 		ui.clear_tech_ledger()
 	_reset_boss_schedule()
@@ -3318,6 +3602,7 @@ func _ensure_input_map() -> void:
 	_ensure_action("build_armory", [KEY_E])
 	_ensure_action("build_tech_lab", [KEY_R])
 	_ensure_action("build_shrine", [KEY_T])
+	_ensure_action(TECH_REROLL_ACTION, [KEY_R])
 	_ensure_action("upgrade", [KEY_U])
 	_ensure_action("toggle_gate", [KEY_G])
 	_ensure_action("interact", [KEY_F])

@@ -52,6 +52,12 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - Created active overhaul branch: `codex/progression-overhaul-v1`
 - Added progression blueprint: `docs/PROGRESSION_ESSENCE_OVERHAUL_PLAN.md`
 - Updated `TASKS.md` to progression-overhaul phase structure.
+- Implemented Phase A progression foundation in code (`scripts/main.gd`, `scripts/ui.gd`):
+- all core buildables in the active palette are unlocked at run start/reset.
+- draft generator now uses rarity-floor + pity logic with graceful fallback.
+- level-up supports Essence reroll on `R` with scaling cost and dynamic UI hinting.
+- added run telemetry counters for offered/chosen rarity, rerolls, reroll Essence spend, dead-screen proxy, and pity state (logged at run end).
+- added new higher-tier draft cards to support rarity spread (`tower_overclock`, `tower_ordnance`, `orbital_overdrive`, `essence_cache`).
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

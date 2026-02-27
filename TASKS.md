@@ -7,8 +7,11 @@
 - Essence as agency currency
 - chest archetypes + rarity floors
 - Define phase breakdown for safe incremental rollout and QA gates.
-- Build data schema for cards/tags/rarities/pity/breakthrough prerequisites.
-- Add instrumentation requirements for rarity distribution + breakthrough frequency.
+- Phase A foundation pass:
+- unlock all core towers at run start/reset
+- rarity floor + pity draft generation scaffolding
+- Essence reroll action in draft UI with cost scaling
+- run telemetry counters for rarity distribution and rerolls
 
 ## Next
 - Implement draft generator v1 with no-dead-screen and pity logic.
