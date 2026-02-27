@@ -34,6 +34,24 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - ensure practical in-game quality controls exist for lower-power hardware
 - Added execution roadmap doc: `docs/INDIE_BENCHMARK_GAMEPLAN.md`.
 - Updated `TASKS.md` to prioritize placement reliability, performance instrumentation, UI/UX redesign, Mars terrain/zone visual pivot, and runtime settings integration.
+- Added pause + settings foundation:
+- real pause flow and modal level-up pause behavior
+- pause stats screen with chosen-upgrade summary
+- runtime settings wiring for wave preview/range rings/FX density/shake/flash reduction
+- Added startup safety fixes:
+- removed `class_name` collision for `SettingsManager` autoload
+- guarded menu instantiation null paths in `main.gd`
+- readability hotfix for level-up modal:
+- removed fade-in tween under time-scale pause
+- stronger backdrop contrast
+- stronger text outlines
+- hid build overlays while menus are open
+- Created hard rollback checkpoint before major progression push:
+- branch: `codex/snapshot-20260226-171050`
+- tag: `snapshot-pre-overhaul-20260226-171050`
+- Created active overhaul branch: `codex/progression-overhaul-v1`
+- Added progression blueprint: `docs/PROGRESSION_ESSENCE_OVERHAUL_PLAN.md`
+- Updated `TASKS.md` to progression-overhaul phase structure.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.
