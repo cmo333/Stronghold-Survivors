@@ -84,6 +84,11 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - Horde pressure pass:
 - enemy count now scales by `+0.5x` per elapsed minute in `scripts/main.gd` (`_get_horde_count_multiplier` + `_scale_horde_enemy_count`).
 - spawn interval now shrinks with horde multiplier (with floor), and dynamic cap scales with horde pressure (hard-capped to protect perf).
+- Balance retune pass:
+- enemy HP baseline doubled, then ramps `+25%` every `30s` via `get_enemy_health_mult()` in `scripts/main.gd`.
+- economy tightened to ~`-15%` income (`add_resources`) and lower start gold (`START_RESOURCES = 170`).
+- XP gain increased by ~`+50%` (`add_xp` multiplier).
+- added new tech card `engineer_vitality` (up to +100 max HP) so player can reach ~2x HP through level choices.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.

@@ -59,6 +59,12 @@ const TECH_FORCE_TOWER_ACTION = "tech_force_tower"
 const TECH_FORCE_ENGINEER_ACTION = "tech_force_engineer"
 const TECH_FORCE_ECONOMY_ACTION = "tech_force_economy"
 const TECH_CATEGORY_ORDER = ["tower", "engineer", "economy"]
+const START_RESOURCES = 170
+const RESOURCE_GAIN_MULT = 0.85
+const XP_GAIN_MULT = 1.5
+const ENEMY_HEALTH_BASE_MULT = 2.0
+const ENEMY_HEALTH_GROWTH_PER_30S = 0.25
+const ENGINEER_VITALITY_HP_PER_LEVEL = 20.0
 
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
@@ -218,6 +224,7 @@ var tower_range_mult = 1.0
 var chest_damage_bonus = 0.0
 var chest_speed_bonus = 0.0
 var chest_max_hp_bonus = 0.0
+var tech_max_hp_bonus = 0.0
 var chest_tower_range_mult = 1.0
 var chest_tower_damage_bonus = 0.0
 var chest_tower_rate_mult = 1.0
@@ -654,6 +661,15 @@ var tech_defs = {
 		"rarity": "common",
 		"min_level": 1,
 		"category": "economy"
+	},
+	"engineer_vitality": {
+		"name": "Engineer: Vitality Frame",
+		"desc": "Increase max health by +20% (up to +100%)",
+		"max": 5,
+		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
+		"rarity": "rare",
+		"min_level": 1,
+		"category": "engineer"
 	},
 	"essence_cache": {
 		"name": "Essence Cache",
@@ -1365,7 +1381,7 @@ func _ready() -> void:
 		allies_root = Node2D.new()
 		allies_root.name = "Allies"
 		$World.add_child(allies_root)
-	resources = 200
+	resources = START_RESOURCES
 	_unlock_core_builds()
 	_reset_progression_state()
 	_refresh_tech_scalars()
@@ -2686,7 +2702,10 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 				enemy.take_damage(final_damage, enemy.global_position, false, true, damage_type)
 
 func add_resources(amount: int) -> void:
-	resources += amount
+	var applied = amount
+	if amount > 0:
+		applied = max(1, int(round(float(amount) * RESOURCE_GAIN_MULT)))
+	resources += applied
 
 func add_essence(amount: int) -> void:
 	essence += amount
@@ -2696,7 +2715,10 @@ func add_essence(amount: int) -> void:
 		_essence_tip_shown = true
 
 func add_xp(amount: int) -> void:
-	xp += amount
+	var applied = amount
+	if amount > 0:
+		applied = max(1, int(round(float(amount) * XP_GAIN_MULT)))
+	xp += applied
 	var leveled_up = false
 	while xp >= xp_next:
 		xp -= xp_next
@@ -2875,6 +2897,10 @@ func _apply_tech(id: String) -> void:
 	elif id == "field_repairs":
 		var heal_amount = 8.0 + 6.0 * float(int(tech_levels.get(id, 1)))
 		heal_player(heal_amount)
+	elif id == "engineer_vitality":
+		var level_value = int(tech_levels.get(id, 1))
+		tech_max_hp_bonus = min(100.0, ENGINEER_VITALITY_HP_PER_LEVEL * float(level_value))
+		_apply_player_max_health_bonuses()
 	_refresh_tech_scalars()
 	if player != null and player.has_method("apply_gun_tech"):
 		player.apply_gun_tech(id, tech_levels[id])
@@ -2898,8 +2924,7 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 				player.apply_speed_bonus(chest_speed_bonus)
 		"max_hp":
 			chest_max_hp_bonus += 12.0 if rarity == "common" else (20.0 if rarity == "rare" else 30.0)
-			if player != null and player.has_method("apply_max_health_bonus"):
-				player.apply_max_health_bonus(chest_max_hp_bonus)
+			_apply_player_max_health_bonuses()
 		"build_cost":
 			var cost_mult = 0.92 if rarity == "common" else (0.88 if rarity == "rare" else 0.83)
 			build_cost_mult = max(0.55, build_cost_mult * cost_mult)
@@ -3004,6 +3029,10 @@ func _apply_player_damage_bonuses() -> void:
 	if player != null and player.has_method("apply_global_bonuses"):
 		player.apply_global_bonuses(player_damage_bonus + chest_damage_bonus)
 
+func _apply_player_max_health_bonuses() -> void:
+	if player != null and player.has_method("apply_max_health_bonus"):
+		player.apply_max_health_bonus(chest_max_hp_bonus + tech_max_hp_bonus)
+
 func get_tower_rate_mult() -> float:
 	return tower_rate_mult
 
@@ -3091,11 +3120,8 @@ func get_heal_drop_amount(is_elite: bool = false, is_siege: bool = false, source
 	return clampi(amount, min_amount, max_amount)
 
 func get_enemy_health_mult() -> float:
-	if elapsed <= 300.0:
-		var t = clamp(elapsed / 300.0, 0.0, 1.0)
-		return lerp(1.0, 1.5, t)
-	var steps = int(floor((elapsed - 300.0) / 60.0))
-	return 1.5 + steps * 0.1
+	var growth = 1.0 + (max(elapsed, 0.0) / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
+	return ENEMY_HEALTH_BASE_MULT * growth
 
 func _get_available_tech_ids() -> Array:
 	var available: Array = []
@@ -3339,6 +3365,7 @@ func _reset_run_modifiers() -> void:
 	chest_damage_bonus = 0.0
 	chest_speed_bonus = 0.0
 	chest_max_hp_bonus = 0.0
+	tech_max_hp_bonus = 0.0
 	chest_tower_range_mult = 1.0
 	chest_tower_damage_bonus = 0.0
 	chest_tower_rate_mult = 1.0
@@ -3382,7 +3409,7 @@ func _reset_game_state() -> void:
 	elapsed = 0.0
 	spawn_accumulator = 0.0
 	start_timer = 0.0
-	resources = 200
+	resources = START_RESOURCES
 	essence = 0
 	xp = 0
 	level = 1
