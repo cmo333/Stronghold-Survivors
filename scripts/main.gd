@@ -3270,6 +3270,45 @@ func _restart_game() -> void:
 	# Start the game
 	_start_game()
 
+func _reset_run_modifiers() -> void:
+	chest_damage_bonus = 0.0
+	chest_speed_bonus = 0.0
+	chest_max_hp_bonus = 0.0
+	chest_tower_range_mult = 1.0
+	chest_tower_damage_bonus = 0.0
+	chest_tower_rate_mult = 1.0
+	build_cost_mult = 1.0
+	reload_speed_mult = 1.0
+	crit_chance_bonus = 0.0
+	crit_damage_mult = 1.0
+	pierce_bonus = 0
+	cooldown_mult = 1.0
+	pickup_range_mult = 1.0
+	has_multishot = false
+	multishot_count = 0
+	has_explosive = false
+	explosive_radius = 0.0
+	has_chain_lightning = false
+	chain_lightning_targets = 0
+	has_vampiric = false
+	vampiric_percent = 0.0
+	has_multishot_split = false
+	multishot_split_count = 0
+	has_time_dilation = false
+	time_dilation_mult = 1.0
+	has_phoenix = false
+	phoenix_used_this_wave = false
+	has_fortress = false
+	tower_hp_mult = 1.0
+	towers_self_repair = false
+	if player != null and player.has_method("clear_run_modifiers"):
+		player.clear_run_modifiers()
+	elif player != null:
+		if player.has_method("apply_speed_bonus"):
+			player.apply_speed_bonus(0.0)
+		if player.has_method("apply_max_health_bonus"):
+			player.apply_max_health_bonus(0.0)
+
 func _reset_game_state() -> void:
 	"""Reset all game state for a new run"""
 	_force_close_menus()
@@ -3289,6 +3328,7 @@ func _reset_game_state() -> void:
 	tech_levels.clear()
 	_unlock_core_builds()
 	_reset_progression_state()
+	_reset_run_modifiers()
 	_refresh_tech_scalars()
 	if ui != null and ui.has_method("hide_tech"):
 		ui.hide_tech()

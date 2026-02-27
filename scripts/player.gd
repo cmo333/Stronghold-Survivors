@@ -520,6 +520,27 @@ func _finish_death_animation() -> void:
 func is_dying() -> bool:
 	return _is_dying
 
+func clear_run_modifiers() -> void:
+	# Reset all run-scoped combat modifiers back to character baseline.
+	gun_pierce = 0
+	burst_level = 0
+	burst_every = 0
+	burst_spread = 0.25
+	slow_factor = 1.0
+	slow_duration = 0.0
+	explosive_radius = 0.0
+	_speed_bonus = 0.0
+	_max_health_bonus = 0.0
+	speed = _base_speed
+	max_health = _base_max_health
+	health = max_health
+	_shot_counter = 0
+	_berserk_active = false
+	_berserk_multiplier = 1.0
+	_berserk_timer = 0.0
+	_remove_berserk_glow()
+	apply_global_bonuses(0.0)
+
 func reset() -> void:
 	"""Reset player state for new game"""
 	_is_dying = false

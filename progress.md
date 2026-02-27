@@ -71,6 +71,9 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - added tower-focused chest upgrades in `scripts/treasure_chest.gd` (`tower_core_damage`, `tower_targeting`, `tower_barrage`, `orbital_matrix`).
 - wired chest tower damage/rate modifiers in `scripts/main.gd` via `chest_tower_damage_bonus` and `chest_tower_rate_mult`.
 - updated tower scalar calculations so chest tower upgrades stack cleanly with tech/building rate effects.
+- Added run-reset stability pass:
+- new `_reset_run_modifiers()` in `scripts/main.gd` to clear run-scoped chest/diamond modifiers each reset.
+- new `clear_run_modifiers()` in `scripts/player.gd` to clear run-scoped player weapon/combat modifiers.
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.
