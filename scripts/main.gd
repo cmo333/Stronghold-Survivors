@@ -264,6 +264,9 @@ var spawn_radius_min = 500.0
 var spawn_radius_max = 750.0
 var max_enemies_cap_base = 250
 var max_enemies_cap = 250
+const HORDE_MINUTE_MULT_STEP = 0.5  # +0.5x enemy pressure each minute
+const HORDE_MULT_MAX = 8.0
+const HORDE_CAP_HARD_LIMIT = 1200
 var max_projectiles = 150
 var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
@@ -1730,25 +1733,37 @@ func _handle_tech_input() -> void:
 	elif Input.is_action_just_pressed(TECH_REROLL_ACTION):
 		_try_reroll_tech()
 
+func _get_horde_count_multiplier(time_sec: float) -> float:
+	var minutes = int(floor(max(time_sec, 0.0) / 60.0))
+	return clampf(1.0 + float(minutes) * HORDE_MINUTE_MULT_STEP, 1.0, HORDE_MULT_MAX)
+
+func _scale_horde_enemy_count(base_count: int, time_sec: float) -> int:
+	var scaled = int(round(float(base_count) * _get_horde_count_multiplier(time_sec)))
+	return max(base_count, scaled)
+
 func _get_spawn_settings(time_sec: float) -> Dictionary:
+	var horde_mult = _get_horde_count_multiplier(time_sec)
 	if SPAWN_CURVE.is_empty():
 		return {
 			"interval": 1.2,
-			"max_enemies": 12,
+			"max_enemies": _scale_horde_enemy_count(12, time_sec),
 			"difficulty": 1.0,
 			"elite": 0.02,
-			"siege": 0.0
+			"siege": 0.0,
+			"horde_mult": horde_mult
 		}
 	var prev = SPAWN_CURVE[0]
 	var prev_time = float(prev.get("time", 0.0))
 	if time_sec <= prev_time:
 		var diff = float(prev.get("difficulty", 1.0)) * _get_threat_multiplier(time_sec)
+		var base_count = int(prev.get("max_enemies", 12))
 		return {
 			"interval": float(prev.get("interval", 1.2)),
-			"max_enemies": int(prev.get("max_enemies", 12)),
+			"max_enemies": _scale_horde_enemy_count(base_count, time_sec),
 			"difficulty": diff,
 			"elite": float(prev.get("elite", 0.02)),
-			"siege": float(prev.get("siege", 0.0))
+			"siege": float(prev.get("siege", 0.0)),
+			"horde_mult": horde_mult
 		}
 	for i in range(1, SPAWN_CURVE.size()):
 		var next = SPAWN_CURVE[i]
@@ -1759,23 +1774,27 @@ func _get_spawn_settings(time_sec: float) -> Dictionary:
 				t = clamp((time_sec - prev_time) / (next_time - prev_time), 0.0, 1.0)
 			var diff = lerp(float(prev.get("difficulty", 1.0)), float(next.get("difficulty", 1.0)), t)
 			diff *= _get_threat_multiplier(time_sec)
+			var base_count = int(round(lerp(float(prev.get("max_enemies", 12)), float(next.get("max_enemies", 12)), t)))
 			return {
 				"interval": lerp(float(prev.get("interval", 1.2)), float(next.get("interval", 1.2)), t),
-				"max_enemies": int(round(lerp(float(prev.get("max_enemies", 12)), float(next.get("max_enemies", 12)), t))),
+				"max_enemies": _scale_horde_enemy_count(base_count, time_sec),
 				"difficulty": diff,
 				"elite": lerp(float(prev.get("elite", 0.02)), float(next.get("elite", 0.02)), t),
-				"siege": lerp(float(prev.get("siege", 0.0)), float(next.get("siege", 0.0)), t)
+				"siege": lerp(float(prev.get("siege", 0.0)), float(next.get("siege", 0.0)), t),
+				"horde_mult": horde_mult
 			}
 		prev = next
 		prev_time = next_time
 	var last = SPAWN_CURVE[SPAWN_CURVE.size() - 1]
 	var diff = float(last.get("difficulty", 1.0)) * _get_threat_multiplier(time_sec)
+	var last_count = int(last.get("max_enemies", 12))
 	return {
 		"interval": float(last.get("interval", 1.2)),
-		"max_enemies": int(last.get("max_enemies", 12)),
+		"max_enemies": _scale_horde_enemy_count(last_count, time_sec),
 		"difficulty": diff,
 		"elite": float(last.get("elite", 0.02)),
-		"siege": float(last.get("siege", 0.0))
+		"siege": float(last.get("siege", 0.0)),
+		"horde_mult": horde_mult
 	}
 
 func _get_threat_multiplier(time_sec: float) -> float:
@@ -1788,7 +1807,9 @@ func _update_dynamic_caps() -> void:
 	var extra = 0
 	if elapsed > 300.0:
 		extra = int(clamp((elapsed - 300.0) / 60.0, 0.0, 20.0)) * 8
-	max_enemies_cap = max_enemies_cap_base + extra
+	var horde_mult = _get_horde_count_multiplier(elapsed)
+	var cap_target = int(round(float(max_enemies_cap_base + extra) * horde_mult))
+	max_enemies_cap = clampi(cap_target, max_enemies_cap_base, HORDE_CAP_HARD_LIMIT)
 
 func _count_elites() -> int:
 	var count = 0
@@ -1801,7 +1822,9 @@ func _count_elites() -> int:
 
 func _handle_spawning(delta: float) -> void:
 	var settings = _get_spawn_settings(elapsed)
-	var interval = max(0.26, float(settings.get("interval", 1.2)))
+	var base_interval = float(settings.get("interval", 1.2))
+	var horde_mult = float(settings.get("horde_mult", 1.0))
+	var interval = max(0.12, base_interval / max(1.0, horde_mult))
 	spawn_accumulator += delta
 	while spawn_accumulator >= interval:
 		spawn_accumulator -= interval

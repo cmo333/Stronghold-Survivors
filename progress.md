@@ -81,6 +81,9 @@ Original prompt: Find the existing Stronghold Survivors repo and start the visua
 - fixed freed-instance targeting crash by sanitizing tower enemy iteration in `scripts/tower.gd`.
 - expanded freed-reference guards in `scripts/player.gd` and `scripts/build_manager.gd` for typed group loops.
 - added `_refresh_cached_enemies()` in `scripts/main.gd` so shared enemy cache is filtered each frame before tower use.
+- Horde pressure pass:
+- enemy count now scales by `+0.5x` per elapsed minute in `scripts/main.gd` (`_get_horde_count_multiplier` + `_scale_horde_enemy_count`).
+- spawn interval now shrinks with horde multiplier (with floor), and dynamic cap scales with horde pressure (hard-capped to protect perf).
 
 ## TODO (Next Agent / Next Pass)
 - Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.
