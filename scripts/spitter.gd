@@ -60,7 +60,7 @@ func _physics_process(delta: float) -> void:
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if dist <= attack_range:
 		# Melee fallback if player is right on top
-		if _attack_cooldown <= 0.0:
+		if _attack_cooldown <= 0.0 and _has_attack_los(target):
 			if target.has_method("take_damage"):
 				target.take_damage(attack_damage)
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)

@@ -69,6 +69,12 @@ const HEALTH_BAR_OFFSET_Y = -22.0
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 var _base_color: Color = Color.WHITE
 
+# Per-hit feedback: white flinch flash + decaying knockback shove
+var _hit_flash_timer = 0.0
+var _hit_flash_duration = 0.0
+var _hit_flash_strength = 0.0
+var _knockback: Vector2 = Vector2.ZERO
+
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
 	var health_mult = 1.0
@@ -77,6 +83,8 @@ func setup(game_ref: Node, difficulty: float) -> void:
 	max_health = max_health * difficulty * health_mult
 	health = max_health
 	speed = speed * (1.0 + difficulty * 0.03) * 0.72  # 20% slower than current baseline
+	var damage_scale = 1.0 + max(0.0, difficulty - 1.35) * 0.28
+	attack_damage *= damage_scale
 
 func _ready() -> void:
 	add_to_group("enemies")
@@ -95,28 +103,41 @@ func _physics_process(delta: float) -> void:
 		return
 	if _game == null:
 		return
+	_tick_hit_flash(delta)
 	_tick_aura_bonus(delta)
 	_tick_elite(delta)
 	_tick_elite_glow_particles(delta)
+	# Knockback shove is independent of AI: it plays during stun/attack/move so
+	# every hit registers as a physical flinch, then decays back to zero.
+	var knockback_step := _consume_knockback(delta)
 	if _stun_timer > 0.0:
 		_stun_timer = max(0.0, _stun_timer - delta)
-		velocity = Vector2.ZERO
+		velocity = knockback_step
+		if knockback_step != Vector2.ZERO:
+			move_and_slide()
+		else:
+			velocity = Vector2.ZERO
 		_update_status_visuals()
 		return
 	var target = _find_target()
 	if target == null or not is_instance_valid(target):
+		if knockback_step != Vector2.ZERO:
+			velocity = knockback_step
+			move_and_slide()
 		return
 	var dist = global_position.distance_to(target.global_position)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if dist <= attack_range:
-		if _attack_cooldown <= 0.0:
+		if _attack_cooldown <= 0.0 and _has_attack_los(target):
 			if target.has_method("take_damage"):
 				target.take_damage(attack_damage)
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
-		velocity = Vector2.ZERO
+		velocity = knockback_step
+		if knockback_step != Vector2.ZERO:
+			move_and_slide()
 	else:
 		var dir: Vector2 = _get_move_direction(target.global_position, delta)
-		velocity = dir * speed * _slow_multiplier
+		velocity = dir * speed * _slow_multiplier + knockback_step
 		move_and_slide()
 	_update_status_visuals()
 
@@ -209,7 +230,31 @@ func _find_target() -> Node2D:
 		return best
 	return player
 
+func _has_attack_los(target: Node2D) -> bool:
+	"""True if no blocking building sits between this enemy and the target.
+
+	Prevents melee enemies from damaging the player/allies *through* maze walls
+	when they happen to be within attack_range on opposite sides of a structure.
+	Building targets (the enemy is attacking the wall itself) always have LOS.
+	"""
+	if target == null or not is_instance_valid(target):
+		return false
+	if target.is_in_group("buildings"):
+		return true
+	var world = get_world_2d()
+	if world == null:
+		return true
+	var params = PhysicsRayQueryParameters2D.create(global_position, target.global_position, GameLayers.BUILDING)
+	params.exclude = [self]
+	params.collide_with_areas = false
+	params.collide_with_bodies = true
+	var hit = world.direct_space_state.intersect_ray(params)
+	# A building between us and the target blocks the melee swing.
+	return hit.is_empty()
+
 func _create_health_bar() -> void:
+	if _health_bar_bg != null:
+		return
 	_health_bar_bg = ColorRect.new()
 	_health_bar_bg.size = Vector2(HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT)
 	_health_bar_bg.position = Vector2(-HEALTH_BAR_WIDTH / 2.0, HEALTH_BAR_OFFSET_Y)
@@ -240,7 +285,7 @@ func _update_health_bar() -> void:
 		else:
 			_health_bar_fill.color = Color(1.0, 0.9, 0.2, 0.9).lerp(Color(1.0, 0.2, 0.2, 0.9), 1.0 - ratio * 2.0)
 
-func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal", hit_dir: Vector2 = Vector2.ZERO) -> void:
 	if amount <= 0.0:
 		return
 	var hit_pos = hit_position
@@ -249,6 +294,21 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	var now_ms = Time.get_ticks_msec()
 	var will_die = health - amount <= 0.0
 	var is_crit = _is_crit_hit(amount)
+
+	# Per-hit flinch: white flash + a shove away from the impact. Skip if already
+	# dying so the death sequence owns the visuals.
+	if not _is_dying:
+		_trigger_hit_flash(is_crit)
+		var push_dir = hit_dir
+		if push_dir == Vector2.ZERO and hit_position != Vector2.ZERO:
+			push_dir = global_position - hit_position
+		if push_dir != Vector2.ZERO:
+			var kb = FeedbackConfig.HIT_KNOCKBACK_BASE
+			if is_crit:
+				kb *= FeedbackConfig.HIT_KNOCKBACK_CRIT_MULT
+			if will_die:
+				kb *= FeedbackConfig.HIT_KNOCKBACK_KILL_MULT
+			apply_knockback(push_dir, kb)
 
 	if will_die:
 		# Play death sound
@@ -264,6 +324,18 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 				var hit_kind = "hit"
 				if is_crit:
 					hit_kind = "crit"
+				else:
+					match damage_type:
+						"fire":
+							hit_kind = "fire_burst"
+						"ice":
+							hit_kind = "ice"
+						"lightning":
+							hit_kind = "chain_hit"
+						"acid", "poison":
+							hit_kind = "poison"
+						"bleed":
+							hit_kind = "blood"
 				_game.spawn_fx(hit_kind, hit_pos)
 			_last_hit_fx_ms = now_ms
 
@@ -303,11 +375,14 @@ func _start_death_sequence() -> void:
 		_game.spawn_fx("blood", global_position)
 		if FeedbackConfig.ENABLE_DEATH_FEEDBACK:
 			if is_elite or is_siege:
-				_game.spawn_fx("elite_kill", global_position)
+				if _game.has_method("spawn_setpiece_fx"):
+					_game.spawn_setpiece_fx("elite_death", global_position, 1.15 if is_siege else 1.0)
+				else:
+					_game.spawn_fx("elite_kill", global_position)
 			else:
 				_game.spawn_fx("kill_pop", global_position)
-		# Extra particle burst for satisfying death
-		_game.spawn_glow_burst_death(global_position, _base_color)
+			# Extra particle burst for satisfying death
+			_game.spawn_glow_burst_death(global_position, _base_color)
 	
 	# Use FX Manager for enhanced death effects if available
 	if _game != null and _game.fx_manager != null:
@@ -315,6 +390,12 @@ func _start_death_sequence() -> void:
 		if body != null and body is Sprite2D:
 			corpse_texture = (body as Sprite2D).texture
 		_game.fx_manager.spawn_death_effect(self, _base_color, corpse_texture)
+		# Gore spray on every kill for visceral, dopamine-rich feedback.
+		if _game.fx_manager.has_method("spawn_gore_particles"):
+			_game.fx_manager.spawn_gore_particles(global_position, _base_color)
+		# Heavies erupt in a bigger burst.
+		if (is_elite or is_siege) and _game.fx_manager.has_method("spawn_death_burst"):
+			_game.fx_manager.spawn_death_burst(global_position, _base_color, 16)
 
 	# Hide health bar on death
 	if _health_bar_bg != null:
@@ -492,6 +573,50 @@ func _update_status_visuals() -> void:
 	else:
 		body.modulate = _base_color
 
+func _trigger_hit_flash(is_crit: bool) -> void:
+	if not FeedbackConfig.ENABLE_HIT_FLASH or body == null:
+		return
+	if is_crit:
+		_hit_flash_duration = FeedbackConfig.HIT_FLASH_CRIT_DURATION
+		_hit_flash_strength = FeedbackConfig.HIT_FLASH_CRIT_STRENGTH
+	else:
+		_hit_flash_duration = FeedbackConfig.HIT_FLASH_DURATION
+		_hit_flash_strength = FeedbackConfig.HIT_FLASH_STRENGTH
+	_hit_flash_timer = _hit_flash_duration
+
+func _tick_hit_flash(delta: float) -> void:
+	if _hit_flash_timer <= 0.0 or body == null:
+		return
+	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
+	if _hit_flash_timer <= 0.0:
+		# Flash done: hand modulate back to the status-visual state machine.
+		_was_stunned = false
+		_was_slowed = false
+		_update_status_visuals()
+		return
+	# Owns body.modulate while active; fades the white tint out over its lifetime.
+	var t = _hit_flash_timer / max(0.001, _hit_flash_duration)
+	body.modulate = _base_color.lerp(Color.WHITE, _hit_flash_strength * t)
+
+func apply_knockback(dir: Vector2, strength: float) -> void:
+	if not FeedbackConfig.ENABLE_HIT_KNOCKBACK or dir == Vector2.ZERO or strength <= 0.0:
+		return
+	if is_siege:
+		strength *= FeedbackConfig.HIT_KNOCKBACK_SIEGE_RESIST
+	_knockback += dir.normalized() * strength
+	if _knockback.length() > FeedbackConfig.HIT_KNOCKBACK_MAX:
+		_knockback = _knockback.normalized() * FeedbackConfig.HIT_KNOCKBACK_MAX
+
+func _consume_knockback(delta: float) -> Vector2:
+	if _knockback == Vector2.ZERO:
+		return Vector2.ZERO
+	var step := _knockback
+	# Exponential decay so the shove settles smoothly rather than snapping.
+	_knockback = _knockback.lerp(Vector2.ZERO, clampf(FeedbackConfig.HIT_KNOCKBACK_DECAY * delta, 0.0, 1.0))
+	if _knockback.length() < 4.0:
+		_knockback = Vector2.ZERO
+	return step
+
 func apply_aura_bonus(amount: float, duration: float) -> void:
 	if amount <= 0.0 or duration <= 0.0:
 		return
@@ -535,59 +660,19 @@ func _spawn_split_minions() -> void:
 		return
 	_game.spawn_split_minions(global_position, _split_child_count)
 
-func _create_elite_glow(color: Color) -> void:
+func create_siege_threat_ring() -> void:
+	# Siege units get a steady red threat ring so the player can pick them
+	# out of the horde at a glance (they hit buildings hard and move slow).
 	if _elite_glow != null:
 		return
-	_elite_glow = Sprite2D.new()
-	_elite_glow.name = "EliteGlow"
-	_elite_glow.texture = ELITE_GLOW_TEXTURE
-	_elite_glow.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_elite_glow.z_index = -1
-	var mat = CanvasItemMaterial.new()
-	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_elite_glow.material = mat
-	add_child(_elite_glow)
-	var base_scale = Vector2.ONE * 2.0
-	if body != null and body is Node2D:
-		base_scale = (body as Node2D).scale * 1.35
-	_elite_glow.scale = base_scale
-	_elite_glow.modulate = Color(color.r, color.g, color.b, 0.55)
-	_start_elite_glow_pulse(base_scale, color)
+	_create_elite_glow(Color(1.0, 0.25, 0.2))
 
-func _start_elite_glow_pulse(base_scale: Vector2, color: Color) -> void:
-	if _elite_glow == null or not is_instance_valid(_elite_glow):
-		return
-	if not is_inside_tree() or not _elite_glow.is_inside_tree():
-		return
-	if _elite_glow_tween != null:
-		_elite_glow_tween.kill()
-	var dim = Color(color.r, color.g, color.b, 0.35)
-	var bright = Color(color.r, color.g, color.b, 0.7)
-	_elite_glow_tween = create_tween()
-	if _elite_glow_tween == null:
-		return
-	_elite_glow_tween.set_loops()
-	_elite_glow_tween.tween_property(_elite_glow, "scale", base_scale * 1.1, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_elite_glow_tween.parallel().tween_property(_elite_glow, "modulate", bright, 0.65)
-	_elite_glow_tween.tween_property(_elite_glow, "scale", base_scale, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_elite_glow_tween.parallel().tween_property(_elite_glow, "modulate", dim, 0.65)
+func _create_elite_glow(_color: Color) -> void:
+	# Aura/threat rings removed: in dense swarms the stacked ground rings buried the
+	# action and destroyed readability. Elites/siege stay identifiable via their
+	# tinted body. Gameplay aura buff logic (_process_aura) is unaffected.
+	return
 
-func _tick_elite_glow_particles(delta: float) -> void:
-	if not is_elite or _game == null or not _game.has_method("spawn_glow_particle"):
-		return
-	_elite_glow_timer += delta
-	if _elite_glow_timer < _elite_glow_interval:
-		return
-	_elite_glow_timer = 0.0
-	var glow_color = _base_color
-	match elite_modifier:
-		"aura":
-			glow_color = Color(1.0, 0.45, 0.25)
-		"regen":
-			glow_color = Color(0.35, 1.0, 0.55)
-		"splitter":
-			glow_color = Color(0.75, 0.65, 1.0)
-	glow_color = glow_color.lerp(Color.WHITE, 0.3)
-	var offset = Vector2.RIGHT.rotated(randf() * TAU) * randf_range(8.0, 18.0)
-	var vel = offset.normalized() * randf_range(12.0, 32.0)
-	_game.spawn_glow_particle(global_position + offset, glow_color, randf_range(6.0, 9.0), 0.5, vel, 1.8, 0.65, 1.0, 0)
+func _tick_elite_glow_particles(_delta: float) -> void:
+	# Aura/threat glow particles removed alongside the rings for swarm readability.
+	return

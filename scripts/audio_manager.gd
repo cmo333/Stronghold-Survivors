@@ -68,17 +68,22 @@ func _ready() -> void:
 	_update_bus_volumes()
 
 func _any_audio_exists() -> bool:
-	"""Quick check — do any of our audio directories have files?"""
-	for dir_path in ["res://assets/audio/sfx", "res://assets/audio/ui", "res://assets/audio/special"]:
-		if DirAccess.dir_exists_absolute(dir_path):
-			var dir = DirAccess.open(dir_path)
-			if dir != null:
-				dir.list_dir_begin()
-				var file = dir.get_next()
-				while file != "":
-					if not dir.current_is_dir() and (file.ends_with(".wav") or file.ends_with(".ogg") or file.ends_with(".mp3")):
-						return true
-					file = dir.get_next()
+	"""Do any of our known audio resources exist?
+
+	Probe known imported audio resources instead of scanning the raw filesystem.
+	In web/.pck exports the raw .wav source files are NOT packed (only the imported
+	.sample + .import remap), so a DirAccess scan finds nothing and disables all
+	audio. ResourceLoader.exists() honors the import remap and works on desktop
+	AND web. The probe paths mirror one entry per category in _cache_sounds().
+	"""
+	var probe_paths = [
+		"res://assets/audio/sfx/gun_fire_01.wav",
+		"res://assets/audio/ui/click.wav",
+		"res://assets/audio/special/chest_open.wav",
+	]
+	for path in probe_paths:
+		if ResourceLoader.exists(path):
+			return true
 	return false
 
 func _setup_audio_buses() -> void:
@@ -399,22 +404,38 @@ func set_ui_volume(volume: float) -> void:
 
 func _update_bus_volumes() -> void:
 	"""Update all audio bus volumes"""
-	AudioServer.set_bus_volume_db(master_bus, linear_to_db(master_volume))
-	AudioServer.set_bus_volume_db(sfx_bus, linear_to_db(sfx_volume))
-	AudioServer.set_bus_volume_db(music_bus, linear_to_db(music_volume))
-	AudioServer.set_bus_volume_db(ui_bus, linear_to_db(ui_volume))
+	if not audio_enabled:
+		return
+	var bus_count := AudioServer.get_bus_count()
+	if master_bus >= 0 and master_bus < bus_count:
+		AudioServer.set_bus_volume_db(master_bus, linear_to_db(master_volume))
+	if sfx_bus >= 0 and sfx_bus < bus_count:
+		AudioServer.set_bus_volume_db(sfx_bus, linear_to_db(sfx_volume))
+	if music_bus >= 0 and music_bus < bus_count:
+		AudioServer.set_bus_volume_db(music_bus, linear_to_db(music_volume))
+	if ui_bus >= 0 and ui_bus < bus_count:
+		AudioServer.set_bus_volume_db(ui_bus, linear_to_db(ui_volume))
 
 func mute_all(muted: bool) -> void:
 	"""Mute or unmute all audio"""
-	AudioServer.set_bus_mute(master_bus, muted)
+	if not audio_enabled:
+		return
+	if master_bus >= 0 and master_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(master_bus, muted)
 
 func mute_sfx(muted: bool) -> void:
 	"""Mute or unmute SFX bus"""
-	AudioServer.set_bus_mute(sfx_bus, muted)
+	if not audio_enabled:
+		return
+	if sfx_bus >= 0 and sfx_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(sfx_bus, muted)
 
 func mute_music(muted: bool) -> void:
 	"""Mute or unmute Music bus"""
-	AudioServer.set_bus_mute(music_bus, muted)
+	if not audio_enabled:
+		return
+	if music_bus >= 0 and music_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(music_bus, muted)
 
 # ============================================
 # SPATIAL AUDIO

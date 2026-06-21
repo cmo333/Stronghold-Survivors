@@ -61,10 +61,10 @@ func _physics_process(delta: float) -> void:
 func _boss_behavior(delta: float) -> void:
 	super._physics_process(delta)
 
-func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal", hit_dir: Vector2 = Vector2.ZERO) -> void:
 	if not is_boss_active or _is_dying:
 		return
-	super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
+	super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type, hit_dir)
 
 func _start_death_sequence() -> void:
 	if not is_boss_active:

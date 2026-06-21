@@ -249,15 +249,15 @@ func _update_shield(delta: float) -> void:
 		var shield_percent = _current_shield / _max_shield
 		_shield_visual.modulate.a = 0.3 + shield_percent * 0.4
 
-func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal", hit_dir: Vector2 = Vector2.ZERO) -> void:
 	"""Override damage to handle shield"""
 	if not is_boss_active or _is_dying:
 		return
-	
+
 	# Tesla/lightning bypasses shield
 	if damage_type == "lightning" or damage_type == "tesla":
 		# Full damage bypasses shield
-		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
+		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type, hit_dir)
 		return
 	
 	# Shield absorbs damage
@@ -288,7 +288,7 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	
 	# Remaining damage goes to health
 	if amount > 0:
-		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
+		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type, hit_dir)
 
 func _perform_attack(target: Node2D) -> void:
 	_deal_damage(target, attack_damage, global_position, true)

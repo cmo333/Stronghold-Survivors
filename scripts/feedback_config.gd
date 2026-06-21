@@ -10,7 +10,7 @@ const ENABLE_DEATH_FEEDBACK = true
 # Damage numbers: pacing + readability
 const DAMAGE_NUMBER_MIN = 1.0
 const DAMAGE_NUMBER_COOLDOWN = 0.08 # seconds, per target
-const DAMAGE_NUMBER_BUDGET_PER_SEC = 18
+const DAMAGE_NUMBER_BUDGET_PER_SEC = 28
 const DAMAGE_NUMBER_LIFETIME = 0.8
 const DAMAGE_NUMBER_CRIT_LIFETIME = 1.1
 const DAMAGE_NUMBER_DOT_LIFETIME = 0.45
@@ -19,12 +19,12 @@ const DAMAGE_NUMBER_CRIT_RISE = 32.0
 const DAMAGE_NUMBER_DOT_RISE = 12.0
 const DAMAGE_NUMBER_JITTER_X = 10.0
 const DAMAGE_NUMBER_JITTER_Y = 6.0
-const DAMAGE_NUMBER_SCALE_MIN = 0.9
-const DAMAGE_NUMBER_SCALE_MAX = 1.55
-const DAMAGE_NUMBER_CRIT_SCALE_BONUS = 0.3
-const DAMAGE_NUMBER_KILL_SCALE_BONUS = 0.2
-const DAMAGE_NUMBER_ELITE_KILL_SCALE_BONUS = 0.5
-const DAMAGE_NUMBER_SIZE_MULT = 1.5
+const DAMAGE_NUMBER_SCALE_MIN = 0.95
+const DAMAGE_NUMBER_SCALE_MAX = 1.9
+const DAMAGE_NUMBER_CRIT_SCALE_BONUS = 0.55
+const DAMAGE_NUMBER_KILL_SCALE_BONUS = 0.35
+const DAMAGE_NUMBER_ELITE_KILL_SCALE_BONUS = 0.8
+const DAMAGE_NUMBER_SIZE_MULT = 1.65
 const DAMAGE_NUMBER_POP_START = 0.6
 const DAMAGE_NUMBER_POP_TIME = 0.1
 const DAMAGE_NUMBER_POP_OVERSHOOT = 1.18
@@ -39,7 +39,7 @@ const DAMAGE_NUMBER_CRIT_FONT_SIZE = 24
 const DAMAGE_NUMBER_ROTATION_MAX = 0.06
 
 const DAMAGE_NUMBER_FONT_PATH = "res://assets/ui/pixel_font.ttf"
-const DAMAGE_NUMBER_OUTLINE_SIZE = 1
+const DAMAGE_NUMBER_OUTLINE_SIZE = 2
 const DAMAGE_NUMBER_OUTLINE_COLOR = Color(0.043, 0.043, 0.043, 1.0)
 
 const DAMAGE_COLOR_NORMAL = Color(1.0, 1.0, 1.0)
@@ -56,15 +56,15 @@ const DAMAGE_COLOR_SHADOW = Color(0.416, 0.173, 1.0)
 const DAMAGE_COLOR_ARCANE = Color(0.271, 0.949, 1.0)
 
 # Time scale accents
-const KILL_SLOW_TIME_SCALE = 0.6
-const KILL_SLOW_DURATION = 0.06
+const KILL_SLOW_TIME_SCALE = 0.45
+const KILL_SLOW_DURATION = 0.08
 const TECH_SLOW_TIME_SCALE = 0.2
 
 # Screen shake
-const SCREEN_SHAKE_PLAYER_HIT = 6.0
-const SCREEN_SHAKE_BUILDING_DESTROY = 10.0
-const SCREEN_SHAKE_EXPLOSION = 8.0
-const SCREEN_SHAKE_DURATION = 0.18
+const SCREEN_SHAKE_PLAYER_HIT = 8.5
+const SCREEN_SHAKE_BUILDING_DESTROY = 14.0
+const SCREEN_SHAKE_EXPLOSION = 11.0
+const SCREEN_SHAKE_DURATION = 0.22
 
 const DAMAGE_TYPE_COLORS = {
 	"normal": DAMAGE_COLOR_NORMAL,
@@ -94,6 +94,22 @@ const PLAYER_HIT_SPARK_COOLDOWN = 0.12
 # Hitstop (crit freeze frame)
 const HITSTOP_TIME_SCALE = 0.05
 const HITSTOP_DURATION = 0.1
+
+# Per-hit enemy flinch (white flash on every hit, scaled by crit/kill)
+const ENABLE_HIT_FLASH = true
+const HIT_FLASH_DURATION = 0.07          # normal hit flash length (s)
+const HIT_FLASH_CRIT_DURATION = 0.12     # crit flash lingers a touch longer
+const HIT_FLASH_STRENGTH = 0.65          # 0..1 lerp toward white on a normal hit
+const HIT_FLASH_CRIT_STRENGTH = 1.0      # crits flash full white
+
+# Per-hit knockback impulse (decaying push along the hit direction)
+const ENABLE_HIT_KNOCKBACK = true
+const HIT_KNOCKBACK_BASE = 70.0          # px/s impulse on a normal hit
+const HIT_KNOCKBACK_CRIT_MULT = 1.8      # crits shove harder
+const HIT_KNOCKBACK_KILL_MULT = 1.4      # the killing blow shoves the corpse
+const HIT_KNOCKBACK_DECAY = 9.0          # higher = snappier settle
+const HIT_KNOCKBACK_MAX = 260.0          # clamp so big hits don't fling across screen
+const HIT_KNOCKBACK_SIEGE_RESIST = 0.35  # heavy/siege units barely flinch
 
 # Death animation timings
 const DEATH_FLASH_DURATION = 0.1
@@ -127,12 +143,12 @@ const PROJECTILE_TRAIL_FADE_TIME = 0.3
 const PROJECTILE_TRAIL_WIDTH = 3.0
 const PROJECTILE_TRAIL_MAX_POINTS = 12
 
-const IMPACT_SPARK_COUNT_MIN = 4
-const IMPACT_SPARK_COUNT_MAX = 8
-const IMPACT_SPARK_COUNT_CRIT = 14
+const IMPACT_SPARK_COUNT_MIN = 6
+const IMPACT_SPARK_COUNT_MAX = 12
+const IMPACT_SPARK_COUNT_CRIT = 22
 const GROUND_CRACK_FADE_TIME = 2.0
 
-const DEATH_PARTICLE_COUNT = 12
+const DEATH_PARTICLE_COUNT = 20
 const CORPSE_FADE_TIME = 1.0
 
 const SHOCKWAVE_EXPAND_TIME = 0.4
