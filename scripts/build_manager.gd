@@ -215,6 +215,7 @@ func _try_place() -> void:
 	var status = _evaluate_placement(pos, def)
 	if not status["can_place"]:
 		_set_selection_text(status["reason"])
+		AudioManager.play_ui_sound("error")
 		return
 	var cost = int(status["cost"])
 	var scene_path: String = str(def.get("scene", ""))
@@ -237,6 +238,7 @@ func _try_place() -> void:
 		# Track tower built
 		if game.has_method("track_tower_built"):
 			game.track_tower_built()
+	AudioManager.play_one_shot("build_place", pos)
 	_set_selection_text("Built %s" % def.get("name", current_id))
 
 func _try_select() -> void:
@@ -287,6 +289,7 @@ func _try_upgrade_selected() -> void:
 	var can_afford = game != null and game.can_afford(upgrade_cost)
 	if not can_afford:
 		_set_selection_text("Not enough resources")
+		AudioManager.play_ui_sound("error")
 		return
 
 	# Store position before upgrade (in case building dies)
@@ -330,6 +333,7 @@ func _try_upgrade_selected() -> void:
 				var shake = 4.0 + tier * 2.0
 				game.shake_camera(shake, 0.3)
 
+		AudioManager.play_ui_sound("upgrade")
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 		_show_upgrade_panel()
@@ -412,6 +416,7 @@ func _try_sell_selected() -> void:
 	_clear_selection()
 	_hide_upgrade_panel()
 	bld.sell()
+	AudioManager.play_ui_sound("build_sell")
 	_set_selection_text("Sold for %d resources" % refund)
 
 func _describe_building(building: Node) -> String:

@@ -24,6 +24,13 @@ func _ready() -> void:
 	_ui_font = _load_font()
 	_apply_fonts()
 	_setup_visuals()
+	if skull_icon != null and skull_icon.texture == null:
+		var skull_path = "res://assets/ui/ui_icon_skull_32_v001.png"
+		if ResourceLoader.exists(skull_path):
+			skull_icon.texture = load(skull_path)
+			skull_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			skull_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			skull_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_hide_game_over()
 	
 	try_again_btn.pressed.connect(_on_try_again)
@@ -50,14 +57,18 @@ func show_game_over(stats: Dictionary, is_new_record: bool = false) -> void:
 	# Show new record label if applicable
 	new_record_label.visible = is_new_record
 	
-	# Show the panel with animation
+	# Show the panel with animation: fade + slight scale settle
 	visible = true
 	$Panel.modulate = Color(1, 1, 1, 0)
-	
+	$Panel.pivot_offset = $Panel.size * 0.5
+	$Panel.scale = Vector2(1.06, 1.06)
+
 	if not is_inside_tree():
 		return
 	var tween = create_tween()
+	tween.set_parallel(true)
 	tween.tween_property($Panel, "modulate", Color(1, 1, 1, 1), 0.5).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property($Panel, "scale", Vector2.ONE, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	
 	# Animate stats appearing one by one
 	_animate_stats_appear()

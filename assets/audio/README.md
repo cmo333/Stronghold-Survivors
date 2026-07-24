@@ -136,13 +136,19 @@ The following scripts have audio integrated:
 | `resource_generator.gd` | Building hit, generator destroyed |
 | `game_over_ui.gd` | Button hover and click |
 
-## Placeholder Audio Generation
+## Audio Generation
 
-Run the audio placeholder generator from Godot Editor:
+All SFX and music are procedurally synthesized by `tools/audio/generate_audio.py`
+(numpy + scipy + soundfile). The generated WAV/OGG files are checked into
+`assets/audio/`. To regenerate or tweak the sound set:
 
-1. Open the script: `scripts/audio_placeholder_generator.gd`
-2. Select File > Run > AudioPlaceholderGenerator
-3. This will generate synthesized WAV files in `assets/audio/`
+```bash
+pip install numpy scipy soundfile
+python3 tools/audio/generate_audio.py
+```
+
+The whole palette is tuned around A minor so it hangs together; edit the
+synth recipes in that script to reshape individual sounds.
 
 ## Adding New Sounds
 

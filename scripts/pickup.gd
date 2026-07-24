@@ -10,6 +10,7 @@ var magnet_radius = 120.0
 var magnet_speed = 240.0
 var _player: Node2D = null
 var _pulse_tween: Tween = null
+var _collected: bool = false
 @onready var sprite: Sprite2D = $Body
 
 func setup(game_ref: Node, amount: int, kind_name: String = "gold") -> void:
@@ -37,9 +38,10 @@ func _process(delta: float) -> void:
         global_position += dir * magnet_speed * delta
 
 func _on_body_entered(body: Node) -> void:
-    if body == null:
+    if body == null or _collected:
         return
     if body.is_in_group("player"):
+        _collected = true
         if _game != null:
             if kind == "heal":
                 if _game.has_method("heal_player"):
@@ -49,7 +51,25 @@ func _on_body_entered(body: Node) -> void:
                     _game.add_essence(value)
             else:
                 _game.add_resources(value)
+        AudioManager.play_pickup_sound(kind, global_position)
+        _play_collect_pop()
+
+func _play_collect_pop() -> void:
+    # Quick pop-and-fade so collection reads as an event, not a vanish
+    set_deferred("monitoring", false)
+    set_process(false)
+    if _pulse_tween != null:
+        _pulse_tween.kill()
+        _pulse_tween = null
+    if sprite == null or not is_inside_tree():
         queue_free()
+        return
+    var tween = create_tween()
+    tween.set_parallel(true)
+    tween.tween_property(sprite, "scale", sprite.scale * 1.6, 0.09).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+    tween.tween_property(sprite, "modulate:a", 0.0, 0.11).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+    tween.tween_property(sprite, "position:y", sprite.position.y - 10.0, 0.11).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+    tween.chain().tween_callback(queue_free)
 
 func _apply_visual() -> void:
     if sprite == null:
@@ -59,6 +79,13 @@ func _apply_visual() -> void:
         _pulse_tween = null
     if kind == "heal":
         sprite.texture = HEAL_TEX
+        sprite.modulate = Color(0.5, 1.0, 0.6, 1.0)  # Green tint
+        if not is_inside_tree() or not sprite.is_inside_tree():
+            return
+        _pulse_tween = create_tween()
+        _pulse_tween.set_loops()
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE * 1.15, 0.55).set_trans(Tween.TRANS_SINE)
+        _pulse_tween.tween_property(sprite, "scale", Vector2.ONE, 0.55).set_trans(Tween.TRANS_SINE)
     elif kind == "essence":
         sprite.texture = HEAL_TEX  # Reuse crystal texture
         sprite.modulate = Color(0.7, 0.3, 1.0, 1.0)  # Purple tint

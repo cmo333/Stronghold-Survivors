@@ -2,8 +2,9 @@ extends Control
 
 const MAP_SIZE = Vector2(140, 140)
 const MAP_MARGIN = 10.0
-const BG_COLOR = Color(0.1, 0.1, 0.1, 0.6)
-const BORDER_COLOR = Color(1.0, 1.0, 1.0, 1.0)
+const BG_COLOR = Color(0.06, 0.06, 0.09, 0.72)
+const BORDER_COLOR = Color(0.62, 0.52, 0.36, 0.95)  # aged brass, matches HUD frames
+const BORDER_INNER_COLOR = Color(0.0, 0.0, 0.0, 0.55)
 
 const PLAYER_COLOR = Color(1.0, 1.0, 1.0)
 const ENEMY_COLOR = Color(1.0, 0.2, 0.2)
@@ -63,7 +64,9 @@ func _refresh_refs() -> void:
 func _draw() -> void:
 	var rect = Rect2(Vector2.ZERO, size)
 	draw_rect(rect, BG_COLOR, true)
-	draw_rect(rect, BORDER_COLOR, false, 1.0)
+	# Double border: dark inset + brass outline to match the HUD panel art
+	draw_rect(rect.grow(-1.0), BORDER_INNER_COLOR, false, 1.0)
+	draw_rect(rect, BORDER_COLOR, false, 2.0)
 
 	if _player == null or not is_instance_valid(_player):
 		_refresh_refs()

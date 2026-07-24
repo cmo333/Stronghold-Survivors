@@ -250,35 +250,24 @@ func spawn_environmental_particles(zone_type: String = "grass") -> void:
     
     match zone_type:
         "grass":
-            _spawn_fireflies()
+            _spawn_ambient_system("setup_fireflies")
         "wasteland":
-            _spawn_embers()
+            _spawn_ambient_system("setup_embers")
         _:
-            _spawn_dust_motes()
+            _spawn_ambient_system("setup_dust")
 
-func _spawn_fireflies() -> void:
-    """Floating fireflies in grass zones"""
+func _spawn_ambient_system(setup_method: String) -> void:
+    """Spawn an ambient particle system that follows the player and adapts to biome"""
     var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
     _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_fireflies"):
-        dust_system.setup_fireflies()
 
-func _spawn_embers() -> void:
-    """Floating embers in wasteland zones"""
-    var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
-    _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_embers"):
-        dust_system.setup_embers()
-
-func _spawn_dust_motes() -> void:
-    """Dust particles floating in light"""
-    var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
-    _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_dust"):
-        dust_system.setup_dust()
+    if dust_system.has_method(setup_method):
+        dust_system.call(setup_method)
+    # Track the player so ambience is everywhere, not just near spawn
+    if dust_system.has_method("setup_follow") and _game != null:
+        var player = _game.get("player")
+        if player != null:
+            dust_system.setup_follow(player, _game)
 
 func spawn_generator_smoke(generator_position: Vector2) -> void:
     """Smoke trail from resource generator"""

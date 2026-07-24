@@ -875,6 +875,9 @@ func _ready() -> void:
 		if ui.has_method("set_start_options"):
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
+	# Audio: brooding menu music + ambient wind under the start screen
+	AudioManager.play_music("menu_theme", 1.5)
+	AudioManager.play_ambient("wind", 4.0, -16.0)
 	_setup_minimap()
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
@@ -883,6 +886,7 @@ func _ready() -> void:
 	add_child(wave_manager)
 	if wave_manager.has_method("setup"):
 		wave_manager.setup(self, ui)
+	_setup_world_ambience()
 	_spawn_props()
 	_spawn_initial_breakables()
 	_spawn_environmental_particles()
@@ -958,8 +962,9 @@ func _start_game() -> void:
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("SURVIVE", Color(1.0, 1.0, 1.0), 48, 2.4)
 	_refresh_build_palette()
-	# Audio: Wave/Game start sound
+	# Audio: Wave/Game start sound + switch to battle music
 	AudioManager.play_ui_sound("wave_start")
+	AudioManager.play_music("battle_theme", 2.5)
 
 func _setup_minimap() -> void:
 	if minimap != null and is_instance_valid(minimap):
@@ -2237,6 +2242,7 @@ func _on_main_menu_pressed() -> void:
 	# Show start screen
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(true)
+	AudioManager.play_music("menu_theme", 1.5)
 
 func _on_stats_pressed() -> void:
 	"""Show detailed stats (could expand to show charts)"""
@@ -2528,6 +2534,19 @@ func _spawn_clusters() -> void:
 		sprite.global_position = pos
 		props_root.add_child(sprite)
 
+func _setup_world_ambience() -> void:
+	"""Subtle cool-dark tint over the world canvas unifies the palette.
+	UI lives on CanvasLayers so it is unaffected."""
+	var world = get_node_or_null("World")
+	if world == null:
+		return
+	if world.get_node_or_null("AmbientTint") != null:
+		return
+	var tint = CanvasModulate.new()
+	tint.name = "AmbientTint"
+	tint.color = Color(0.93, 0.92, 1.0)
+	world.add_child(tint)
+
 func _spawn_environmental_particles() -> void:
 	"""Spawn ambient environmental particles based on zone type"""
 	if fx_manager == null:
@@ -2800,6 +2819,19 @@ func trigger_hitstop() -> void:
 	Engine.time_scale = FeedbackConfig.HITSTOP_TIME_SCALE
 	_time_scale_tween = create_tween()
 	_time_scale_tween.tween_property(Engine, "time_scale", 1.0, FeedbackConfig.HITSTOP_DURATION).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+func trigger_kill_slow() -> void:
+	"""Brief, subtle time dip on big kills (elites/siege) — softer than a crit hitstop."""
+	if game_over or not game_started:
+		return
+	# Don't fight a stronger active hitstop
+	if Engine.time_scale < FeedbackConfig.KILL_SLOW_TIME_SCALE:
+		return
+	if _time_scale_tween != null:
+		_time_scale_tween.kill()
+	Engine.time_scale = FeedbackConfig.KILL_SLOW_TIME_SCALE
+	_time_scale_tween = create_tween()
+	_time_scale_tween.tween_property(Engine, "time_scale", 1.0, FeedbackConfig.KILL_SLOW_DURATION * 3.0).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 # Damage flash - chromatic aberration effect
 func trigger_damage_flash() -> void:
