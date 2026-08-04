@@ -5,6 +5,12 @@ var structure_id = ""
 var definition: Dictionary = {}
 var tier = 0
 
+# Multiplayer ownership. Solo: stays 1 (no effect). FFA: the builder's peer_id.
+# When that player dies or leaves, the host sets `inert = true` so this building
+# stops firing / generating income (see tower.gd / resource_generator.gd).
+var owner_id: int = 1
+var inert: bool = false
+
 var max_health = 40.0
 var health = 40.0
 var footprint_radius = 12.0
@@ -42,11 +48,13 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	health = max_health
 
 func take_damage(amount: float) -> void:
+	var game_node = get_tree().get_first_node_in_group("game")
+	if game_node != null and game_node.has_method("is_damage_blocked") and game_node.is_damage_blocked():
+		return
 	health -= amount
 	if health <= 0.0:
-		var game = get_tree().get_first_node_in_group("game")
-		if game != null and game.has_method("shake_camera"):
-			game.shake_camera(FeedbackConfig.SCREEN_SHAKE_BUILDING_DESTROY)
+		if game_node != null and game_node.has_method("shake_camera"):
+			game_node.shake_camera(FeedbackConfig.SCREEN_SHAKE_BUILDING_DESTROY)
 		queue_free()
 
 func heal(amount: float) -> void:

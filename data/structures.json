@@ -27,7 +27,7 @@
         "pierce_count": 1
       },
       {
-        "cost": 120,
+        "cost": 64,
         "health": 75,
         "range": 306,
         "fire_rate": 1.5,
@@ -71,7 +71,7 @@
         "burn_effect": false
       },
       {
-        "cost": 150,
+        "cost": 95,
         "health": 95,
         "range": 246,
         "fire_rate": 0.8,
@@ -113,7 +113,7 @@
         "stun_chance": 0.0
       },
       {
-        "cost": 160,
+        "cost": 105,
         "health": 90,
         "range": 238,
         "fire_rate": 1.3,
@@ -124,6 +124,95 @@
       }
     ],
     "preview": "res://assets/ui_build_icons/ui_build_tesla_32_v001.png"
+  },
+  "spike_burst_tower": {
+    "name": "Spike Burst Tower",
+    "type": "tower",
+    "scene": "res://scenes/buildings/spike_burst_tower.tscn",
+    "footprint_radius": 16,
+    "blocks_path": true,
+    "tiers": [
+      {
+        "cost": 32,
+        "health": 46,
+        "range": 162,
+        "fire_rate": 0.72,
+        "damage": 7,
+        "projectile_speed": 760,
+        "projectile_range": 178,
+        "burst_count": 8,
+        "projectile_pierce": 0
+      },
+      {
+        "cost": 52,
+        "health": 68,
+        "range": 176,
+        "fire_rate": 0.84,
+        "damage": 9,
+        "projectile_speed": 810,
+        "projectile_range": 194,
+        "burst_count": 10,
+        "projectile_pierce": 0
+      },
+      {
+        "cost": 104,
+        "health": 96,
+        "range": 190,
+        "fire_rate": 0.95,
+        "damage": 12,
+        "projectile_speed": 860,
+        "projectile_range": 210,
+        "burst_count": 12,
+        "projectile_pierce": 1
+      }
+    ],
+    "preview": "res://assets/ui_build_icons/ui_build_ice_trap_32_v001.png"
+  },
+  "flamethrower_tower": {
+    "name": "Flamethrower Tower",
+    "type": "tower",
+    "scene": "res://scenes/buildings/flamethrower_tower.tscn",
+    "footprint_radius": 16,
+    "blocks_path": true,
+    "tiers": [
+      {
+        "cost": 34,
+        "health": 52,
+        "range": 170,
+        "fire_rate": 4.8,
+        "damage": 5,
+        "projectile_speed": 1,
+        "projectile_range": 1,
+        "flame_length": 142,
+        "flame_cone_deg": 52,
+        "max_targets": 8
+      },
+      {
+        "cost": 56,
+        "health": 74,
+        "range": 182,
+        "fire_rate": 5.6,
+        "damage": 6,
+        "projectile_speed": 1,
+        "projectile_range": 1,
+        "flame_length": 164,
+        "flame_cone_deg": 50,
+        "max_targets": 10
+      },
+      {
+        "cost": 112,
+        "health": 102,
+        "range": 196,
+        "fire_rate": 6.4,
+        "damage": 7,
+        "projectile_speed": 1,
+        "projectile_range": 1,
+        "flame_length": 186,
+        "flame_cone_deg": 48,
+        "max_targets": 12
+      }
+    ],
+    "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v001.png"
   },
   "mine_trap": {
     "name": "Mine Trap",
@@ -196,6 +285,32 @@
       }
     ],
     "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v001.png"
+  },
+  "spike_trap": {
+    "name": "Spike Trap",
+    "type": "trap",
+    "scene": "res://scenes/buildings/spike_trap.tscn",
+    "footprint_radius": 12,
+    "blocks_path": false,
+    "tiers": [
+      {
+        "cost": 14,
+        "health": 1,
+        "trigger_radius": 24,
+        "damage": 20,
+        "pulse_radius": 56,
+        "stun_duration": 0.25
+      },
+      {
+        "cost": 22,
+        "health": 1,
+        "trigger_radius": 28,
+        "damage": 30,
+        "pulse_radius": 72,
+        "stun_duration": 0.4
+      }
+    ],
+    "preview": "res://assets/ui_build_icons/ui_build_mine_trap_32_v001.png"
   },
   "wall": {
     "name": "Wall",
@@ -344,46 +459,46 @@
     "preview": "res://assets/ui_build_icons/ui_build_tech_lab_32_v001.png"
   },
   "shrine": {
-    "name": "Shrine",
+    "name": "Stargate",
     "type": "utility",
     "scene": "res://scenes/buildings/shrine.tscn",
     "footprint_radius": 16,
     "blocks_path": true,
     "tiers": [
       {
-        "cost": 30,
-        "health": 70,
+        "cost": 38,
+        "health": 110,
         "heal_amount": 4,
-        "heal_radius": 140,
+        "heal_radius": 150,
         "interval": 4.0,
-        "summon_interval": 30.0,
-        "demon_health": 160,
-        "demon_damage": 24,
-        "demon_speed": 125,
-        "demon_attack_rate": 1.0,
-        "demon_attack_range": 24,
+        "summon_interval": 28.0,
+        "demon_health": 220,
+        "demon_damage": 34,
+        "demon_speed": 118,
+        "demon_attack_rate": 0.95,
+        "demon_attack_range": 34,
         "caster_chance": 0.35,
-        "caster_aoe_radius": 70,
-        "caster_aoe_damage": 36
+        "caster_aoe_radius": 96,
+        "caster_aoe_damage": 54
       },
       {
-        "cost": 50,
-        "health": 100,
+        "cost": 62,
+        "health": 155,
         "heal_amount": 6,
-        "heal_radius": 160,
-        "interval": 3.5,
-        "summon_interval": 25.0,
-        "demon_health": 190,
-        "demon_damage": 30,
-        "demon_speed": 130,
-        "demon_attack_rate": 1.2,
-        "demon_attack_range": 26,
-        "caster_chance": 0.45,
-        "caster_aoe_radius": 85,
-        "caster_aoe_damage": 44
+        "heal_radius": 175,
+        "interval": 3.4,
+        "summon_interval": 24.0,
+        "demon_health": 280,
+        "demon_damage": 42,
+        "demon_speed": 122,
+        "demon_attack_rate": 1.08,
+        "demon_attack_range": 38,
+        "caster_chance": 0.48,
+        "caster_aoe_radius": 118,
+        "caster_aoe_damage": 68
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_shrine_32_v001.png"
+    "preview": "res://assets/ui_build_icons/ui_build_stargate_32_v001.png"
   },
   "stronghold_core": {
     "name": "Stronghold Core",

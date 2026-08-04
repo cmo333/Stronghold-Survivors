@@ -7,8 +7,14 @@ signal quit_to_menu
 signal quit_to_desktop
 
 @onready var panel: Panel = $Panel
+@onready var background: ColorRect = $Background
+@onready var title_label: Label = $Panel/Title
+@onready var hint_label: Label = $Panel/Hint
+@onready var stats_title: Label = $Panel/StatsContainer/StatsTitle
+@onready var powerups_title: Label = $Panel/PowerupsContainer/PowerupsTitle
 @onready var resume_button: Button = $Panel/VBoxContainer/ResumeButton
 @onready var settings_button: Button = $Panel/VBoxContainer/SettingsButton
+@onready var quality_button: Button = $Panel/VBoxContainer/QualityButton
 @onready var quit_menu_button: Button = $Panel/VBoxContainer/QuitMenuButton
 @onready var quit_desktop_button: Button = $Panel/VBoxContainer/QuitDesktopButton
 @onready var stats_container: VBoxContainer = $Panel/StatsContainer
@@ -18,10 +24,27 @@ signal quit_to_desktop
 @onready var level_label: Label = $Panel/StatsContainer/LevelLabel
 @onready var wave_label: Label = $Panel/StatsContainer/WaveLabel
 @onready var health_label: Label = $Panel/StatsContainer/HealthLabel
+@onready var quality_label: Label = $Panel/StatsContainer/QualityLabel
+@onready var perf_label: Label = $Panel/StatsContainer/PerfLabel
 @onready var powerups_container: VBoxContainer = $Panel/PowerupsContainer
 @onready var powerups_list: Label = $Panel/PowerupsContainer/PowerupsList
 
 var game: Node = null
+const QUALITY_ORDER = ["low", "medium", "high", "ultra"]
+
+# ---- Gothic-arcade styling (matches main_menu.gd) ----
+const FONT_PIXEL := "res://assets/ui/pixel_font.ttf"
+const PANEL_FRAME := "res://assets/ui/ui_panel_frame_large_512x256_v001.png"
+const BTN_NORMAL := "res://assets/ui/ui_button_primary_normal_128x32_v001.png"
+const BTN_HOVER := "res://assets/ui/ui_button_primary_hover_128x32_v001.png"
+const BTN_PRESSED := "res://assets/ui/ui_button_primary_pressed_128x32_v001.png"
+
+const COLOR_TITLE := Color(1.0, 0.85, 0.35)       # molten gold
+const COLOR_ACCENT := Color(0.45, 0.95, 1.0)      # arcane cyan
+const COLOR_TEXT := Color(0.88, 0.86, 0.92)
+const COLOR_DIM := Color(0.62, 0.60, 0.70)
+
+var _font: FontFile = null
 
 var _is_paused: bool = false
 var _can_pause: bool = true
@@ -30,11 +53,15 @@ func _ready() -> void:
 	layer = 100
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	visible = false
+	_font = _load_font()
+	_apply_gothic_style()
 
 	if resume_button:
 		resume_button.pressed.connect(_on_resume)
 	if settings_button:
 		settings_button.pressed.connect(_on_settings)
+	if quality_button:
+		quality_button.pressed.connect(_on_quality_cycle)
 	if quit_menu_button:
 		quit_menu_button.pressed.connect(_on_quit_menu)
 	if quit_desktop_button:
@@ -44,7 +71,111 @@ func _ready() -> void:
 	if settings_manager:
 		if settings_manager.has_signal("settings_changed") and not settings_manager.settings_changed.is_connected(_on_settings_changed):
 			settings_manager.settings_changed.connect(_on_settings_changed)
+		_refresh_quality_ui(str(settings_manager.get_setting("graphics", "quality", "high")))
 	_apply_stats_visibility()
+
+# ---- Gothic-arcade theming -------------------------------------------------
+# Reskins the scene's existing nodes to match the main menu: pixel font, molten
+# gold title with a blood-red outline, ornate metal panel frame, arcane-cyan
+# section headings, and themed button textures.
+
+func _apply_gothic_style() -> void:
+	if background != null:
+		background.color = Color(0.02, 0.02, 0.05, 0.78)
+	if panel != null:
+		panel.add_theme_stylebox_override("panel", _make_frame_stylebox())
+	if title_label != null:
+		_apply_font(title_label, 30, COLOR_TITLE)
+		title_label.add_theme_constant_override("outline_size", 6)
+		title_label.add_theme_color_override("font_outline_color", Color(0.5, 0.05, 0.1))
+	if hint_label != null:
+		_apply_font(hint_label, 11, COLOR_DIM)
+	if stats_title != null:
+		_apply_font(stats_title, 16, COLOR_ACCENT)
+	if powerups_title != null:
+		_apply_font(powerups_title, 16, COLOR_ACCENT)
+	for lbl in [time_label, kills_label, gold_label, level_label, wave_label, health_label, quality_label, perf_label, powerups_list]:
+		if lbl != null:
+			_apply_font(lbl, 12, COLOR_TEXT)
+	for btn in [resume_button, settings_button, quality_button, quit_menu_button, quit_desktop_button]:
+		if btn != null:
+			_apply_font(btn, 14, COLOR_TEXT)
+			_style_button(btn)
+
+func _load_font() -> FontFile:
+	if not ResourceLoader.exists(FONT_PIXEL):
+		return null
+	var f = load(FONT_PIXEL)
+	return f if f is FontFile else null
+
+func _tex(path: String) -> Texture2D:
+	if not ResourceLoader.exists(path):
+		return null
+	var t = load(path)
+	return t if t is Texture2D else null
+
+func _apply_font(ctrl: Control, size: int, color: Color) -> void:
+	if _font != null:
+		ctrl.add_theme_font_override("font", _font)
+	ctrl.add_theme_font_size_override("font_size", size)
+	ctrl.add_theme_color_override("font_color", color)
+
+func _make_frame_stylebox() -> StyleBox:
+	var tex := _tex(PANEL_FRAME)
+	if tex != null:
+		var sb := StyleBoxTexture.new()
+		sb.texture = tex
+		sb.texture_margin_left = 48
+		sb.texture_margin_right = 48
+		sb.texture_margin_top = 56
+		sb.texture_margin_bottom = 48
+		sb.content_margin_left = 8
+		sb.content_margin_right = 8
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		return sb
+	var flat := StyleBoxFlat.new()
+	flat.bg_color = Color(0.10, 0.08, 0.14, 0.96)
+	flat.border_color = COLOR_ACCENT
+	flat.set_border_width_all(2)
+	flat.set_corner_radius_all(8)
+	return flat
+
+func _style_button(btn: Button) -> void:
+	var n := _tex(BTN_NORMAL)
+	var h := _tex(BTN_HOVER)
+	var p := _tex(BTN_PRESSED)
+	if n != null:
+		btn.add_theme_stylebox_override("normal", _btn_box(n))
+		btn.add_theme_stylebox_override("hover", _btn_box(h if h != null else n))
+		btn.add_theme_stylebox_override("pressed", _btn_box(p if p != null else n))
+		btn.add_theme_stylebox_override("focus", _btn_box(h if h != null else n))
+		btn.add_theme_color_override("font_hover_color", COLOR_TITLE)
+		btn.add_theme_color_override("font_pressed_color", COLOR_ACCENT)
+		btn.add_theme_color_override("font_focus_color", COLOR_TITLE)
+	else:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(0.14, 0.12, 0.20, 0.95)
+		sb.border_color = COLOR_ACCENT
+		sb.set_border_width_all(2)
+		sb.set_corner_radius_all(4)
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_stylebox_override("hover", sb)
+		btn.add_theme_stylebox_override("pressed", sb)
+		btn.add_theme_stylebox_override("focus", sb)
+
+func _btn_box(tex: Texture2D) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = tex
+	sb.texture_margin_left = 16
+	sb.texture_margin_right = 16
+	sb.texture_margin_top = 6
+	sb.texture_margin_bottom = 6
+	sb.content_margin_left = 12
+	sb.content_margin_right = 12
+	sb.content_margin_top = 10
+	sb.content_margin_bottom = 10
+	return sb
 
 func _input(event: InputEvent) -> void:
 	if not event.is_action_pressed("pause"):
@@ -137,6 +268,17 @@ func _update_stats() -> void:
 		wave_label.text = "Wave: %d" % wave
 	if health_label:
 		health_label.text = "Health: %d/%d" % [player_health, player_max_health]
+	if game != null and game.has_method("get_runtime_perf_snapshot"):
+		var perf = game.get_runtime_perf_snapshot()
+		if perf is Dictionary:
+			var quality = str(perf.get("quality", "high"))
+			var fps = int(perf.get("fps", 0))
+			var adaptive_pct = int(round(float(perf.get("adaptive_scale", 1.0)) * 100.0))
+			if quality_label:
+				quality_label.text = "Quality: %s | FX %d | Proj %d" % [quality.capitalize(), int(perf.get("max_particles", 0)), int(perf.get("max_projectiles", 0))]
+			if perf_label:
+				perf_label.text = "Perf: %d FPS | %d%% | Enemies %d | Towers %d" % [fps, adaptive_pct, int(perf.get("enemy_count", 0)), int(perf.get("tower_count", 0))]
+			_refresh_quality_ui(quality)
 
 	_update_powerups()
 
@@ -193,6 +335,22 @@ func _on_resume() -> void:
 func _on_settings() -> void:
 	settings_opened.emit()
 
+func _on_quality_cycle() -> void:
+	var settings_manager = get_node_or_null("/root/SettingsManager")
+	if settings_manager == null:
+		return
+	var next_quality = "high"
+	if settings_manager.has_method("cycle_quality"):
+		next_quality = str(settings_manager.cycle_quality(1))
+	else:
+		var current = str(settings_manager.get_setting("graphics", "quality", "high")).to_lower()
+		var idx = QUALITY_ORDER.find(current)
+		if idx < 0:
+			idx = QUALITY_ORDER.find("high")
+		next_quality = QUALITY_ORDER[(idx + 1) % QUALITY_ORDER.size()]
+		settings_manager.set_setting("graphics", "quality", next_quality)
+	_refresh_quality_ui(next_quality)
+
 func _on_quit_menu() -> void:
 	var save_manager = get_node_or_null("/root/SaveManager")
 	if save_manager and game:
@@ -213,6 +371,8 @@ func _on_quit_desktop() -> void:
 func _on_settings_changed(category: String, key: String, value: Variant) -> void:
 	if category == "gameplay" and key == "show_stats_in_pause":
 		_apply_stats_visibility()
+	elif category == "graphics" and key == "quality":
+		_refresh_quality_ui(str(value))
 
 func _apply_stats_visibility() -> void:
 	var settings_manager = get_node_or_null("/root/SettingsManager")
@@ -228,3 +388,10 @@ func _set_bus_muted(bus_name: String, muted: bool) -> void:
 	var bus_idx = AudioServer.get_bus_index(bus_name)
 	if bus_idx >= 0:
 		AudioServer.set_bus_mute(bus_idx, muted)
+
+func _refresh_quality_ui(quality: String) -> void:
+	var normalized = quality.to_lower()
+	if not QUALITY_ORDER.has(normalized):
+		normalized = "high"
+	if quality_button:
+		quality_button.text = "Quality: %s" % normalized.capitalize()

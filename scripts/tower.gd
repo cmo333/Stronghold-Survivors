@@ -14,6 +14,12 @@ var upgrade_level = 1  # 1 = Base, 2 = Enhanced, 3 = Master
 var max_upgrade_level = 3
 var _is_upgrading = false  # Prevents spam
 var _upgrade_cooldown = 0.0
+const ESSENCE_INFUSION_GOLD_COST = 500
+const ESSENCE_INFUSION_ESSENCE_COST = 1
+const ESSENCE_INFUSION_DAMAGE_MULT = [1.0, 1.30, 1.65]
+const ESSENCE_INFUSION_RANGE_MULT = [1.0, 1.15, 1.30]
+const ESSENCE_INFUSION_RATE_MULT = [1.0, 1.18, 1.40]
+const ESSENCE_INFUSION_HEALTH_MULT = [1.0, 1.40, 1.90]
 
 # Evolution system
 var is_evolved: bool = false
@@ -64,18 +70,13 @@ func _apply_evolution_visuals() -> void:
 func _play_evolution_animation() -> void:
 	if _game == null:
 		return
-	# Big dramatic effect
-	if _game.has_method("spawn_fx"):
+	# Phase 3 set-piece evolution cue.
+	if _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("tower_evolution", global_position, 1.0, tower_type)
+	elif _game.has_method("spawn_fx"):
 		_game.spawn_fx("upgrade_burst", global_position)
-	if _game.has_method("shake_camera"):
-		_game.shake_camera(10.0, 0.4)
-	# Purple essence flash
-	if _game.has_method("spawn_glow_particle"):
-		for i in range(8):
-			var angle = (TAU / 8.0) * i
-			var dir = Vector2.RIGHT.rotated(angle)
-			var vel = dir * randf_range(100.0, 200.0)
-			_game.spawn_glow_particle(global_position, Color(0.7, 0.3, 1.0), randf_range(10.0, 18.0), 1.0, vel, 2.5, 0.8, 1.2, 5)
+		if _game.has_method("shake_camera"):
+			_game.shake_camera(10.0, 0.4)
 
 # Shared static textures (created once, reused by all instances)
 static var _shared_aura_tex: ImageTexture = null
@@ -100,6 +101,8 @@ var _glow_tween: Tween = null
 var _particles: CPUParticles2D = null
 var _level_up_particles: CPUParticles2D = null
 var _aura_ring: Sprite2D = null
+var _fire_flash_sprite: Sprite2D = null
+var _fire_flash_tween: Tween = null
 var _tier_badge: Label = null
 var _tier_halo: Sprite2D = null
 var _evo_ready_label: Label = null
@@ -138,21 +141,86 @@ const UPGRADE_SWIRL_COLORS = {
 	2: Color(1.0, 0.85, 0.2, 1.0),     # Gold for T2
 	3: Color(0.8, 0.2, 1.0, 1.0)       # Purple for T3
 }
+const SHOW_WORLD_TIER_BADGES = false
+# Legacy per-tower upgrade indicators (rotating halo ring) removed — they read as
+# clutter on upgraded towers. Tier is communicated by the body art / glow instead.
+const SHOW_WORLD_TIER_HALO = false
+const SHOW_WORLD_EVO_READY = false
 
 var _cooldown = 0.0
 var _game: Node = null
 @onready var body_sprite: AnimatedSprite2D = get_node_or_null("Body") as AnimatedSprite2D
+var _body_base_sprite: Sprite2D = null
+var _body_head_sprite: Sprite2D = null
+var _body_split_mode: bool = false
+var _body_base_region_offset: Vector2 = Vector2.ZERO
+var _body_head_region_offset: Vector2 = Vector2.ZERO
+var _body_presentation_texture_rid: RID = RID()
 
 # Tower type identifier (set by subclasses)
 var tower_type: String = "base"
+var _body_anim_base_scale: Vector2 = Vector2.ONE
+var _body_anim_smooth_scale: Vector2 = Vector2.ONE
+var _body_anim_idle_phase: float = 0.0
+var _body_anim_target_blend: float = 0.0
+var _body_anim_fire_impulse: float = 0.0
+var _body_anim_windup_blend: float = 0.0
+var _body_anim_recover_blend: float = 0.0
+var _body_anim_aim_dir: Vector2 = Vector2.RIGHT
+var _body_anim_track_rotation: float = 0.0
+var _body_anim_base_position: Vector2 = Vector2.ZERO
+var _body_anim_stop_hold: float = 0.0
+var _target_refresh_timer: float = 0.0
+var _active_target = null
+var _fire_phase: int = 0
+var _fire_phase_timer: float = 0.0
+var _instance_motion_phase_offset: float = 0.0
+var _last_fire_dir: Vector2 = Vector2.RIGHT
+
+enum FirePhase {
+	IDLE = 0,
+	WINDUP = 1,
+	RECOVER = 2
+}
+
+const BODY_IDLE_BOB_AMP := 0.014
+const BODY_IDLE_BOB_RATE := 2.0
+const BODY_TARGET_BOB_MULT := 0.55
+const BODY_FIRE_PUNCH_SCALE := 0.18
+const BODY_FIRE_PUNCH_ROT := 0.05
+const BODY_FIRE_IMPULSE_DECAY := 7.8
+const BODY_TRACK_LEAN := 1.8
+const BODY_WINDUP_PULL := 2.1
+const BODY_RECOVER_SETTLE := 1.35
+const BODY_STOP_HOLD_TIME := 0.22
+const TARGET_REFRESH_TRACKING := 0.06
+const TARGET_REFRESH_IDLE := 0.12
+
+func _smoothing_alpha(rate: float, delta: float) -> float:
+	return clampf(1.0 - exp(-max(0.01, rate) * max(0.0, delta)), 0.0, 1.0)
 
 func _ready() -> void:
 	super._ready()  # CRITICAL: Adds to "buildings" group for selection
 	_game = get_tree().get_first_node_in_group("game")
+	_instance_motion_phase_offset = float(get_instance_id() % 997) * 0.017
+	_body_anim_idle_phase = _instance_motion_phase_offset
+	_fire_phase = FirePhase.IDLE
+	_fire_phase_timer = 0.0
+	_target_refresh_timer = 0.0
+	_active_target = null
+	var idle_dir := get_body_idle_direction()
+	if idle_dir.length_squared() <= 0.0001:
+		idle_dir = Vector2.RIGHT
+	_last_fire_dir = idle_dir.normalized()
+	_body_anim_aim_dir = _last_fire_dir
+	_body_anim_track_rotation = get_body_orientation_offset()
 	if body_sprite != null:
 		body_sprite.stop()
 		body_sprite.frame = 0
 		body_sprite.scale = Vector2.ONE * 1.35
+		_body_anim_base_position = body_sprite.position
+		_sync_body_anim_base_scale(true)
+	_setup_body_presentation()
 	_setup_premium_visuals()
 	_setup_tower_specific_visuals()
 	_update_visuals_for_upgrade_level(true)  # true = instant, no animation
@@ -179,12 +247,30 @@ func _setup_premium_visuals() -> void:
 	if body_sprite != null and body_sprite.sprite_frames != null:
 		_glow_sprite.texture = body_sprite.sprite_frames.get_frame_texture("default", 0)
 	add_child(_glow_sprite)
+	_setup_fire_flash()
 
 	# NOTE: _particles and _level_up_particles are created lazily in _ensure_particles()
 	# NOTE: PointLight2D removed — too expensive with many towers
 	_ensure_tier_badge()
 
+func _setup_fire_flash() -> void:
+	_fire_flash_sprite = Sprite2D.new()
+	_fire_flash_sprite.name = "FireFlash"
+	_fire_flash_sprite.z_index = 12
+	_fire_flash_sprite.texture = _get_aura_texture()
+	_fire_flash_sprite.scale = Vector2.ONE * 0.22
+	_fire_flash_sprite.modulate = Color(1.0, 0.85, 0.45, 0.0)
+	var mat = CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_fire_flash_sprite.material = mat
+	add_child(_fire_flash_sprite)
+
 func _ensure_tier_badge() -> void:
+	if not SHOW_WORLD_TIER_BADGES:
+		# Halo can render even when text badges are off.
+		if SHOW_WORLD_TIER_HALO:
+			_ensure_tier_halo()
+		return
 	if _tier_badge != null:
 		return
 	_tier_badge = Label.new()
@@ -259,6 +345,14 @@ func _ensure_level_up_particles() -> void:
 	_ensure_tier_badge()
 
 func _update_tier_badge() -> void:
+	if not SHOW_WORLD_TIER_BADGES:
+		if _tier_badge != null:
+			_tier_badge.visible = false
+		# Keep the tier halo in sync even without text badges.
+		if SHOW_WORLD_TIER_HALO:
+			_ensure_tier_halo()
+			_update_tier_halo()
+		return
 	if _tier_badge == null:
 		return
 	if is_evolved:
@@ -320,35 +414,231 @@ func _setup_tower_specific_visuals() -> void:
 	pass
 
 func _process(delta: float) -> void:
+	# Inert towers (owner dead/left in FFA) stop acquiring targets and firing.
+	if inert:
+		return
 	_cooldown = max(0.0, _cooldown - delta)
 	_upgrade_cooldown = max(0.0, _upgrade_cooldown - delta)
+	var perf_scale = 1.0
+	if _game != null and _game.has_method("get_adaptive_perf_scale"):
+		perf_scale = float(_game.get_adaptive_perf_scale())
 	
-	# Rotate aura ring
-	if _aura_ring != null and upgrade_level >= 2:
-		_aura_ring.rotation += delta * (0.5 + upgrade_level * 0.3)
-	
-	# Animate floating elements for T3
-	if upgrade_level >= 3:
-		_animate_floating_elements(delta)
+	# Legacy spinning aura ring + orbiting/pulsing T3 "floating elements" removed.
+	# Ambient T3 particles below are kept.
+	if _particles != null and upgrade_level >= 3:
+		if perf_scale < 0.75:
+			_particles.emitting = false
+			_particles.visible = false
+		elif not _particles.emitting:
+			_particles.visible = true
+			_particles.emitting = true
 
 	# Show/hide EVO READY indicator
-	if can_evolve() and _evo_ready_label == null:
+	if SHOW_WORLD_EVO_READY and can_evolve() and _evo_ready_label == null:
 		_show_evo_ready_label()
-	elif not can_evolve() and _evo_ready_label != null:
+	elif (not SHOW_WORLD_EVO_READY or not can_evolve()) and _evo_ready_label != null:
 		_hide_evo_ready_label()
-	
-	if _cooldown > 0.0:
+
+	var target := _acquire_target(delta)
+	if target != null:
+		var to_target = target.global_position - global_position
+		if to_target.length_squared() > 0.0001:
+			_last_fire_dir = to_target.normalized()
+	_advance_fire_state(delta, target)
+	var has_target_context: bool = target != null or _fire_phase != FirePhase.IDLE
+	_set_anim_active(has_target_context, delta)
+	_update_body_anim_speed(has_target_context)
+	_update_body_motion(delta, has_target_context, perf_scale)
+	_sync_body_presentation_state()
+
+func get_fire_windup_time() -> float:
+	return 0.055
+
+func get_fire_recover_time() -> float:
+	return 0.09
+
+func get_fire_impulse_scale() -> float:
+	return 1.0
+
+func get_body_orientation_offset() -> float:
+	return 0.0
+
+func get_body_idle_direction() -> Vector2:
+	return Vector2.RIGHT
+
+func get_body_tracking_enabled() -> bool:
+	return true
+
+func get_body_tracking_speed() -> float:
+	return 12.0
+
+func get_body_tracking_max_angle() -> float:
+	return PI
+
+func get_body_motion_profile() -> Dictionary:
+	return {
+		"idle_direction": Vector2.RIGHT,
+		"tracking_enabled": true,
+		"tracking_speed": 12.0,
+		"tracking_max_angle": PI,
+		"split_presentation": false,
+		"split_ratio": 0.56,
+		"split_overlap_px": 4,
+	}
+
+func uses_split_body_presentation() -> bool:
+	return bool(get_body_motion_profile().get("split_presentation", false))
+
+func get_body_split_ratio() -> float:
+	return float(get_body_motion_profile().get("split_ratio", 0.56))
+
+func get_body_split_overlap_px() -> int:
+	return int(get_body_motion_profile().get("split_overlap_px", 4))
+
+func get_body_anim_idle_speed() -> float:
+	return 0.72
+
+func get_body_anim_target_speed() -> float:
+	return 1.0
+
+func get_body_anim_windup_speed() -> float:
+	return 1.28
+
+func get_body_anim_recover_speed() -> float:
+	return 1.06
+
+func uses_body_frame_animation() -> bool:
+	return false
+
+# Per-tower motion tuning. Multipliers scale individual ingredients of the
+# shared _update_body_motion recipe so a tower can read "planted/mechanical"
+# (no body lunge, no roll) without forking the whole function.
+# Defaults reproduce the original behavior (all 1.0).
+func get_body_motion_tuning() -> Dictionary:
+	return {
+		"lunge": 1.0,        # directional position pull on windup/track
+		"roll": 1.0,         # windup/recover/idle rotation sway
+		"bob": 1.0,          # idle vertical bob
+		"recoil": 0.0,       # 0 = original vertical kick; 1 = directional backward recoil
+		"fire_punch": 1.0,   # fire scale punch
+	}
+
+func get_projectile_visual_profile() -> Dictionary:
+	return {}
+
+func get_muzzle_fx_profile() -> Dictionary:
+	return {}
+
+func _update_body_anim_speed(has_target: bool) -> void:
+	if body_sprite == null:
 		return
-	var target = _find_target()
+	var speed_scale := get_body_anim_idle_speed()
+	match _fire_phase:
+		FirePhase.WINDUP:
+			speed_scale = get_body_anim_windup_speed()
+		FirePhase.RECOVER:
+			speed_scale = get_body_anim_recover_speed()
+		_:
+			speed_scale = get_body_anim_target_speed() if has_target else get_body_anim_idle_speed()
+	body_sprite.speed_scale = max(0.05, speed_scale)
+
+func _has_valid_target(target) -> bool:
 	if target == null:
-		_set_anim_active(false)
+		return false
+	if not is_instance_valid(target):
+		return false
+	if not (target is Node2D):
+		return false
+	var node := target as Node
+	if node != null and node.is_queued_for_deletion():
+		return false
+	return _is_target_in_range(target)
+
+func _sanitize_active_target() -> void:
+	if _active_target == null:
 		return
-	_set_anim_active(true)
-	_fire_at(target)
+	if not is_instance_valid(_active_target):
+		_active_target = null
+		return
+	if not (_active_target is Node2D):
+		_active_target = null
+		return
+	var node := _active_target as Node
+	if node != null and node.is_queued_for_deletion():
+		_active_target = null
+
+func _is_target_in_range(target) -> bool:
+	if target == null or not is_instance_valid(target):
+		return false
+	if not (target is Node2D):
+		return false
+	var node := target as Node2D
+	var range_mult = 1.0
+	if _game != null and _game.has_method("get_tower_range_mult"):
+		range_mult = float(_game.get_tower_range_mult())
+	var effective_range = range * range_mult
+	return global_position.distance_squared_to(node.global_position) <= effective_range * effective_range
+
+func _acquire_target(delta: float, force_refresh: bool = false) -> Node2D:
+	_sanitize_active_target()
+	if not force_refresh and _cooldown > 0.0 and _fire_phase == FirePhase.IDLE and _active_target == null:
+		_target_refresh_timer = 0.0
+		return null
+	_target_refresh_timer = max(0.0, _target_refresh_timer - delta)
+	var has_valid_active_target := _active_target != null and _has_valid_target(_active_target)
+	var should_refresh: bool = force_refresh or _target_refresh_timer <= 0.0 or not has_valid_active_target
+	if should_refresh:
+		_active_target = _find_target()
+		_target_refresh_timer = TARGET_REFRESH_TRACKING if _active_target != null else TARGET_REFRESH_IDLE
+	if _active_target != null and is_instance_valid(_active_target) and _active_target is Node2D:
+		return _active_target as Node2D
+	_active_target = null
+	return null
+
+func _advance_fire_state(delta: float, target) -> void:
+	match _fire_phase:
+		FirePhase.IDLE:
+			if target != null and _cooldown <= 0.0:
+				_begin_windup()
+		FirePhase.WINDUP:
+			_fire_phase_timer = max(0.0, _fire_phase_timer - delta)
+			var windup_total = max(0.001, get_fire_windup_time())
+			_body_anim_windup_blend = 1.0 - (_fire_phase_timer / windup_total)
+			if _fire_phase_timer <= 0.0:
+				var fire_target := _resolve_fire_target()
+				if fire_target != null:
+					_fire_at(fire_target)
+					_last_fire_dir = (fire_target.global_position - global_position).normalized()
+				_fire_phase = FirePhase.RECOVER
+				_fire_phase_timer = max(0.0, get_fire_recover_time())
+				_body_anim_windup_blend = 0.0
+				_body_anim_recover_blend = 1.0
+		FirePhase.RECOVER:
+			_fire_phase_timer = max(0.0, _fire_phase_timer - delta)
+			var recover_total = max(0.001, get_fire_recover_time())
+			_body_anim_recover_blend = _fire_phase_timer / recover_total
+			if _fire_phase_timer <= 0.0:
+				_fire_phase = FirePhase.IDLE
+				_body_anim_recover_blend = 0.0
+
+func _begin_windup() -> void:
+	_fire_phase = FirePhase.WINDUP
+	_fire_phase_timer = max(0.0, get_fire_windup_time())
+	_body_anim_windup_blend = 0.0
 	var rate_mult = 1.0
 	if _game != null and _game.has_method("get_tower_rate_mult"):
-		rate_mult = _game.get_tower_rate_mult()
+		rate_mult = float(_game.get_tower_rate_mult())
 	_cooldown = 1.0 / max(0.1, fire_rate * rate_mult)
+
+func _resolve_fire_target() -> Node2D:
+	_sanitize_active_target()
+	if _has_valid_target(_active_target):
+		return _active_target as Node2D
+	_active_target = _find_target()
+	if _active_target != null and is_instance_valid(_active_target) and _active_target is Node2D:
+		return _active_target as Node2D
+	_active_target = null
+	return null
 
 # Override in subclasses for T3 floating element animation
 func _animate_floating_elements(delta: float) -> void:
@@ -408,6 +698,7 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 		# Slight brightness boost for higher tiers
 		var brightness = 1.0 + (upgrade_level - 1) * 0.08
 		body_sprite.modulate = Color(brightness, brightness, brightness, 1.0)
+		_sync_body_anim_base_scale(false)
 	
 	# Particles for T3 (lazy created)
 	if upgrade_level >= 3:
@@ -417,16 +708,11 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 			_particles.visible = true
 			_particles.emitting = true
 	
-	# Aura ring
+	# Aura ring kept invisible (legacy spinning ring removed); node remains only as
+	# a texture source for the one-shot upgrade pulse.
 	if _aura_ring != null:
-		if upgrade_level == 1:
-			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.0)
-		elif upgrade_level == 2:
-			_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.2)
-		else:
-			_aura_ring.modulate = Color(element_color.r, element_color.g, element_color.b, 0.3)
-		_aura_ring.scale = Vector2.ONE * (1.0 + upgrade_level * 0.2)
-	
+		_aura_ring.modulate = Color(1.0, 1.0, 1.0, 0.0)
+
 	# Tower-specific visuals
 	_update_tower_specific_visuals()
 
@@ -471,16 +757,8 @@ func _play_upgrade_animation(target_scale: float, element_color: Color) -> void:
 		else:  # T3
 			glow_tween.tween_property(_glow_sprite, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.5), 0.5)
 
-	# Aura ring animation
-	if _aura_ring != null and upgrade_level >= 2 and is_inside_tree():
-		var aura_tween = create_tween()
-		aura_tween.set_parallel(true)
-		if upgrade_level == 2:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(1.0, 1.0, 1.0, 0.2), 0.5)
-		else:
-			aura_tween.tween_property(_aura_ring, "modulate", Color(element_color.r, element_color.g, element_color.b, 0.3), 0.5)
-		aura_tween.tween_property(_aura_ring, "scale", Vector2.ONE * (1.0 + upgrade_level * 0.2), 0.5)
-	
+	# Legacy aura-ring fade-in removed (the ring no longer shows or spins).
+
 	# Particle burst (lazy created)
 	_ensure_level_up_particles()
 	if _level_up_particles != null:
@@ -613,7 +891,10 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	
 	# Auto-remove after effect completes
 	var timer = get_tree().create_timer(1.5)
-	timer.timeout.connect(func(): if is_instance_valid(swirl): swirl.queue_free())
+	timer.timeout.connect(func():
+		if is_instance_valid(swirl):
+			swirl.queue_free()
+	)
 
 func _spawn_upgrade_flash(color: Color = Color(1.0, 1.0, 1.0, 1.0)) -> void:
 	"""Bright flash when upgrade completes"""
@@ -658,6 +939,7 @@ func _spawn_upgrade_glow_burst(color: Color, target_level: int) -> void:
 
 func _apply_tier_stats(tier_data: Dictionary) -> void:
 	super._apply_tier_stats(tier_data)
+	var base_health = max_health
 	range = float(tier_data.get("range", range))
 	fire_rate = float(tier_data.get("fire_rate", fire_rate))
 	damage = float(tier_data.get("damage", damage))
@@ -667,6 +949,13 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	# Update upgrade level based on tier
 	var old_level = upgrade_level
 	upgrade_level = tier + 1
+	var infusion_index = clampi(upgrade_level - 1, 0, 2)
+	range *= float(ESSENCE_INFUSION_RANGE_MULT[infusion_index])
+	projectile_range *= float(ESSENCE_INFUSION_RANGE_MULT[infusion_index])
+	fire_rate *= float(ESSENCE_INFUSION_RATE_MULT[infusion_index])
+	damage *= float(ESSENCE_INFUSION_DAMAGE_MULT[infusion_index])
+	max_health = base_health * float(ESSENCE_INFUSION_HEALTH_MULT[infusion_index])
+	health = max_health
 	if old_level != upgrade_level and is_inside_tree():
 		_update_visuals_for_upgrade_level(false)
 
@@ -723,28 +1012,271 @@ func _fire_at(target: Node2D) -> void:
 	var dmg_bonus = 0.0
 	if _game != null and _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = _game.get_tower_damage_bonus()
-	_game.spawn_projectile(global_position, dir, projectile_speed, damage + dmg_bonus, projectile_range, explosion_radius)
+	var dmg_mult = 1.0
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		dmg_mult = _game.get_tower_damage_mult()
+	_game.spawn_projectile(
+		global_position,
+		dir,
+		projectile_speed,
+		(damage + dmg_bonus) * dmg_mult,
+		projectile_range,
+		explosion_radius,
+		0,
+		1.0,
+		0.0,
+		"normal",
+		get_projectile_visual_profile()
+	)
 	
 	# Audio: Tower fire sound based on tower type
 	AudioManager.play_weapon_sound(tower_type, global_position)
+	_trigger_fire_motion(1.0)
+	_spawn_tower_fire_emitter(dir, 1.0)
 
-	# Recoil animation: brief scale punch for satisfying fire feedback
-	if body_sprite != null and is_inside_tree():
-		var base_scale = body_sprite.scale
-		var recoil_tween = create_tween()
-		recoil_tween.tween_property(body_sprite, "scale", base_scale * 1.15, 0.04).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		recoil_tween.tween_property(body_sprite, "scale", base_scale, 0.08).set_trans(Tween.TRANS_ELASTIC).set_ease(Tween.EASE_OUT)
+func _trigger_fire_motion(intensity: float = 1.0) -> void:
+	var scaled_impulse = clampf(intensity * get_fire_impulse_scale(), 0.25, 2.0)
+	_body_anim_fire_impulse = max(_body_anim_fire_impulse, scaled_impulse)
+	_play_fire_flash(scaled_impulse)
 
-func _set_anim_active(active: bool) -> void:
+func _play_fire_flash(intensity: float) -> void:
+	if _fire_flash_sprite == null or not is_inside_tree():
+		return
+	var perf_scale = 1.0
+	if _game != null and _game.has_method("get_adaptive_perf_scale"):
+		perf_scale = float(_game.get_adaptive_perf_scale())
+	if perf_scale < 0.55:
+		return
+	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
+		_fire_flash_tween.kill()
+	var flash_strength = clampf(0.38 + intensity * 0.22, 0.35, 0.95)
+	_fire_flash_sprite.modulate.a = flash_strength
+	_fire_flash_sprite.scale = Vector2.ONE * (0.18 + intensity * 0.07)
+	_fire_flash_tween = create_tween()
+	_fire_flash_tween.set_parallel(true)
+	_fire_flash_tween.tween_property(_fire_flash_sprite, "modulate:a", 0.0, 0.10)
+	_fire_flash_tween.tween_property(_fire_flash_sprite, "scale", Vector2.ONE * 0.30, 0.10)
+
+func _spawn_tower_fire_emitter(direction: Vector2, intensity: float = 1.0) -> void:
+	if _game == null:
+		return
+	if _game.has_method("should_spawn_optional_fx") and not bool(_game.should_spawn_optional_fx()):
+		return
+	if not ("fx_manager" in _game):
+		return
+	var manager = _game.fx_manager
+	if manager == null or not is_instance_valid(manager):
+		return
+	if manager.has_method("spawn_tower_fire_emitter"):
+		manager.spawn_tower_fire_emitter(global_position, direction, tower_type, intensity, get_muzzle_fx_profile())
+
+func _setup_body_presentation() -> void:
+	_body_split_mode = uses_split_body_presentation()
 	if body_sprite == null:
 		return
+	if not _body_split_mode:
+		body_sprite.visible = true
+		return
+	if _body_base_sprite == null:
+		_body_base_sprite = Sprite2D.new()
+		_body_base_sprite.name = "BodyBase"
+		_body_base_sprite.centered = true
+		_body_base_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_body_base_sprite.z_index = 0
+		add_child(_body_base_sprite)
+	if _body_head_sprite == null:
+		_body_head_sprite = Sprite2D.new()
+		_body_head_sprite.name = "BodyHead"
+		_body_head_sprite.centered = true
+		_body_head_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		_body_head_sprite.z_index = 2
+		add_child(_body_head_sprite)
+	body_sprite.visible = false
+	_refresh_body_presentation(true)
+
+func refresh_body_presentation(force_texture: bool = false) -> void:
+	_refresh_body_presentation(force_texture)
+
+func _refresh_body_presentation(force_texture: bool = false) -> void:
+	if not _body_split_mode or body_sprite == null:
+		return
+	if _body_base_sprite == null or _body_head_sprite == null:
+		return
+	var tex := _get_body_source_texture()
+	if tex == null:
+		return
+	if not force_texture and tex.get_rid() == _body_presentation_texture_rid:
+		return
+	var tex_size := tex.get_size()
+	if tex_size.x <= 0 or tex_size.y <= 1:
+		return
+	var tex_w: int = int(tex_size.x)
+	var tex_h: int = int(tex_size.y)
+	var split_y: int = clampi(int(round(float(tex_h) * clampf(get_body_split_ratio(), 0.2, 0.8))), 1, tex_h - 1)
+	var overlap: int = clampi(get_body_split_overlap_px(), 0, min(split_y - 1, tex_h - split_y))
+	var head_rect := Rect2(0.0, 0.0, float(tex_w), float(split_y + overlap))
+	var base_y: int = max(0, split_y - overlap)
+	var base_rect := Rect2(0.0, float(base_y), float(tex_w), float(tex_h - base_y))
+	_body_head_sprite.texture = tex
+	_body_head_sprite.region_enabled = true
+	_body_head_sprite.region_rect = head_rect
+	_body_base_sprite.texture = tex
+	_body_base_sprite.region_enabled = true
+	_body_base_sprite.region_rect = base_rect
+	_body_head_region_offset = _calc_body_region_offset(tex_h, head_rect)
+	_body_base_region_offset = _calc_body_region_offset(tex_h, base_rect)
+	_body_presentation_texture_rid = tex.get_rid()
+	_sync_body_presentation_state()
+
+func _get_body_source_texture() -> Texture2D:
+	if body_sprite == null or body_sprite.sprite_frames == null:
+		return null
+	var frame_count: int = body_sprite.sprite_frames.get_frame_count("default")
+	if frame_count <= 0:
+		return null
+	return body_sprite.sprite_frames.get_frame_texture("default", clampi(body_sprite.frame, 0, frame_count - 1))
+
+func _calc_body_region_offset(full_height: int, region_rect: Rect2) -> Vector2:
+	var full_center_y: float = float(full_height) * 0.5
+	var region_center_y: float = region_rect.position.y + region_rect.size.y * 0.5
+	return Vector2(0.0, region_center_y - full_center_y)
+
+func _sync_body_presentation_state() -> void:
+	if not _body_split_mode or body_sprite == null:
+		return
+	if _body_base_sprite == null or _body_head_sprite == null:
+		return
+	_refresh_body_presentation()
+	var scale_vec: Vector2 = body_sprite.scale
+	var scaled_base_offset := Vector2(_body_base_region_offset.x * scale_vec.x, _body_base_region_offset.y * scale_vec.y)
+	var scaled_head_offset := Vector2(_body_head_region_offset.x * scale_vec.x, _body_head_region_offset.y * scale_vec.y)
+	var idle_rot: float = get_body_orientation_offset() + sin(_body_anim_idle_phase * 0.65) * 0.006 * (1.0 - _body_anim_target_blend)
+	_body_base_sprite.visible = not body_sprite.visible
+	_body_head_sprite.visible = not body_sprite.visible
+	_body_base_sprite.position = body_sprite.position + scaled_base_offset
+	_body_head_sprite.position = body_sprite.position + scaled_head_offset
+	_body_base_sprite.scale = scale_vec
+	_body_head_sprite.scale = scale_vec
+	_body_base_sprite.rotation = idle_rot
+	_body_head_sprite.rotation = body_sprite.rotation
+	_body_base_sprite.modulate = body_sprite.modulate
+	_body_head_sprite.modulate = body_sprite.modulate
+
+func _sync_body_anim_base_scale(force_reset: bool) -> void:
+	if body_sprite == null:
+		return
+	_body_anim_base_scale = body_sprite.scale
+	if force_reset:
+		_body_anim_base_position = body_sprite.position
+	if force_reset or _body_anim_smooth_scale == Vector2.ONE:
+		_body_anim_smooth_scale = _body_anim_base_scale
+	_sync_body_presentation_state()
+
+func _update_body_motion(delta: float, has_target: bool, perf_scale: float) -> void:
+	if body_sprite == null:
+		return
+	if _is_upgrading:
+		return
+	var dt: float = minf(delta, 0.05)
+	var runtime_target_fps: float = 60.0
+	if _game != null and _game.has_method("get_runtime_target_fps"):
+		runtime_target_fps = max(30.0, float(_game.get_runtime_target_fps()))
+	var fps_stability_mult: float = clampf(runtime_target_fps / 60.0, 0.5, 1.0)
+	var phase_rate = 1.0 + sin(_instance_motion_phase_offset) * 0.08
+	_body_anim_idle_phase += dt * BODY_IDLE_BOB_RATE * phase_rate * lerpf(0.74, 1.18, perf_scale) * fps_stability_mult
+	var target_blend_alpha: float = _smoothing_alpha(8.0, dt)
+	_body_anim_target_blend = lerpf(_body_anim_target_blend, 1.0 if has_target else 0.0, target_blend_alpha)
+	_body_anim_fire_impulse = max(0.0, _body_anim_fire_impulse - dt * BODY_FIRE_IMPULSE_DECAY * lerpf(0.72, 1.22, perf_scale))
+	var aim_alpha: float = _smoothing_alpha(10.0, dt)
+	var idle_dir := get_body_idle_direction()
+	if idle_dir.length_squared() <= 0.0001:
+		idle_dir = Vector2.RIGHT
+	var target_dir: Vector2 = _last_fire_dir if has_target else idle_dir.normalized()
+	if target_dir.length_squared() <= 0.0001:
+		target_dir = Vector2.RIGHT
+	_body_anim_aim_dir = _body_anim_aim_dir.lerp(target_dir, aim_alpha)
+
+	var tuning := get_body_motion_tuning()
+	var tune_lunge: float = float(tuning.get("lunge", 1.0))
+	var tune_roll: float = float(tuning.get("roll", 1.0))
+	var tune_bob: float = float(tuning.get("bob", 1.0))
+	var tune_recoil: float = float(tuning.get("recoil", 1.0))
+	var tune_punch: float = float(tuning.get("fire_punch", 1.0))
+
+	var idle_strength = lerpf(1.0, BODY_TARGET_BOB_MULT, _body_anim_target_blend)
+	var bob_y = sin(_body_anim_idle_phase) * BODY_IDLE_BOB_AMP * idle_strength * 18.0 * lerpf(0.72, 1.0, fps_stability_mult) * tune_bob
+	var fire_scale = 1.0 + _body_anim_fire_impulse * BODY_FIRE_PUNCH_SCALE * tune_punch
+	var windup_pull = _body_anim_windup_blend * BODY_WINDUP_PULL
+	var recover_settle = _body_anim_recover_blend * BODY_RECOVER_SETTLE
+	var track_lean = _body_anim_target_blend * BODY_TRACK_LEAN * 0.25
+	var directional_pull = _body_anim_aim_dir.normalized() * (windup_pull - recover_settle + track_lean) * tune_lunge
+	var track_scale = 1.0 + _body_anim_target_blend * 0.03
+	var target_scale = _body_anim_base_scale * fire_scale * track_scale
+	var scale_alpha: float = _smoothing_alpha(16.0, dt)
+	_body_anim_smooth_scale = _body_anim_smooth_scale.lerp(target_scale, scale_alpha)
+	var base_rot = get_body_orientation_offset()
+	var target_rot = base_rot
+	if get_body_tracking_enabled():
+		var idle_angle = idle_dir.normalized().angle()
+		var desired_angle = _body_anim_aim_dir.angle()
+		target_rot = base_rot + wrapf(desired_angle - idle_angle, -PI, PI)
+		var max_track = clampf(get_body_tracking_max_angle(), 0.0, PI)
+		if max_track < PI:
+			var rel = wrapf(target_rot - base_rot, -PI, PI)
+			target_rot = base_rot + clampf(rel, -max_track, max_track)
+	var tracking_speed = get_body_tracking_speed() * (1.0 if has_target else 0.65)
+	var rot_alpha = _smoothing_alpha(tracking_speed, dt)
+	_body_anim_track_rotation = lerp_angle(_body_anim_track_rotation, target_rot, rot_alpha)
+	body_sprite.scale = _body_anim_smooth_scale
+	# Recoil: vertical kick by default; planted towers (recoil tuning) instead
+	# kick backward along the aim direction so the body reads as bracing, not flopping.
+	var recoil_kick: Vector2 = -_body_anim_aim_dir.normalized() * _body_anim_fire_impulse * 1.6 * tune_recoil
+	var vertical_kick: float = -_body_anim_fire_impulse * 1.6 * (1.0 - clampf(tune_recoil, 0.0, 1.0))
+	body_sprite.position.x = _body_anim_base_position.x + directional_pull.x * 0.65 + recoil_kick.x
+	body_sprite.position.y = _body_anim_base_position.y + bob_y + directional_pull.y * 0.65 + vertical_kick + recoil_kick.y
+	# When tracking is disabled the body uses baked iso / front-facing flipbook
+	# art that must never rotate: pin rotation to its neutral orientation so
+	# no aim tracking, sway, or fire-roll can spin it.
+	if get_body_tracking_enabled():
+		var windup_roll = -_body_anim_windup_blend * 0.012 * sign(_body_anim_aim_dir.x if abs(_body_anim_aim_dir.x) > 0.05 else 1.0) * tune_roll
+		var recover_roll = _body_anim_recover_blend * 0.008 * sign(_body_anim_aim_dir.x if abs(_body_anim_aim_dir.x) > 0.05 else 1.0) * tune_roll
+		var idle_sway = sin(_body_anim_idle_phase * 0.65) * 0.015 * (1.0 - _body_anim_target_blend) * tune_roll
+		body_sprite.rotation = _body_anim_track_rotation + idle_sway - _body_anim_fire_impulse * BODY_FIRE_PUNCH_ROT * tune_roll + windup_roll + recover_roll
+	else:
+		body_sprite.rotation = get_body_orientation_offset()
+
+func _set_anim_active(active: bool, delta: float) -> void:
+	if body_sprite == null:
+		return
+	if not uses_body_frame_animation():
+		if body_sprite.is_playing():
+			body_sprite.stop()
+		if body_sprite.frame != 0:
+			body_sprite.frame = 0
+		_body_anim_stop_hold = 0.0
+		return
 	if active:
+		_body_anim_stop_hold = BODY_STOP_HOLD_TIME
 		if not body_sprite.is_playing():
 			body_sprite.play()
 	else:
-		if body_sprite.is_playing():
+		_body_anim_stop_hold = max(0.0, _body_anim_stop_hold - delta)
+		if _body_anim_stop_hold <= 0.0 and body_sprite.is_playing():
 			body_sprite.stop()
 			body_sprite.frame = 0
+
+func get_upgrade_cost() -> int:
+	if not can_upgrade():
+		return 0
+	return ESSENCE_INFUSION_GOLD_COST
+
+func get_upgrade_essence_cost() -> int:
+	if not can_upgrade():
+		return 0
+	return ESSENCE_INFUSION_ESSENCE_COST
+
+func get_upgrade_label() -> String:
+	return "Essence Infusion"
 
 func can_upgrade() -> bool:
 	# Check if upgrade is in cooldown
@@ -766,3 +1298,7 @@ func _exit_tree() -> void:
 	# Clean up tweens to avoid errors
 	if _glow_tween != null and _glow_tween.is_valid():
 		_glow_tween.kill()
+	if _fire_flash_tween != null and _fire_flash_tween.is_valid():
+		_fire_flash_tween.kill()
+	_active_target = null
+	_fire_phase = FirePhase.IDLE

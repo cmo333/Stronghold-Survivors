@@ -264,6 +264,8 @@ func _start_death_sequence() -> void:
 	for add in _active_adds:
 		if add != null and is_instance_valid(add) and add.has_method("take_damage"):
 			add.take_damage(9999, global_position, false, false)
+	if _game != null and _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("boss_death", global_position, 1.35, "poison")
 	
 	super._start_death_sequence()
 

@@ -12,18 +12,26 @@ var _color: Color = Color.WHITE
 var _base_width: float = 3.0
 
 func setup(target: Node2D, color: Color, width: float = 3.0, fade_time: float = 0.3) -> void:
+    # CRITICAL: pooled trails are reused. Clear any stale points/state from the
+    # previous projectile, otherwise the Line2D draws a long streak from the old
+    # (faraway) position to the new one -- the "random white line" bug.
+    clear_points()
+    _points_data.clear()
+    _is_dying = false
+    modulate.a = 1.0
+
     _target = target
     _color = color
     _base_width = width
     _fade_time = fade_time
-    
+
     # Configure Line2D
     default_color = color
     self.width = width
     width_curve = _create_width_curve()
     texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
     z_index = -1
-    
+
     # Add initial point
     if target != null and is_instance_valid(target):
         add_point(target.global_position)

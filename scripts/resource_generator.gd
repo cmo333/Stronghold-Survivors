@@ -19,6 +19,7 @@ var _pulse_tween: Tween = null
 var _low_hp_pulse_active = false
 var _was_damaged = false
 var _under_attack_warning_shown = false
+var _income_text_cooldown: float = 0.0
 
 # Visual components
 @onready var body: CanvasItem = get_node_or_null("Body")
@@ -60,27 +61,44 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if _is_destroyed or _game == null:
 		return
+	# Inert generators (owner dead/left in FFA) stop producing income.
+	if inert:
+		return
 
+	_income_text_cooldown = max(0.0, _income_text_cooldown - delta)
 	_timer += delta
 	if _timer >= interval:
 		_timer -= interval
+		var income_scale = 1.0
+		if _game.has_method("get_generator_income_mult"):
+			income_scale = float(_game.get_generator_income_mult())
+		var show_income_text = true
+		if _game.has_method("get_adaptive_perf_scale"):
+			show_income_text = float(_game.get_adaptive_perf_scale()) >= 0.78
 		if _zone != null and is_instance_valid(_zone) and not _zone._is_depleted:
 			_zone_multiplier = _zone.get_multiplier()
-			var actual_income = int(round(float(income) * _zone_multiplier))
-			_game.add_resources(actual_income)
+			var actual_income = int(round(float(income) * _zone_multiplier * income_scale))
+			actual_income = max(1, actual_income)
+			_game.add_resources(actual_income, owner_id)
 			_zone.on_generator_ticked(actual_income)
 			# Show boosted income number in gold
-			if _game.has_method("show_floating_text"):
+			if show_income_text and _income_text_cooldown <= 0.0 and _game.has_method("show_floating_text"):
 				_game.show_floating_text("+%d" % actual_income, global_position + Vector2(randf_range(-6, 6), -20), Color(1.0, 0.85, 0.2, 0.9))
+				_income_text_cooldown = 0.75 + randf() * 0.35
 		else:
 			_zone_multiplier = 1.0
-			_game.add_resources(income)
+			var scaled_income = int(round(float(income) * income_scale))
+			scaled_income = max(1, scaled_income)
+			_game.add_resources(scaled_income, owner_id)
 			# Show base income number in dimmer color
-			if _game.has_method("show_floating_text"):
-				_game.show_floating_text("+%d" % income, global_position + Vector2(randf_range(-6, 6), -20), Color(0.7, 0.7, 0.5, 0.7))
+			if show_income_text and _income_text_cooldown <= 0.0 and _game.has_method("show_floating_text"):
+				_game.show_floating_text("+%d" % scaled_income, global_position + Vector2(randf_range(-6, 6), -20), Color(0.7, 0.7, 0.5, 0.7))
+				_income_text_cooldown = 0.75 + randf() * 0.35
 
 func take_damage(amount: float) -> void:
 	if _is_destroyed:
+		return
+	if _game != null and _game.has_method("is_damage_blocked") and _game.is_damage_blocked():
 		return
 
 	health -= amount

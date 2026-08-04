@@ -389,6 +389,8 @@ func _start_death_sequence() -> void:
 	for skeleton in _active_skeletons:
 		if skeleton != null and is_instance_valid(skeleton) and skeleton.has_method("take_damage"):
 			skeleton.take_damage(9999, global_position, false, false)
+	if _game != null and _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("boss_death", global_position, 1.35, "necrotic")
 	
 	super._start_death_sequence()
 

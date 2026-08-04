@@ -10,6 +10,9 @@ const PLAGUE_ABOMINATION_SCENE = preload("res://scenes/enemies/plague_abominatio
 const CHARGER_SCENE = preload("res://scenes/enemies/charger.tscn")
 const SPITTER_SCENE = preload("res://scenes/enemies/spitter.tscn")
 const HEALER_SCENE = preload("res://scenes/enemies/healer.tscn")
+const ZOMBIE_SHAMBLER_SCENE = preload("res://scenes/enemies/zombie_shambler.tscn")
+const WRAITH_SCENE = preload("res://scenes/enemies/wraith.tscn")
+const IMP_SKIRMISHER_SCENE = preload("res://scenes/enemies/imp_skirmisher.tscn")
 const FX_SCENE = preload("res://scenes/fx/fx.tscn")
 const GLOW_PARTICLE_SCRIPT = preload("res://scripts/glow_particle.gd")
 const PROJECTILE_SCENE = preload("res://scenes/projectile.tscn")
@@ -28,17 +31,15 @@ const WaveManager = preload("res://scripts/wave_manager.gd")
 const FXManager = preload("res://scripts/fx_manager.gd")
 const Minimap = preload("res://scripts/minimap.gd")
 
+# The five buildings the player actually places. All are unlocked from the start
+# via _unlock_core_builds(). Removed buildings (mine_trap, ice_trap, acid_trap,
+# spike_trap, spike_burst_tower, flamethrower_tower, barracks, armory, tech_lab)
+# are documented in docs/REMOVED_BUILDINGS.md for future re-add.
 const CORE_BUILD_IDS = [
 	"arrow_turret",
 	"cannon_tower",
 	"tesla_tower",
-	"mine_trap",
-	"ice_trap",
-	"acid_trap",
 	"resource_generator",
-	"barracks",
-	"armory",
-	"tech_lab",
 	"shrine"
 ]
 const TECH_RARITY_ORDER = ["common", "rare", "epic", "legendary", "mythic", "diamond"]
@@ -59,7 +60,7 @@ const TECH_FORCE_TOWER_ACTION = "tech_force_tower"
 const TECH_FORCE_ENGINEER_ACTION = "tech_force_engineer"
 const TECH_FORCE_ECONOMY_ACTION = "tech_force_economy"
 const TECH_CATEGORY_ORDER = ["tower", "engineer", "economy"]
-const START_RESOURCES = 170
+const START_RESOURCES = 220
 const RESOURCE_GAIN_MULT = 0.85
 const XP_GAIN_MULT = 1.5
 const ENEMY_HEALTH_BASE_MULT = 2.0
@@ -67,9 +68,53 @@ const ENEMY_HEALTH_GROWTH_PER_30S = 0.25
 const ENGINEER_VITALITY_HP_PER_LEVEL = 20.0
 const EARLY_GAME_HORDE_RAMP_TIME = 300.0
 const EARLY_GAME_ENEMY_HEALTH_GRACE_MIN = 0.60
+const BUILD_FOCUS_TIME_SCALE = 0.78
+const CHEST_MODAL_TIME_SCALE = 0.0
+const BUILD_COST_TIME_PRESSURE_START = 480.0
+const BUILD_COST_TIME_PRESSURE_END = 1500.0
+const BUILD_COST_TIME_PRESSURE_MAX = 1.3
+const GENERATOR_INCOME_SOFT_CAP = 8
+const GENERATOR_INCOME_MIN_MULT = 0.28
+const GENERATOR_INCOME_DECAY_START = 480.0
+const GENERATOR_INCOME_DECAY_END = 1500.0
+const GENERATOR_INCOME_LATE_MIN = 0.80
+const RESOURCE_DUMP_COST = 1200
+const RESOURCE_DUMP_ESSENCE_GAIN = 1
+const DEFAULT_RENDER_FPS_CAP = 30
+const SIMULATION_TICKS_PER_SECOND = 60
 
+# In solo this is the hardcoded scene player. In FFA it aliases the LOCAL
+# player so the ~50 existing `player`/`camera` references keep working.
 @onready var player: CharacterBody2D = $World/Player
 @onready var camera: Camera2D = $World/Player/Camera2D
+const PLAYER_SCENE := preload("res://scenes/player.tscn")
+# peer_id -> player node (FFA). In solo, { 1: $World/Player }.
+var players: Dictionary = {}
+var local_player: CharacterBody2D = null
+# --- Enemy replication (FFA) ---
+# Host: monotonically increasing net id assigned to each spawned enemy; the enemy
+# carries it as `net_id`. Client: net_id -> proxy enemy node it renders.
+var _enemy_net_seq: int = 0
+var _net_enemy_proxies: Dictionary = {}      # net_id -> proxy Node2D (client side)
+var _net_enemy_targets: Dictionary = {}      # net_id -> Vector2 last synced pos (client side)
+var _enemy_sync_accum: float = 0.0
+const ENEMY_SYNC_HZ := 15.0
+const ENEMY_SYNC_BATCH := 60                  # max enemies per RPC packet
+# --- FFA match (host-authoritative clock + results) ---
+const FFA_MATCH_SECONDS := 1200.0             # 20-minute match
+const FFA_START_RESOURCES := 400              # every FFA player begins with this gold
+const FFA_START_ESSENCE := 2                  # ...and this much essence
+var _ffa_time_left: float = FFA_MATCH_SECONDS
+var _ffa_match_over: bool = false
+var _ffa_clock_accum: float = 0.0             # host broadcasts countdown at 1 Hz
+var _ffa_dead_players: Dictionary = {}        # peer_id -> true once eliminated
+# Last-player-standing: once only one real player remains alive, the host runs a
+# short grace countdown (so the survivor can keep gathering) and then ends.
+const FFA_LASTMAN_SECONDS := 60.0
+var _ffa_lastman_active: bool = false
+var _ffa_lastman_left: float = FFA_LASTMAN_SECONDS
+var _ffa_lastman_accum: float = 0.0
+var _ffa_started_real_count: int = 0          # real (human) players when the match began
 @onready var enemies_root: Node2D = $World/Enemies
 @onready var allies_root: Node2D = get_node_or_null("World/Allies")
 @onready var projectiles_root: Node2D = $World/Projectiles
@@ -82,6 +127,8 @@ const EARLY_GAME_ENEMY_HEALTH_GRACE_MIN = 0.60
 @onready var ui: CanvasLayer = $UI
 @onready var build_manager: Node = $BuildManager
 @onready var game_over_ui: CanvasLayer = null
+var ffa_results_ui: CanvasLayer = null
+var ffa_death_ui: CanvasLayer = null
 @onready var pause_menu: CanvasLayer = null
 @onready var settings_menu: CanvasLayer = null
 
@@ -90,10 +137,21 @@ var _settings_manager: Node = null
 # FX Manager
 var fx_manager: FXManager = null
 var minimap: Control = null
+var _world_environment: WorldEnvironment = null
 
 # Game state
 var resources: int = 0
 var essence: int = 0
+# Per-player economy ledger (FFA). Keyed by peer_id. In solo, econ[1] mirrors the
+# global `resources`/`essence`/`_currency_earned`/`_treasures_opened` vars so the
+# ~50 existing references keep working unchanged. The host owns this ledger for
+# scoring; the global vars always reflect the LOCAL player's pool for the UI.
+var econ: Dictionary = {}
+# Meta-progression run-start bonuses (applied from MetaProgression at run start).
+var meta_essence_mult: float = 1.0
+var meta_start_resources: int = 0
+var meta_max_hp_bonus: float = 0.0
+var meta_move_speed_mult: float = 1.0
 var elapsed: float = 0.0
 var spawn_accumulator: float = 0.0
 var game_over = false
@@ -103,6 +161,8 @@ var spawn_delay = 10.0
 var auto_start_delay = 2.0
 var _enemy_kill_count = 0
 var _time_scale_tween: Tween = null
+var _build_focus_active: bool = false
+var _build_focus_name: String = ""
 var _last_minute_announcement: int = -1
 var _essence_tip_shown: bool = false
 
@@ -159,6 +219,8 @@ var _current_streak: int = 0
 var _best_streak: int = 0
 var _wave_reached: int = 1
 var _gold_earned: int = 0
+var _treasures_opened: int = 0
+var _currency_earned: int = 0  # lifetime gold/resources gained this run
 
 # History for charts
 var _damage_history: Array = []  # Damage dealt per 10-second interval
@@ -181,6 +243,11 @@ var level = 1
 var xp_next = 12
 var pending_picks = 0
 var tech_open = false
+# Gamepad cursor over the tech draft (0..2). -1 = no gamepad highlight yet (mouse/kbd).
+var _tech_cursor: int = -1
+var _tech_nav_cooldown: float = 0.0
+var chest_modal_open = false
+var _chest_modal_depth = 0
 var tech_choices: Array = []
 var tech_levels: Dictionary = {}
 var unlocked_builds: Dictionary = {}
@@ -202,6 +269,14 @@ var characters = [
 		"id": "hunter",
 		"name": "Hunter",
 		"desc": "Balanced ranger with steady fire",
+		"base_path": "res://assets/level1/level1_player_anim_hunterv2",
+		"prefix": "player_hunterv2_32",
+		"icon": "res://assets/level1/level1_player_anim_hunterv2/player_hunterv2_32_S_move_f001_v001.png"
+	},
+	{
+		"id": "hunter_classic",
+		"name": "Hunter (Classic)",
+		"desc": "The original ranger look",
 		"base_path": "res://assets/level1/level1_player_anim",
 		"prefix": "player_hunter_32",
 		"icon": "res://assets/level1/level1_player_anim/player_hunter_32_S_move_f001_v001.png"
@@ -224,6 +299,8 @@ var tower_rate_mult = 1.0
 var player_damage_bonus = 0.0
 var tower_damage_bonus = 0.0
 var tower_range_mult = 1.0
+var tower_chain_bonus = 0
+var tower_aoe_mult = 1.0
 var chest_damage_bonus = 0.0
 var chest_speed_bonus = 0.0
 var chest_max_hp_bonus = 0.0
@@ -231,6 +308,8 @@ var tech_max_hp_bonus = 0.0
 var chest_tower_range_mult = 1.0
 var chest_tower_damage_bonus = 0.0
 var chest_tower_rate_mult = 1.0
+var chest_tower_chain_bonus = 0
+var chest_tower_aoe_mult = 1.0
 var build_cost_mult = 1.0
 
 # Chest upgrade system - new stats
@@ -269,14 +348,52 @@ var _boss_cycle = 0
 var _next_boss_time = 0.0
 var _boss_warning_shown = false
 var _final_boss_spawned = false
+var _final_boss_active = false
+var _run_won = false
+
+# Run modifier multipliers (applied at run start from MetaProgression.pending_modifier).
+var run_threat_mult = 1.0
+var run_player_damage_taken_mult = 1.0
+var run_ramp_speed_mult = 1.0
+
+# Meta permanent-upgrade multipliers (applied at run start).
+var meta_tower_damage_mult = 1.0
+var meta_pickup_radius_mult = 1.0
+
+# Keystone tech bonuses: build-defining picks (single-rank) that trade one
+# tower stat for another. Folded into the get_tower_* accessors so every tower
+# inherits them. Recomputed from tech_levels in _refresh_keystone_bonuses().
+var keystone_damage_mult = 1.0
+var keystone_rate_mult = 1.0
+var keystone_range_mult = 1.0
+var keystone_aoe_mult = 1.0
+var keystone_chain_bonus = 0
+
+# Income-decay telegraph: 0 = none, 1 = waning notice shown, 2 = low notice shown.
+var _income_decay_notice_stage = 0
+
+# Contextual controls hint: full hint shows early / in build mode, then fades once.
+const CONTROLS_HINT_FADE_TIME = 90.0
+var _controls_hint_faded = false
 
 var spawn_radius_min = 500.0
 var spawn_radius_max = 750.0
-var max_enemies_cap_base = 250
-var max_enemies_cap = 250
-const HORDE_MINUTE_MULT_STEP = 0.5  # +0.5x enemy pressure each minute
-const HORDE_MULT_MAX = 8.0
-const HORDE_CAP_HARD_LIMIT = 1200
+var max_enemies_cap_base = 210
+var max_enemies_cap = 210
+const HORDE_MINUTE_MULT_STEP = 0.22
+const HORDE_MULT_MAX = 3.0
+const HORDE_CAP_HARD_LIMIT = 520
+# FFA spawns more aggressively than solo so every player faces a denser horde.
+# These are the *base* (2-player) multipliers; the live values scale further with
+# the live player count via _ffa_participant_count() so a full lobby (lots of
+# players + towers) faces a far bigger, harder horde than a duel.
+const FFA_SPAWN_RATE_MULT = 1.6
+const FFA_MAX_ENEMY_MULT = 1.5
+# Per *extra* participant beyond the first: +55% spawn rate, +60% enemy cap,
+# +14% enemy difficulty (HP/damage). Tuned so 4 players is a real onslaught.
+const FFA_RATE_PER_PLAYER = 0.55
+const FFA_CAP_PER_PLAYER = 0.60
+const FFA_DIFFICULTY_PER_PLAYER = 0.14
 var max_projectiles = 150
 var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
@@ -284,13 +401,48 @@ var max_allies = 16
 var max_pickups = 60
 const PERF_SAMPLE_INTERVAL = 0.45
 const PERF_FX_SCALE_MIN = 0.20
-const PERF_PROJECTILE_SCALE_MIN = 0.70
+const PERF_PROJECTILE_SCALE_MIN = 0.45
 const PERF_FLOW_INTERVAL_MAX = 0.55
+const SETPIECE_COOLDOWNS_MS = {
+	"tower_evolution": 550,
+	"elite_death": 120,
+	"boss_death": 900,
+	"cannon_impact": 110,
+	"energy_impact": 95
+}
+const PERF_QUALITY_CAPS = {
+	"low": {
+		"particles": 84,
+		"projectiles": 96,
+		"damage_budget": 10,
+		"optional_fx_cap": 0.62
+	},
+	"medium": {
+		"particles": 124,
+		"projectiles": 134,
+		"damage_budget": 14,
+		"optional_fx_cap": 0.82
+	},
+	"high": {
+		"particles": 168,
+		"projectiles": 176,
+		"damage_budget": 20,
+		"optional_fx_cap": 1.0
+	},
+	"ultra": {
+		"particles": 220,
+		"projectiles": 224,
+		"damage_budget": 26,
+		"optional_fx_cap": 1.18
+	}
+}
 var _adaptive_perf_scale: float = 1.0
 var _adaptive_perf_smoothed_fps: float = 60.0
 var _adaptive_perf_sample_timer: float = 0.0
+var _optional_fx_quality_cap: float = 1.0
+var _runtime_target_fps: float = float(DEFAULT_RENDER_FPS_CAP)
 
-var chest_drop_chance = 0.50
+var chest_drop_chance = 0.425
 var chest_drop_cooldown = 12.0
 var _next_chest_time = 0.0
 
@@ -379,60 +531,72 @@ const ENEMY_POOLS = [
 	{
 		"time": 45.0,
 		"weights": [
-			[ENEMY_SCENE, 60],
-			[CHARGER_SCENE, 22],
-			[HELLHOUND_SCENE, 18]
+			[ENEMY_SCENE, 46],
+			[ZOMBIE_SHAMBLER_SCENE, 20],
+			[CHARGER_SCENE, 18],
+			[HELLHOUND_SCENE, 16]
 		]
 	},
 	{
 		"time": 90.0,
 		"weights": [
-			[ENEMY_SCENE, 40],
-			[CHARGER_SCENE, 16],
-			[HELLHOUND_SCENE, 14],
-			[SPITTER_SCENE, 16],
-			[BANSHEE_SCENE, 14]
+			[ENEMY_SCENE, 28],
+			[ZOMBIE_SHAMBLER_SCENE, 14],
+			[CHARGER_SCENE, 14],
+			[HELLHOUND_SCENE, 12],
+			[SPITTER_SCENE, 13],
+			[BANSHEE_SCENE, 10],
+			[WRAITH_SCENE, 9]
 		]
 	},
 	{
 		"time": 150.0,
 		"weights": [
-			[ENEMY_SCENE, 28],
-			[CHARGER_SCENE, 12],
-			[HELLHOUND_SCENE, 10],
-			[SPITTER_SCENE, 14],
-			[BANSHEE_SCENE, 10],
-			[FIEND_DUELIST_SCENE, 10],
-			[HEALER_SCENE, 8],
-			[NECROMANCER_SCENE, 8]
+			[ENEMY_SCENE, 18],
+			[ZOMBIE_SHAMBLER_SCENE, 12],
+			[CHARGER_SCENE, 10],
+			[HELLHOUND_SCENE, 8],
+			[SPITTER_SCENE, 12],
+			[BANSHEE_SCENE, 8],
+			[FIEND_DUELIST_SCENE, 9],
+			[HEALER_SCENE, 7],
+			[NECROMANCER_SCENE, 7],
+			[WRAITH_SCENE, 5],
+			[IMP_SKIRMISHER_SCENE, 4]
 		]
 	},
 	{
 		"time": 210.0,
 		"weights": [
-			[ENEMY_SCENE, 20],
-			[CHARGER_SCENE, 10],
-			[HELLHOUND_SCENE, 8],
-			[SPITTER_SCENE, 12],
-			[BANSHEE_SCENE, 8],
-			[FIEND_DUELIST_SCENE, 10],
-			[HEALER_SCENE, 10],
-			[NECROMANCER_SCENE, 10],
-			[PLAGUE_ABOMINATION_SCENE, 12]
+			[ENEMY_SCENE, 14],
+			[ZOMBIE_SHAMBLER_SCENE, 10],
+			[CHARGER_SCENE, 8],
+			[HELLHOUND_SCENE, 7],
+			[SPITTER_SCENE, 10],
+			[BANSHEE_SCENE, 6],
+			[FIEND_DUELIST_SCENE, 9],
+			[HEALER_SCENE, 9],
+			[NECROMANCER_SCENE, 9],
+			[PLAGUE_ABOMINATION_SCENE, 10],
+			[WRAITH_SCENE, 6],
+			[IMP_SKIRMISHER_SCENE, 5]
 		]
 	},
 	{
 		"time": 300.0,
 		"weights": [
-			[ENEMY_SCENE, 16],
-			[CHARGER_SCENE, 10],
-			[HELLHOUND_SCENE, 8],
-			[SPITTER_SCENE, 12],
-			[BANSHEE_SCENE, 8],
-			[FIEND_DUELIST_SCENE, 10],
-			[HEALER_SCENE, 12],
-			[NECROMANCER_SCENE, 12],
-			[PLAGUE_ABOMINATION_SCENE, 12]
+			[ENEMY_SCENE, 10],
+			[ZOMBIE_SHAMBLER_SCENE, 8],
+			[CHARGER_SCENE, 8],
+			[HELLHOUND_SCENE, 7],
+			[SPITTER_SCENE, 10],
+			[BANSHEE_SCENE, 6],
+			[FIEND_DUELIST_SCENE, 9],
+			[HEALER_SCENE, 10],
+			[NECROMANCER_SCENE, 10],
+			[PLAGUE_ABOMINATION_SCENE, 10],
+			[WRAITH_SCENE, 8],
+			[IMP_SKIRMISHER_SCENE, 7]
 		]
 	}
 ]
@@ -444,23 +608,30 @@ var breakable_spawn_max = 920.0
 var prop_spawn_radius = 1600.0
 var prop_min_distance = 120.0
 var prop_count = 90
+var prop_min_separation = 92.0          # rejection-sampling spacing between props
+var prop_safe_spawn_radius = 180.0      # keep props out of the player start pocket
 var cluster_count = 8
 var cluster_min_distance = 260.0
+var cluster_min_separation = 240.0      # landmarks need wide breathing room
 
-const PROP_PATHS = [
-	"res://assets/level1/level1_props/prop_graveyard_broken_fence_32_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_bone_pile_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_broken_cart_48_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_broken_pillar_48_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_crates_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_dead_tree_stump_48_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_lantern_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_ruined_pillar_48_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_skull_cairn_32_v001.png",
-	"res://assets/level1/level1_props/prop_graveyard_skull_pile_32_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_tombstone_large_48_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_tombstone_small_32_v002.png",
-	"res://assets/level1/level1_props/prop_graveyard_tombstone_tall_48_v001.png"
+# Props carry a weight (how often they appear) and a biome affinity so foliage
+# favours the central grass and tombs/crypts favour the mid/outer wastes. The
+# "size" is the source art's pixel height, used to seat the contact shadow.
+const PROP_DEFS = [
+	{"path": "res://assets/level1/level1_props/prop_graveyard_tombstone_small_32_v002.png", "size": 32, "weight": 10, "biomes": ["mud", "transition", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_tombstone_large_48_v002.png", "size": 48, "weight": 8, "biomes": ["mud", "transition", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_tombstone_tall_48_v001.png", "size": 48, "weight": 6, "biomes": ["transition", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_broken_pillar_48_v002.png", "size": 48, "weight": 5, "biomes": ["transition", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_ruined_pillar_48_v001.png", "size": 48, "weight": 4, "biomes": ["wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_broken_fence_32_v002.png", "size": 32, "weight": 6, "biomes": ["grass", "transition"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_dead_tree_stump_48_v002.png", "size": 48, "weight": 6, "biomes": ["grass", "transition"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_skull_cairn_32_v001.png", "size": 32, "weight": 4, "biomes": ["wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_skull_pile_32_v002.png", "size": 32, "weight": 4, "biomes": ["mud", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_bone_pile_32_v001.png", "size": 32, "weight": 4, "biomes": ["mud", "wasteland"]},
+	{"path": "res://assets/level1/level1_props/prop_graveyard_lantern_32_v001.png", "size": 32, "weight": 3, "biomes": ["grass", "transition"]}
+	# NOTE: crates + broken cart props removed — they read as "treasure chests" and
+	# confused players into thinking they were openable loot. (Real chests come from
+	# spawn_treasure_chest only.)
 ]
 
 const CLUSTER_PATHS = [
@@ -509,96 +680,11 @@ var tech_defs = {
 		"min_level": 2,
 		"category": "engineer"
 	},
-	"unlock_cannon": {
-		"name": "Unlock: Cannon Tower",
-		"desc": "Build heavy AoE cannon towers",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
-		"rarity": "rare",
-		"min_level": 2,
-		"unlock_build": "cannon_tower",
-		"category": "tower"
-	},
-	"unlock_mine": {
-		"name": "Unlock: Mine Trap",
-		"desc": "Plant mines that detonate on contact",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
-		"rarity": "common",
-		"min_level": 2,
-		"unlock_build": "mine_trap",
-		"category": "tower"
-	},
-	"unlock_ice_trap": {
-		"name": "Unlock: Ice Trap",
-		"desc": "Freeze fields to slow swarms",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
-		"rarity": "rare",
-		"min_level": 3,
-		"unlock_build": "ice_trap",
-		"category": "tower"
-	},
-	"unlock_barracks": {
-		"name": "Unlock: Barracks",
-		"desc": "Train allied fighters to help defend",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_bone_32_v001.png",
-		"rarity": "rare",
-		"min_level": 4,
-		"unlock_build": "barracks",
-		"category": "tower"
-	},
-	"unlock_tech_lab": {
-		"name": "Unlock: Tech Lab",
-		"desc": "Boost tower fire rate globally",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
-		"rarity": "rare",
-		"min_level": 4,
-		"unlock_build": "tech_lab",
-		"category": "tower"
-	},
-	"unlock_tesla": {
-		"name": "Unlock: Tesla Tower",
-		"desc": "Chain lightning between targets",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
-		"rarity": "epic",
-		"min_level": 4,
-		"unlock_build": "tesla_tower",
-		"category": "tower"
-	},
-	"unlock_armory": {
-		"name": "Unlock: Armory",
-		"desc": "Boost your gun damage",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
-		"rarity": "epic",
-		"min_level": 5,
-		"unlock_build": "armory",
-		"category": "tower"
-	},
-	"unlock_shrine": {
-		"name": "Unlock: Shrine",
-		"desc": "Heals you within its aura",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_skull_32_v001.png",
-		"rarity": "epic",
-		"min_level": 5,
-		"unlock_build": "shrine",
-		"category": "tower"
-	},
-	"unlock_acid_trap": {
-		"name": "Unlock: Acid Burst",
-		"desc": "Explodes and melts siege units",
-		"max": 1,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
-		"rarity": "rare",
-		"min_level": 3,
-		"unlock_build": "acid_trap",
-		"category": "tower"
-	},
+	# Build-unlock tech picks removed: all five buildable structures
+	# (arrow_turret, cannon_tower, tesla_tower, resource_generator, shrine) are now
+	# unlocked from the start via _unlock_core_builds(), and the trap/extra-building
+	# unlocks (mine, ice, acid, barracks, tech_lab, armory) were dropped along with
+	# those buildings. See docs/REMOVED_BUILDINGS.md to restore.
 	"tesla_emp": {
 		"name": "Tesla: EMP",
 		"desc": "Tesla shocks slow and stun briefly",
@@ -611,8 +697,8 @@ var tech_defs = {
 	},
 	"tower_range": {
 		"name": "Towers: Long Range",
-		"desc": "All towers gain +12% range",
-		"max": 3,
+		"desc": "+25% range to all towers",
+		"max": 4,
 		"icon": "res://assets/ui/ui_icon_stone_32_v001.png",
 		"rarity": "common",
 		"min_level": 2,
@@ -620,8 +706,8 @@ var tech_defs = {
 	},
 	"tower_damage": {
 		"name": "Towers: Brutality",
-		"desc": "All towers gain +2 damage",
-		"max": 3,
+		"desc": "+6 damage to all towers",
+		"max": 4,
 		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2,
@@ -629,8 +715,8 @@ var tech_defs = {
 	},
 	"tower_overclock": {
 		"name": "Towers: Overclock",
-		"desc": "All towers gain +10% fire rate",
-		"max": 3,
+		"desc": "+22% fire rate to all towers",
+		"max": 4,
 		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "epic",
 		"min_level": 4,
@@ -638,16 +724,35 @@ var tech_defs = {
 	},
 	"tower_ordnance": {
 		"name": "Towers: Heavy Ordnance",
-		"desc": "All towers gain +3 damage",
+		"desc": "+9 damage to all towers",
 		"max": 3,
 		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
 		"category": "tower"
 	},
+	"tower_chain": {
+		"name": "Tesla: Arc Relays",
+		"desc": "Tesla bolts chain to +1 more target",
+		"max": 4,
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
+		"rarity": "epic",
+		"min_level": 5,
+		"requires_build": "tesla_tower",
+		"category": "tower"
+	},
+	"tower_aoe": {
+		"name": "Towers: Blast Radius",
+		"desc": "+18% blast radius on AoE towers",
+		"max": 4,
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
+		"rarity": "rare",
+		"min_level": 4,
+		"category": "tower"
+	},
 	"orbital_overdrive": {
 		"name": "Relic: Orbital Overdrive",
-		"desc": "All towers gain +20% fire rate and +5 damage",
+		"desc": "+40% fire rate, +16 damage, +20% range to all towers",
 		"max": 2,
 		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
@@ -689,6 +794,49 @@ var tech_defs = {
 		"rarity": "rare",
 		"min_level": 3,
 		"category": "economy"
+	},
+	# --- Keystones: build-defining, single-rank picks that trade one tower
+	# stat for another. Effects are applied in _refresh_keystone_bonuses().
+	"keystone_glass_cannon": {
+		"name": "Keystone: Glass Cannon",
+		"desc": "+60% tower damage, but -20% fire rate",
+		"max": 1,
+		"keystone": true,
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
+		"rarity": "legendary",
+		"min_level": 5,
+		"category": "tower"
+	},
+	"keystone_storm_battery": {
+		"name": "Keystone: Storm Battery",
+		"desc": "+55% fire rate, but -15% range",
+		"max": 1,
+		"keystone": true,
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
+		"rarity": "legendary",
+		"min_level": 5,
+		"category": "tower"
+	},
+	"keystone_siege_doctrine": {
+		"name": "Keystone: Siege Doctrine",
+		"desc": "+40% damage & +30% blast radius, but -10% fire rate",
+		"max": 1,
+		"keystone": true,
+		"icon": "res://assets/ui/ui_icon_stone_32_v001.png",
+		"rarity": "epic",
+		"min_level": 5,
+		"category": "tower"
+	},
+	"keystone_overcharged_arc": {
+		"name": "Keystone: Overcharged Arc",
+		"desc": "Tesla chains +2 targets and all towers gain +25% damage",
+		"max": 1,
+		"keystone": true,
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
+		"rarity": "legendary",
+		"min_level": 6,
+		"requires_build": "tesla_tower",
+		"category": "tower"
 	}
 }
 
@@ -704,38 +852,38 @@ var rarity_weights = {
 var fx_defs = {
 	"hit": {
 		"paths": [
-			"res://assets/fx/fx_hit_spark_16_f001_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f002_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f003_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f004_v001.png"
+			"res://assets/fx/fx_hit_spark_32_f001_v002.png",
+			"res://assets/fx/fx_hit_spark_32_f002_v002.png",
+			"res://assets/fx/fx_hit_spark_32_f003_v002.png",
+			"res://assets/fx/fx_hit_spark_32_f004_v002.png"
 		],
-		"fps": 18.0,
+		"fps": 20.0,
 		"lifetime": 0.2,
-		"scale": 1.25,
+		"scale": 1.35,
 		"alpha": 0.9,
 		"z": 2
 	},
 	"crit": {
 		"paths": [
-			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
+			"res://assets/fx/fx_crit_impact_64_f001_v002.png",
+			"res://assets/fx/fx_crit_impact_64_f002_v002.png",
+			"res://assets/fx/fx_crit_impact_64_f003_v002.png",
+			"res://assets/fx/fx_crit_impact_64_f004_v002.png"
 		],
-		"fps": 20.0,
-		"lifetime": 0.24,
-		"scale": 1.6,
+		"fps": 18.0,
+		"lifetime": 0.26,
+		"scale": 1.8,
 		"alpha": 0.95,
 		"z": 3
 	},
 	"chain_hit": {
 		"paths": [
-			"res://assets/fx/fx_shock_ring_32_f001_v001.png",
-			"res://assets/fx/fx_shock_ring_32_f002_v001.png",
-			"res://assets/fx/fx_shock_ring_32_f003_v001.png",
-			"res://assets/fx/fx_shock_ring_32_f004_v001.png"
+			"res://assets/fx/fx_chain_hit_32_f001_v002.png",
+			"res://assets/fx/fx_chain_hit_32_f002_v002.png",
+			"res://assets/fx/fx_chain_hit_32_f003_v002.png",
+			"res://assets/fx/fx_chain_hit_32_f004_v002.png"
 		],
-		"fps": 16.0,
+		"fps": 17.0,
 		"lifetime": 0.22,
 		"scale": 1.1,
 		"alpha": 0.9,
@@ -743,12 +891,12 @@ var fx_defs = {
 	},
 	"kill_pop": {
 		"paths": [
-			"res://assets/fx/fx_blood_splash_32_f001_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f002_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f003_v001.png",
-			"res://assets/fx/fx_blood_splash_32_f004_v001.png"
+			"res://assets/fx/fx_kill_pop_32_f001_v002.png",
+			"res://assets/fx/fx_kill_pop_32_f002_v002.png",
+			"res://assets/fx/fx_kill_pop_32_f003_v002.png",
+			"res://assets/fx/fx_kill_pop_32_f004_v002.png"
 		],
-		"fps": 16.0,
+		"fps": 18.0,
 		"lifetime": 0.28,
 		"scale": 1.7,
 		"alpha": 0.95,
@@ -756,35 +904,35 @@ var fx_defs = {
 	},
 	"elite_kill": {
 		"paths": [
-			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
+			"res://assets/fx/fx_elite_kill_impact_64_f001_v002.png",
+			"res://assets/fx/fx_elite_kill_impact_64_f002_v002.png",
+			"res://assets/fx/fx_elite_kill_impact_64_f003_v002.png",
+			"res://assets/fx/fx_elite_kill_impact_64_f004_v002.png"
 		],
-		"fps": 16.0,
-		"lifetime": 0.3,
-		"scale": 2.1,
+		"fps": 18.0,
+		"lifetime": 0.32,
+		"scale": 2.25,
 		"alpha": 1.0,
 		"z": 3
 	},
 	"build": {
 		"paths": [
-			"res://assets/fx/fx_hit_spark_16_f001_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f002_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f003_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f004_v001.png"
+			"res://assets/fx/fx_holy_burst_32_f001_v002.png",
+			"res://assets/fx/fx_holy_burst_32_f002_v002.png",
+			"res://assets/fx/fx_holy_burst_32_f003_v002.png",
+			"res://assets/fx/fx_holy_burst_32_f004_v002.png"
 		],
-		"fps": 16.0,
+		"fps": 18.0,
 		"lifetime": 0.25,
-		"scale": 1.4,
+		"scale": 1.25,
 		"alpha": 0.9,
 		"z": 3,
-		"tint": Color(1.0, 0.85, 0.4)
+		"tint": Color(0.92, 0.88, 0.65)
 	},
-	"upgrade_burst": {
-		"paths": [
-			"res://assets/fx/fx_shockwave_ring_64_f001_v002.png",
-			"res://assets/fx/fx_shockwave_ring_64_f002_v002.png",
+		"upgrade_burst": {
+			"paths": [
+				"res://assets/fx/fx_shockwave_ring_64_f001_v002.png",
+				"res://assets/fx/fx_shockwave_ring_64_f002_v002.png",
 			"res://assets/fx/fx_shockwave_ring_64_f003_v002.png",
 			"res://assets/fx/fx_shockwave_ring_64_f004_v002.png"
 		],
@@ -792,31 +940,102 @@ var fx_defs = {
 		"lifetime": 0.35,
 		"scale": 2.0,
 		"alpha": 0.8,
-		"z": 5,
-		"tint": Color(1.0, 0.9, 0.5)
-	},
-	"explosion": {
-		"paths": [
-			"res://assets/fx/fx_explosion_small_32_f001_v002.png",
-			"res://assets/fx/fx_explosion_small_32_f002_v002.png",
+			"z": 5,
+			"tint": Color(1.0, 0.9, 0.5)
+		},
+		"hero_evolution": {
+			"paths": [
+				"res://assets/fx/fx_holy_burst_64_f001_v003.png",
+				"res://assets/fx/fx_holy_burst_64_f002_v003.png",
+				"res://assets/fx/fx_holy_burst_64_f003_v003.png",
+				"res://assets/fx/fx_holy_burst_64_f004_v003.png"
+			],
+			"fps": 28.0,
+			"lifetime": 0.62,
+			"scale": 3.5,
+			"alpha": 1.0,
+			"z": 10,
+			"tint": Color(0.45, 0.24, 1.0, 1.0)
+		},
+		"hero_elite_death": {
+			"paths": [
+				"res://assets/fx/fx_elite_kill_impact_64_f001_v003.png",
+				"res://assets/fx/fx_elite_kill_impact_64_f002_v003.png",
+				"res://assets/fx/fx_elite_kill_impact_64_f003_v003.png",
+				"res://assets/fx/fx_elite_kill_impact_64_f004_v003.png"
+			],
+			"fps": 26.0,
+			"lifetime": 0.56,
+			"scale": 3.8,
+			"alpha": 1.0,
+			"z": 10,
+			"tint": Color(1.0, 0.78, 0.18, 1.0)
+		},
+		"hero_boss_death": {
+			"paths": [
+				"res://assets/fx/fx_crit_impact_64_f001_v003.png",
+				"res://assets/fx/fx_crit_impact_64_f002_v003.png",
+				"res://assets/fx/fx_crit_impact_64_f003_v003.png",
+				"res://assets/fx/fx_crit_impact_64_f004_v003.png"
+			],
+			"fps": 24.0,
+			"lifetime": 0.72,
+			"scale": 4.6,
+			"alpha": 1.0,
+			"z": 11,
+			"tint": Color(1.0, 0.2, 0.2, 1.0)
+		},
+		"explosion": {
+			"paths": [
+				"res://assets/fx/fx_explosion_small_32_f001_v002.png",
+				"res://assets/fx/fx_explosion_small_32_f002_v002.png",
 			"res://assets/fx/fx_explosion_small_32_f003_v002.png",
 			"res://assets/fx/fx_explosion_small_32_f004_v002.png"
 		],
 		"fps": 16.0,
-		"lifetime": 0.28,
-		"scale": 1.35,
-		"alpha": 0.85,
-		"z": -1
-	},
-	"fire_burst": {
+			"lifetime": 0.28,
+			"scale": 1.35,
+			"alpha": 0.85,
+			"z": -1
+		},
+		"hero_cannon_impact": {
+			"paths": [
+				"res://assets/fx/fx_explosion_small_32_f001_v003.png",
+				"res://assets/fx/fx_explosion_small_32_f002_v003.png",
+				"res://assets/fx/fx_explosion_small_32_f003_v003.png",
+				"res://assets/fx/fx_explosion_small_32_f004_v003.png"
+			],
+			"fps": 24.0,
+			"lifetime": 0.42,
+			"scale": 2.8,
+			"alpha": 1.0,
+			"z": 6,
+			"tint": Color(1.0, 0.4, 0.08, 1.0)
+		},
+		"hero_energy_impact": {
+			"paths": [
+				"res://assets/fx/fx_chain_hit_64_f001_v003.png",
+				"res://assets/fx/fx_chain_hit_64_f002_v003.png",
+				"res://assets/fx/fx_chain_hit_64_f003_v003.png",
+				"res://assets/fx/fx_chain_hit_64_f004_v003.png"
+			],
+			"fps": 24.0,
+			"lifetime": 0.42,
+			"scale": 2.9,
+			"alpha": 1.0,
+			"z": 6,
+			"tint": Color(0.24, 1.0, 1.0, 1.0)
+		},
+		"fire_burst": {
 		"paths": [
-			"res://assets/fx/fx_hit_spark_16_f001_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f002_v001.png",
-			"res://assets/fx/fx_hit_spark_16_f003_v001.png"
+			"res://assets/fx/fx_fire_burst_32_f001_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f002_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f003_v002.png",
+			"res://assets/fx/fx_fire_burst_32_f004_v002.png"
 		],
 		"fps": 18.0,
 		"lifetime": 0.2,
-		"scale": 1.0,
+		"scale": 1.1,
 		"alpha": 0.9,
 		"z": 1,
 		"tint": Color(1.0, 0.4, 0.1, 1.0)
@@ -968,14 +1187,14 @@ var fx_defs = {
 	},
 	"blood": {
 		"paths": [
-			"res://assets/fx/fx_blood_splat_32_f001_v002.png",
-			"res://assets/fx/fx_blood_splat_32_f002_v002.png",
-			"res://assets/fx/fx_blood_splat_32_f003_v002.png",
-			"res://assets/fx/fx_blood_splat_32_f004_v002.png"
+			"res://assets/fx/fx_blood_splat_64_f001_v002.png",
+			"res://assets/fx/fx_blood_splat_64_f002_v002.png",
+			"res://assets/fx/fx_blood_splat_64_f003_v002.png",
+			"res://assets/fx/fx_blood_splat_64_f004_v002.png"
 		],
 		"fps": 16.0,
 		"lifetime": 0.28,
-		"scale": 1.6,
+		"scale": 1.45,
 		"alpha": 0.95,
 		"z": 1
 	},
@@ -1009,7 +1228,50 @@ var fx_defs = {
 
 var _damage_number_window_ms = 0
 var _damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
+var _setpiece_fx_last_ms: Dictionary = {}
 var _damage_font: Font = null
+const DAMAGE_BADGE_PATHS = {
+	"normal_small": "res://assets/ui_damage/normal_small.png",
+	"normal_large": "res://assets/ui_damage/normal_large.png",
+	"dot_small": "res://assets/ui_damage/dot_small.png",
+	"dot_large": "res://assets/ui_damage/dot_large.png",
+	"crit_small": "res://assets/ui_damage/crit_small.png",
+	"crit_large": "res://assets/ui_damage/crit_large.png"
+}
+const DAMAGE_PATTERN_PATHS = {
+	"normal": "res://assets/ui_damage/normal_small.png",
+	"dot": "res://assets/ui_damage/dot_small.png",
+	"crit": "res://assets/ui_damage/crit_small.png"
+}
+const DAMAGE_LABEL_SHADER_CODE = """
+shader_type canvas_item;
+
+uniform sampler2D pattern_tex : source_color;
+uniform vec4 primary_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform vec4 secondary_color : source_color = vec4(0.6, 0.6, 0.6, 1.0);
+uniform float pattern_scale = 2.0;
+uniform float contrast = 1.12;
+uniform float seed = 0.0;
+uniform float shade_jitter = 0.0;
+
+void fragment() {
+	vec4 src = COLOR;
+	// Sample in LOCAL UV space (not SCREEN_UV) so each number renders its own
+	// self-contained gradient. This stops overlapping numbers from painting the
+	// same screen-space fill and merging into one unreadable color blob.
+	vec2 uv = fract((UV + vec2(seed * 0.017, seed * 0.029)) * pattern_scale);
+	vec3 pat = texture(pattern_tex, uv).rgb;
+	float lum = dot(pat, vec3(0.299, 0.587, 0.114));
+	lum = clamp((lum - 0.5) * contrast + 0.5, 0.0, 1.0);
+	vec3 fill = mix(secondary_color.rgb, primary_color.rgb, lum);
+	// Per-number brightness nudge so adjacent same-type numbers look distinct.
+	fill = clamp(fill * (1.0 + shade_jitter), 0.0, 1.0);
+	COLOR = vec4(fill, src.a);
+}
+"""
+var _damage_badge_cache: Dictionary = {}
+var _damage_pattern_cache: Dictionary = {}
+var _damage_label_shader: Shader = null
 
 func _validate_fx_defs() -> void:
 	var invalid_kinds: Array[String] = []
@@ -1250,19 +1512,45 @@ func _build_tech_ui_meta(forced_category: String = "") -> Dictionary:
 	}
 
 func _refresh_tech_scalars() -> void:
-	tower_range_mult = 1.0 + 0.12 * int(tech_levels.get("tower_range", 0))
+	tower_range_mult = 1.0 + 0.25 * int(tech_levels.get("tower_range", 0)) + 0.20 * int(tech_levels.get("orbital_overdrive", 0))
 	tower_damage_bonus = (
 		chest_tower_damage_bonus
-		+ 2.0 * int(tech_levels.get("tower_damage", 0))
-		+ 3.0 * int(tech_levels.get("tower_ordnance", 0))
-		+ 5.0 * int(tech_levels.get("orbital_overdrive", 0))
+		+ 6.0 * int(tech_levels.get("tower_damage", 0))
+		+ 9.0 * int(tech_levels.get("tower_ordnance", 0))
+		+ 16.0 * int(tech_levels.get("orbital_overdrive", 0))
 	)
 	_tech_base_rate_mult = (
 		1.0
-		+ 0.10 * int(tech_levels.get("tower_overclock", 0))
-		+ 0.20 * int(tech_levels.get("orbital_overdrive", 0))
+		+ 0.22 * int(tech_levels.get("tower_overclock", 0))
+		+ 0.40 * int(tech_levels.get("orbital_overdrive", 0))
 	)
+	tower_chain_bonus = chest_tower_chain_bonus + int(tech_levels.get("tower_chain", 0)) + int(tech_levels.get("orbital_overdrive", 0))
+	tower_aoe_mult = chest_tower_aoe_mult * (1.0 + 0.18 * int(tech_levels.get("tower_aoe", 0)) + 0.15 * int(tech_levels.get("orbital_overdrive", 0)))
+	_refresh_keystone_bonuses()
 	_recalc_effects()
+
+func _refresh_keystone_bonuses() -> void:
+	# Keystones are single-rank; presence (level > 0) toggles the whole package.
+	# Multipliers stack multiplicatively so picking several keystones still reads
+	# sensibly (and is intentionally hard to assemble given their rarity).
+	keystone_damage_mult = 1.0
+	keystone_rate_mult = 1.0
+	keystone_range_mult = 1.0
+	keystone_aoe_mult = 1.0
+	keystone_chain_bonus = 0
+	if int(tech_levels.get("keystone_glass_cannon", 0)) > 0:
+		keystone_damage_mult *= 1.60
+		keystone_rate_mult *= 0.80
+	if int(tech_levels.get("keystone_storm_battery", 0)) > 0:
+		keystone_rate_mult *= 1.55
+		keystone_range_mult *= 0.85
+	if int(tech_levels.get("keystone_siege_doctrine", 0)) > 0:
+		keystone_damage_mult *= 1.40
+		keystone_aoe_mult *= 1.30
+		keystone_rate_mult *= 0.90
+	if int(tech_levels.get("keystone_overcharged_arc", 0)) > 0:
+		keystone_chain_bonus += 2
+		keystone_damage_mult *= 1.25
 
 func _get_tech_reroll_cost() -> int:
 	var cost = TECH_REROLL_BASE_COST + _tech_rerolls_this_pick * TECH_REROLL_COST_STEP
@@ -1367,14 +1655,26 @@ func _ready() -> void:
 	set_process_unhandled_input(true)
 	_ensure_input_map()
 	_settings_manager = _get_settings_manager()
+	# Re-assert the custom hardware cursor for the gameplay scene (a scene change
+	# can drop the boot-time cursor, so it only showed on the menu otherwise).
+	if _settings_manager != null and _settings_manager.has_method("apply_custom_cursor"):
+		_settings_manager.apply_custom_cursor()
 	_instantiate_pause_menu()
 	_instantiate_settings_menu()
 	_connect_settings_manager()
 	_sync_runtime_settings()
 	_apply_runtime_performance_budgets()
 	_load_damage_font()
+	_prepare_damage_badges()
 	_damage_number_budget = _get_damage_budget_per_sec()
-	
+
+	# Multiplayer: build the player registry. In solo this just registers the
+	# existing scene player (zero behavior change); in FFA it spawns one player
+	# per roster entry and re-points `player`/`camera` at the LOCAL one.
+	_setup_players()
+	if is_ffa() and is_host() and OS.get_cmdline_user_args().has("--ffa-econ-test"):
+		call_deferred("_run_econ_selftest")
+
 	# Initialize audio system
 	if camera != null:
 		AudioManager.set_camera(camera)
@@ -1382,6 +1682,10 @@ func _ready() -> void:
 		if camera.has_method("setup"):
 			camera.setup(player, self)
 	
+	# Punchy/neon bloom layer (quality-gated). Created in code so it can
+	# re-apply live when the player cycles graphics quality.
+	_setup_world_environment()
+
 	# Initialize FX Manager
 	fx_manager = FXManager.new()
 	fx_manager.name = "FXManager"
@@ -1401,7 +1705,20 @@ func _ready() -> void:
 	_instantiate_game_over_ui()
 	
 	_update_ui()
-	if ui != null and ui.has_method("show_start"):
+	var meta_autostart := false
+	var meta = _get_meta_progression()
+	# Pick the terrain palette for the selected level before the rest of setup.
+	if ground != null and ground.has_method("set_active_level"):
+		var level_id := "graveyard"
+		if meta != null and "pending_level" in meta:
+			level_id = str(meta.pending_level)
+		ground.set_active_level(level_id)
+	if meta != null and bool(meta.autostart_run):
+		meta_autostart = true
+	if meta_autostart:
+		if ui != null and ui.has_method("show_start"):
+			ui.show_start(false)
+	elif ui != null and ui.has_method("show_start"):
 		if ui.has_method("set_start_text"):
 			ui.set_start_text("Stronghold Survivors", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
 		if ui.has_method("set_start_options"):
@@ -1423,8 +1740,339 @@ func _ready() -> void:
 	_reset_run_stats()
 	_set_pause_allowed(false)
 	mark_flow_field_dirty()
+	if meta_autostart and meta != null:
+		meta.autostart_run = false
+		_start_game()
+	# FFA has no character-select / press-to-start gate: the host already locked
+	# the roster in the lobby, so every peer drops straight into the match.
+	if is_ffa():
+		_instantiate_ffa_results_ui()
+		_instantiate_ffa_death_ui()
+		# Remember how many real players started so the last-player-standing grace
+		# timer only ever triggers in a genuine multi-human match (never solo-host
+		# + bots, where there's no one left to wait for).
+		_ffa_started_real_count = _count_real_players()
+		# Test helper: shorten the 20-min match so the end-of-match flow can be
+		# exercised headlessly.  godot ... -- --ffa-short-match
+		if OS.get_cmdline_user_args().has("--ffa-short-match"):
+			_ffa_time_left = 12.0
+		if ui != null and ui.has_method("show_start"):
+			ui.show_start(false)
+		_start_game()
+
+# ---- Multiplayer: player registry ----------------------------------------
+
+func _net() -> Node:
+	return get_node_or_null("/root/Net")
+
+func _net_verbose() -> bool:
+	return OS.get_cmdline_user_args().has("--net-verbose")
+
+func is_solo() -> bool:
+	var n := _net()
+	return n == null or not n.is_multiplayer()
+
+func is_ffa() -> bool:
+	return not is_solo()
+
+func is_host() -> bool:
+	var n := _net()
+	return n != null and n.is_host
+
+# True when this instance owns the shared simulation (enemy spawning + AI):
+# solo always, or the host in FFA. Clients defer to replicated state.
+func _is_sim_authority() -> bool:
+	return is_solo() or is_host()
+
+# Public alias so enemies/projectiles can gate host-only AI.
+func is_sim_authority() -> bool:
+	return _is_sim_authority()
+
+# Builds `players`. Solo keeps the hardcoded $World/Player untouched. FFA hides
+# it and spawns one networked player per roster entry; only the host spawns,
+# clients receive them via the player spawn RPC.
+func _setup_players() -> void:
+	players.clear()
+	_init_econ()
+	if is_solo():
+		players[1] = player
+		local_player = player
+		return
+	# --- FFA ---
+	var net := _net()
+	# The pre-placed scene player is unused in FFA; remove it so it doesn't
+	# double up with the spawned local player.
+	if player != null and is_instance_valid(player):
+		player.queue_free()
+	player = null
+	camera = null
+	local_player = null
+	if _net_verbose():
+		print("[FFA] _setup_players host=", net.is_host, " roster=", net.match_roster.size())
+	if net.is_host:
+		_host_spawn_all_players()
+	else:
+		# Client just entered the match scene: ask the host for the full player
+		# list. This avoids RPC-vs-scene-load races (host may have spawned
+		# before we were ready to receive).
+		_rpc_request_players.rpc_id(1)
+
+# Host: (re)spawn every roster player locally and store their data so it can be
+# replicated to any peer that asks.
+func _host_spawn_all_players() -> void:
+	var net := _net()
+	var roster: Array = net.match_roster
+	_ffa_spawn_data.clear()
+	var i := 0
+	for entry in roster:
+		var pid := int(entry["peer_id"])
+		var hero := str(entry.get("hero", "hunter"))
+		var bot := bool(entry.get("is_bot", false))
+		var pos := _ffa_spawn_position(i, roster.size())
+		_ffa_spawn_data.append({"pid": pid, "hero": hero, "bot": bot, "pos": pos})
+		_spawn_player(pid, hero, bot, pos)
+		i += 1
+
+# Cached spawn descriptors so the host can answer late client requests.
+var _ffa_spawn_data: Array = []
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_players() -> void:
+	if not is_host():
+		return
+	var sender := multiplayer.get_remote_sender_id()
+	for d in _ffa_spawn_data:
+		_rpc_spawn_player.rpc_id(sender, int(d["pid"]), str(d["hero"]), bool(d["bot"]), d["pos"])
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_spawn_player(pid: int, hero: String, bot: bool, pos: Vector2) -> void:
+	_spawn_player(pid, hero, bot, pos)
+
+func _spawn_player(pid: int, hero: String, bot: bool, pos: Vector2) -> void:
+	if players.has(pid):
+		return
+	var p: CharacterBody2D = PLAYER_SCENE.instantiate()
+	p.name = "Player_%d" % pid
+	p.peer_id = pid
+	p.is_bot = bot
+	p.global_position = pos
+	# Input authority: the owning peer for humans; the host for bots.
+	var authority := 1 if bot else pid
+	p.set_multiplayer_authority(authority)
+	$World.add_child(p)
+	players[pid] = p
+	# Bind the LOCAL player as `player`/`camera`; activate only its camera.
+	var net := _net()
+	var local_id: int = net.local_peer_id
+	var cam: Camera2D = p.get_node_or_null("Camera2D")
+	if pid == local_id and not bot:
+		local_player = p
+		player = p
+		camera = cam
+		if cam != null:
+			cam.make_current()
+			AudioManager.set_camera(cam)
+			if cam.has_method("setup"):
+				cam.setup(p, self)
+	else:
+		if cam != null:
+			cam.enabled = false
+	# Host drives bot AI. Attach one controller per bot; clients never simulate bots.
+	if bot and is_host():
+		_attach_bot_controller(p)
+	if _net_verbose():
+		print("[FFA] spawned player pid=", pid, " bot=", bot, " authority=", authority, " local=", (pid == local_id and not bot))
+
+const BOT_CONTROLLER_SCRIPT := preload("res://scripts/bot_controller.gd")
+
+func _attach_bot_controller(bot_player: CharacterBody2D) -> void:
+	var ctrl := BOT_CONTROLLER_SCRIPT.new()
+	ctrl.name = "BotController"
+	bot_player.add_child(ctrl)
+	ctrl.setup(self, bot_player)
+
+func get_nearest_player(pos: Vector2) -> Node2D:
+	var best: Node2D = null
+	var best_d := INF
+	for pid in players.keys():
+		var p = players[pid]
+		if p == null or not is_instance_valid(p):
+			continue
+		if "inert" in p and p.inert:
+			continue
+		var d: float = pos.distance_squared_to(p.global_position)
+		if d < best_d:
+			best_d = d
+			best = p
+	# Fallback to any player (even inert) so enemies always have a target.
+	if best == null and not players.is_empty():
+		for pid in players.keys():
+			var p = players[pid]
+			if p != null and is_instance_valid(p):
+				return p
+	return best
+
+func _ffa_spawn_position(index: int, total: int) -> Vector2:
+	# Spread players evenly on a ring around the arena center.
+	var radius := 280.0
+	var ang: float = TAU * float(index) / float(max(1, total))
+	return Vector2(cos(ang), sin(ang)) * radius
+
+# Pick a player to anchor a horde spawn on. Solo: the only player. FFA: a random
+# living (non-inert) player so pressure is shared; falls back to any player.
+func _spawn_anchor_player() -> Node2D:
+	if is_solo():
+		return player
+	var living: Array = []
+	for pid in players.keys():
+		var p = players[pid]
+		if p == null or not is_instance_valid(p):
+			continue
+		if "inert" in p and p.inert:
+			continue
+		living.append(p)
+	if not living.is_empty():
+		return living[randi() % living.size()]
+	# Everyone dead/inert: fall back to any player so spawns still resolve.
+	for pid in players.keys():
+		var p = players[pid]
+		if p != null and is_instance_valid(p):
+			return p
+	return player
+
+# --- Per-player economy ledger -------------------------------------------------
+# In solo the ledger is a single entry (peer 1) and is kept in sync with the
+# global vars via _sync_local_econ_from_globals/_sync_globals_from_local_econ.
+# The owner-aware economy fns below default `owner_id` to the local player, so
+# every existing solo call site (which passes no owner) behaves identically.
+
+func _local_econ_id() -> int:
+	var n := _net()
+	if n != null and n.is_multiplayer():
+		return int(n.local_peer_id)
+	return 1
+
+# Public: the peer_id that owns the local player's economy + buildings.
+func local_player_id() -> int:
+	return _local_econ_id()
+
+# Host-only self-test (cmdline: --ffa-econ-test) verifying per-player isolation:
+# crediting/spending one peer's pool never touches another's. Prints PASS/FAIL.
+func _run_econ_selftest() -> void:
+	var ids: Array = players.keys()
+	ids.sort()
+	if ids.size() < 2:
+		print("[ECON-TEST] FAIL: need >=2 players, have ", ids.size())
+		return
+	var a: int = ids[0]
+	var b: int = ids[1]
+	# --- Currency credit isolation (deltas; gain-mult agnostic) ---
+	var a_res0: int = int(_econ_for(a)["resources"])
+	var b_res0: int = int(_econ_for(b)["resources"])
+	var a_cur0: int = get_score_currency(a)
+	var b_cur0: int = get_score_currency(b)
+	add_resources(100, a)
+	var a_credited: int = int(_econ_for(a)["resources"]) - a_res0
+	var ok1: bool = a_credited > 0 \
+		and get_score_currency(a) == a_cur0 + a_credited \
+		and int(_econ_for(b)["resources"]) == b_res0 \
+		and get_score_currency(b) == b_cur0
+	# --- Spend isolation ---
+	var a_res1: int = int(_econ_for(a)["resources"])
+	var b_res1: int = int(_econ_for(b)["resources"])
+	var spent_a: bool = spend(40, a)
+	var ok2: bool = spent_a \
+		and int(_econ_for(a)["resources"]) == a_res1 - 40 \
+		and int(_econ_for(b)["resources"]) == b_res1
+	# --- Over-spend B blocked (insufficient funds) ---
+	var b_res2: int = int(_econ_for(b)["resources"])
+	var spent_b_fail: bool = not spend(b_res2 + 99999, b) \
+		and int(_econ_for(b)["resources"]) == b_res2
+	# --- Essence isolation ---
+	var a_ess0: int = int(_econ_for(a)["essence"])
+	var b_ess0: int = int(_econ_for(b)["essence"])
+	add_essence(7, b)
+	var b_ess_credited: int = int(_econ_for(b)["essence"]) - b_ess0
+	var ok3: bool = b_ess_credited > 0 and int(_econ_for(a)["essence"]) == a_ess0
+	# --- Treasure isolation ---
+	var a_tr0: int = get_score_treasures(a)
+	var b_tr0: int = get_score_treasures(b)
+	on_treasure_opened(a)
+	var ok4: bool = get_score_treasures(a) == a_tr0 + 1 and get_score_treasures(b) == b_tr0
+	var pass_ok: bool = ok1 and ok2 and spent_b_fail and ok3 and ok4
+	print("[ECON-TEST] credit_isolation=", ok1, " spend_isolation=", ok2,
+		" overspend_blocked=", spent_b_fail, " essence_isolation=", ok3,
+		" treasure_isolation=", ok4)
+	print("[ECON-TEST] ", "PASS" if pass_ok else "FAIL")
+
+# Read-only owner-aware score accessors used by the scoreboard (Phase 4).
+func get_score_currency(owner_id: int) -> int:
+	if is_solo():
+		return _currency_earned
+	return int(_econ_for(owner_id)["currency_earned"])
+
+func get_score_treasures(owner_id: int) -> int:
+	if is_solo():
+		return _treasures_opened
+	return int(_econ_for(owner_id)["treasures"])
+
+func _init_econ() -> void:
+	econ.clear()
+	if is_solo():
+		# Solo writes the global vars directly; the ledger is unused.
+		return
+	# FFA: one ledger entry per roster peer (host authoritative; clients keep
+	# only their own meaningfully, but mirror the structure for safety). Every
+	# player (humans and bots) starts the match with the same gold/essence stake.
+	var n := _net()
+	for entry in n.match_roster:
+		var pid := int(entry["peer_id"])
+		econ[pid] = _new_ffa_econ_entry()
+	# Make sure the local pool exists even before roster (defensive).
+	var lid := _local_econ_id()
+	if not econ.has(lid):
+		econ[lid] = _new_ffa_econ_entry()
+	# The global vars become the LOCAL player's live view. FFA uses a fixed
+	# starting stake (no solo meta start bonus), so mirror the seeded ledger.
+	var le: Dictionary = _econ_for(lid)
+	resources = int(le["resources"])
+	essence = int(le["essence"])
+	_currency_earned = int(le["currency_earned"])
+	_treasures_opened = int(le["treasures"])
+	if _net_verbose():
+		print("[FFA-ECON] seeded ", econ.size(), " pools; local id=", lid, " resources=", resources, " essence=", essence)
+
+func _new_econ_entry() -> Dictionary:
+	return {"resources": 0, "essence": 0, "currency_earned": 0, "treasures": 0}
+
+# FFA ledger entry seeded with the shared starting stake. currency_earned starts
+# at 0 so the win metric only counts what players collect during the match.
+func _new_ffa_econ_entry() -> Dictionary:
+	return {"resources": FFA_START_RESOURCES, "essence": FFA_START_ESSENCE, "currency_earned": 0, "treasures": 0}
+
+func _econ_for(owner_id: int) -> Dictionary:
+	if not econ.has(owner_id):
+		econ[owner_id] = _new_econ_entry()
+	return econ[owner_id]
+
+# Push a ledger entry back into the global vars (used when the local player's
+# pool changes, so the existing UI/read sites stay correct).
+func _sync_globals_from_local_econ() -> void:
+	var lid := _local_econ_id()
+	var e: Dictionary = _econ_for(lid)
+	resources = int(e["resources"])
+	essence = int(e["essence"])
+	_currency_earned = int(e["currency_earned"])
+	_treasures_opened = int(e["treasures"])
+
+# If `owner_id` is the local player (or solo), refresh the global mirror + UI.
+func _on_econ_changed(owner_id: int) -> void:
+	if owner_id == _local_econ_id():
+		_sync_globals_from_local_econ()
+		_update_ui()
 
 func _process(delta: float) -> void:
+	_refresh_build_focus_ui()
 	_check_debug_toggle(delta)
 	if game_over:
 		_handle_game_over_input()
@@ -1435,6 +2083,9 @@ func _process(delta: float) -> void:
 	if tech_open:
 		_handle_tech_input()
 		return
+	if chest_modal_open:
+		return
+	_handle_resource_dump_input()
 	# Camera zoom controls
 	_handle_zoom_input()
 	start_timer += delta
@@ -1442,6 +2093,8 @@ func _process(delta: float) -> void:
 		return
 	elapsed += delta
 	_maybe_minute_announcement()
+	_update_controls_hint()
+	_update_income_decay_telegraph()
 	_update_runtime_performance(delta)
 	_update_dynamic_caps()
 	# Update cached enemy list once per frame (used by all towers)
@@ -1449,8 +2102,16 @@ func _process(delta: float) -> void:
 	_update_flow_field(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
-	_handle_boss_spawning(delta)
-	_handle_spawning(delta)
+	# Host owns the shared horde; clients receive enemies via replication and do
+	# not run the spawn pipeline. Solo always simulates locally.
+	if _is_sim_authority():
+		_handle_boss_spawning(delta)
+		_handle_spawning(delta)
+	# Enemy replication: host streams positions; clients interpolate proxies.
+	if is_ffa():
+		_update_enemy_net_sync(delta)
+		_update_ffa_clock(delta)
+		_update_ffa_lastman(delta)
 	_maintain_breakables()
 	_handle_powerup_spawning(delta)  # Power-up spawn logic
 	_update_essence_announcement(delta)
@@ -1506,6 +2167,25 @@ func _handle_zoom_input() -> void:
 	elif Input.is_action_just_pressed("zoom_in"):
 		_cycle_zoom(-1)  # Zoom in (higher zoom = see less)
 
+func _handle_resource_dump_input() -> void:
+	if not Input.is_action_just_pressed("resource_dump"):
+		return
+	if resources < RESOURCE_DUMP_COST:
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("Need %d resources for Resource Dump" % RESOURCE_DUMP_COST, Color(0.95, 0.5, 0.35), 18, 1.2)
+		return
+	if not spend(RESOURCE_DUMP_COST):
+		return
+	add_essence(RESOURCE_DUMP_ESSENCE_GAIN)
+	chest_tower_rate_mult = min(5.0, chest_tower_rate_mult * 1.08)
+	chest_tower_damage_bonus += 3.0
+	chest_tower_aoe_mult = min(3.6, chest_tower_aoe_mult * 1.06)
+	_refresh_tech_scalars()
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("RESOURCE DUMP: +1 ESSENCE | TOWER OUTPUT BOOSTED", Color(1.0, 0.9, 0.35), 20, 1.2)
+	if player != null:
+		spawn_fx("upgrade_burst", player.global_position)
+
 func _cycle_zoom(direction: int) -> void:
 	_current_zoom_index = clampi(_current_zoom_index + direction, 0, ZOOM_LEVELS.size() - 1)
 	var target_zoom = ZOOM_LEVELS[_current_zoom_index]
@@ -1518,12 +2198,63 @@ func _cycle_zoom(direction: int) -> void:
 	_zoom_tween = create_tween()
 	_zoom_tween.tween_property(camera, "zoom", target_zoom, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
+func _get_meta_progression() -> Node:
+	return get_node_or_null("/root/MetaProgression")
+
+func _apply_meta_run_start() -> void:
+	# Pull persistent meta-progression selections and bonuses into this run.
+	var meta = _get_meta_progression()
+	if meta == null:
+		meta_essence_mult = 1.0
+		meta_start_resources = 0
+		meta_max_hp_bonus = 0.0
+		meta_move_speed_mult = 1.0
+		meta_tower_damage_mult = 1.0
+		meta_pickup_radius_mult = 1.0
+		run_threat_mult = 1.0
+		run_player_damage_taken_mult = 1.0
+		run_ramp_speed_mult = 1.0
+		return
+	# Hero selection from the main menu.
+	var hero_id = str(meta.pending_hero)
+	if hero_id != "":
+		for i in range(characters.size()):
+			if str(characters[i].get("id", "")) == hero_id and meta.is_hero_unlocked(hero_id):
+				selected_character = i
+				break
+	# Permanent upgrade bonuses.
+	var bonuses: Dictionary = meta.get_run_start_bonuses()
+	meta_start_resources = int(round(float(bonuses.get("start_resources", 0.0))))
+	meta_max_hp_bonus = float(bonuses.get("max_hp", 0.0))
+	meta_move_speed_mult = float(bonuses.get("move_speed_mult", 1.0))
+	meta_essence_mult = float(bonuses.get("essence_mult", 1.0))
+	meta_tower_damage_mult = float(bonuses.get("tower_damage_mult", 1.0))
+	meta_pickup_radius_mult = float(bonuses.get("pickup_radius_mult", 1.0))
+	# Top up starting gold with the meta bonus (resources was set in reset).
+	if meta_start_resources > 0:
+		resources += meta_start_resources
+	# Pickup radius stacks multiplicatively on the base (reset to 1.0 in reset).
+	if meta_pickup_radius_mult != 1.0:
+		pickup_range_mult *= meta_pickup_radius_mult
+	# Run modifier (challenge) effects.
+	run_threat_mult = 1.0
+	run_player_damage_taken_mult = 1.0
+	run_ramp_speed_mult = 1.0
+	if meta.has_method("get_active_modifier_effect"):
+		var fx: Dictionary = meta.get_active_modifier_effect()
+		run_threat_mult = float(fx.get("threat_mult", 1.0))
+		run_player_damage_taken_mult = float(fx.get("player_damage_taken_mult", 1.0))
+		run_ramp_speed_mult = float(fx.get("ramp_speed_mult", 1.0))
+
 func _start_game() -> void:
 	game_started = true
 	start_timer = 0.0
 	_apply_base_time_scale()
 	_set_pause_allowed(true)
+	_apply_meta_run_start()
 	_apply_selected_character()
+	if player != null and player.has_method("apply_meta_bonuses"):
+		player.apply_meta_bonuses(meta_max_hp_bonus, meta_move_speed_mult, run_player_damage_taken_mult)
 	if ui != null and ui.has_method("show_start"):
 		ui.show_start(false)
 	if ui != null and ui.has_method("show_announcement"):
@@ -1559,8 +2290,18 @@ func _get_base_time_scale() -> float:
 		return 0.0
 	if game_over:
 		return 1.0
+	# FFA shares one simulation across peers: no single player may slow or freeze
+	# global time. Build focus / chest modal / tech become local UI only.
+	if is_ffa():
+		return 1.0
 	if tech_open:
 		return 0.0
+	if chest_modal_open:
+		return CHEST_MODAL_TIME_SCALE
+	if is_menu_open():
+		return 1.0
+	if _build_focus_active:
+		return BUILD_FOCUS_TIME_SCALE
 	return 1.0
 
 func _apply_base_time_scale() -> void:
@@ -1568,8 +2309,35 @@ func _apply_base_time_scale() -> void:
 		_time_scale_tween.kill()
 		_time_scale_tween = null
 	Engine.time_scale = _get_base_time_scale()
+	_refresh_build_focus_ui()
+
+func set_build_focus(active: bool, structure_id: String = "") -> void:
+	var next_active = active and not game_over
+	var next_name = ""
+	if next_active:
+		var def = StructureDB.get_def(structure_id)
+		if def.is_empty():
+			next_name = structure_id
+		else:
+			next_name = str(def.get("name", structure_id))
+	var changed = next_active != _build_focus_active or next_name != _build_focus_name
+	_build_focus_active = next_active
+	_build_focus_name = next_name
+	if changed:
+		_apply_base_time_scale()
+	else:
+		_refresh_build_focus_ui()
+
+func _refresh_build_focus_ui() -> void:
+	if ui == null or not ui.has_method("set_build_focus"):
+		return
+	var visible = _build_focus_active and game_started and not game_over and not tech_open and not is_menu_open()
+	ui.set_build_focus(visible, _build_focus_name, BUILD_FOCUS_TIME_SCALE)
 
 func _trigger_kill_slow() -> void:
+	# Global slow-mo is disabled in FFA (shared sim).
+	if is_ffa():
+		return
 	var base_scale = _get_base_time_scale()
 	if base_scale <= 0.0:
 		return
@@ -1583,6 +2351,8 @@ func _trigger_kill_slow() -> void:
 
 func trigger_time_accent(slow_scale: float, duration: float) -> void:
 	"""Generic time dilation for gameplay accents (upgrades, critical hits, etc.)"""
+	if is_ffa():
+		return
 	var base_scale = _get_base_time_scale()
 	if base_scale <= 0.0 or base_scale <= slow_scale:
 		return
@@ -1610,20 +2380,83 @@ func _connect_settings_manager() -> void:
 
 func _sync_runtime_settings(_category: String = "", _key: String = "", _value: Variant = null) -> void:
 	var manager = _get_settings_manager()
-	if manager == null:
-		return
-	var show_tower_range = bool(manager.get_setting("gameplay", "show_tower_range", true))
+	var show_tower_range = true
+	var show_wave_preview = true
+	if manager != null:
+		show_tower_range = bool(manager.get_setting("gameplay", "show_tower_range", true))
+		show_wave_preview = bool(manager.get_setting("gameplay", "wave_preview", true))
+	_apply_runtime_frame_pacing()
 	if build_manager != null and build_manager.has_method("set_show_tower_range"):
 		build_manager.set_show_tower_range(show_tower_range)
-	var show_wave_preview = bool(manager.get_setting("gameplay", "wave_preview", true))
 	if ui != null and ui.has_method("set_wave_preview_enabled"):
 		ui.set_wave_preview_enabled(show_wave_preview)
 	if ui != null and ui.has_method("set_tech_ledger_visible"):
 		ui.set_tech_ledger_visible(false)
 	_apply_runtime_performance_budgets()
+	_damage_number_budget = _get_damage_budget_per_sec()
+
+func _apply_runtime_frame_pacing() -> void:
+	var target_cap := DEFAULT_RENDER_FPS_CAP
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_render_fps_cap"):
+		target_cap = int(manager.get_render_fps_cap())
+	target_cap = clampi(target_cap, 30, 240)
+	Engine.max_fps = target_cap
+	Engine.physics_ticks_per_second = SIMULATION_TICKS_PER_SECOND
+	_runtime_target_fps = float(target_cap)
+
+func _setup_world_environment() -> void:
+	# Enable 2D HDR so glow can bloom on bright/additive FX (projectiles, tesla, crits).
+	var vp := get_viewport()
+	if vp != null:
+		vp.use_hdr_2d = true
+	if _world_environment == null:
+		_world_environment = WorldEnvironment.new()
+		_world_environment.name = "GameWorldEnvironment"
+		var env := Environment.new()
+		env.background_mode = Environment.BG_CANVAS
+		env.glow_enabled = true
+		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
+		# Bias glow toward the brightest taps so the scene stays readable.
+		for i in range(7):
+			env.set_glow_level(i, 1.0 if i <= 2 else 0.0)
+		_world_environment.environment = env
+		add_child(_world_environment)
+	_apply_glow_settings()
+
+func _apply_glow_settings() -> void:
+	if _world_environment == null or _world_environment.environment == null:
+		return
+	var env := _world_environment.environment
+	var settings := {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_glow_settings"):
+		settings = manager.get_glow_settings()
+	env.glow_enabled = bool(settings.get("enabled", true))
+	env.glow_intensity = float(settings.get("intensity", 0.8))
+	env.glow_strength = float(settings.get("strength", 1.1))
+	env.glow_bloom = float(settings.get("bloom", 0.18))
+	env.glow_hdr_threshold = float(settings.get("hdr_threshold", 0.85))
 
 func _on_settings_changed(category: String, key: String, value: Variant) -> void:
 	_sync_runtime_settings(category, key, value)
+	if category == "graphics" and key == "quality":
+		var quality_name = str(value).capitalize()
+		_apply_glow_settings()
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("QUALITY: %s" % quality_name, Color(0.68, 0.95, 1.0), 18, 1.2)
+	if category == "graphics" and key == "render_fps_cap":
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("FPS CAP: %d" % int(value), Color(0.68, 0.95, 1.0), 18, 1.1)
+
+func _get_perf_quality_caps() -> Dictionary:
+	var quality = "high"
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_quality"):
+		quality = str(manager.get_quality()).to_lower()
+	if not PERF_QUALITY_CAPS.has(quality):
+		quality = "high"
+	return PERF_QUALITY_CAPS[quality]
 
 func _get_damage_budget_per_sec() -> int:
 	var budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
@@ -1631,6 +2464,8 @@ func _get_damage_budget_per_sec() -> int:
 	if manager != null and manager.has_method("get_damage_budget_scale"):
 		budget = int(round(float(budget) * float(manager.get_damage_budget_scale())))
 	budget = int(round(float(budget) * lerpf(0.55, 1.0, _adaptive_perf_scale)))
+	var caps = _get_perf_quality_caps()
+	budget = min(budget, int(caps.get("damage_budget", budget)))
 	return max(4, budget)
 
 func _get_fx_density_scale() -> float:
@@ -1640,13 +2475,16 @@ func _get_fx_density_scale() -> float:
 	return 1.0
 
 func _get_effective_fx_density_scale() -> float:
-	return clampf(_get_fx_density_scale() * _adaptive_perf_scale, PERF_FX_SCALE_MIN, 1.5)
+	return clampf(_get_fx_density_scale() * _adaptive_perf_scale, PERF_FX_SCALE_MIN, _optional_fx_quality_cap)
 
 func _should_spawn_optional_fx() -> bool:
 	var density = _get_effective_fx_density_scale()
 	if density >= 1.0:
 		return true
 	return randf() <= density
+
+func should_spawn_optional_fx() -> bool:
+	return _should_spawn_optional_fx()
 
 func _update_runtime_performance(delta: float) -> void:
 	if not game_started:
@@ -1660,15 +2498,17 @@ func _update_runtime_performance(delta: float) -> void:
 		fps = _adaptive_perf_smoothed_fps
 	_adaptive_perf_smoothed_fps = lerpf(_adaptive_perf_smoothed_fps, fps, 0.35)
 	var target_scale = 1.0
-	if _adaptive_perf_smoothed_fps < 58.0:
+	var perf_target_fps = max(30.0, _runtime_target_fps)
+	var fps_ratio = _adaptive_perf_smoothed_fps / perf_target_fps
+	if fps_ratio < 0.96:
 		target_scale = 0.92
-	if _adaptive_perf_smoothed_fps < 50.0:
+	if fps_ratio < 0.88:
 		target_scale = 0.78
-	if _adaptive_perf_smoothed_fps < 42.0:
+	if fps_ratio < 0.80:
 		target_scale = 0.62
-	if _adaptive_perf_smoothed_fps < 34.0:
+	if fps_ratio < 0.72:
 		target_scale = 0.48
-	if _adaptive_perf_smoothed_fps < 28.0:
+	if fps_ratio < 0.64:
 		target_scale = 0.36
 	if max_enemies_cap > 0 and enemies_root != null:
 		var load_ratio = float(enemies_root.get_child_count()) / float(max_enemies_cap)
@@ -1680,10 +2520,16 @@ func _update_runtime_performance(delta: float) -> void:
 	_apply_runtime_performance_budgets()
 
 func _apply_runtime_performance_budgets() -> void:
+	var caps = _get_perf_quality_caps()
+	_optional_fx_quality_cap = clampf(float(caps.get("optional_fx_cap", 1.0)), PERF_FX_SCALE_MIN, 1.5)
 	var fx_scale = _get_effective_fx_density_scale()
-	max_particles = max(70, int(round(150.0 * fx_scale)))
+	var adaptive_particles = max(56, int(round(150.0 * fx_scale)))
+	var quality_particles_cap = max(56, int(caps.get("particles", adaptive_particles)))
+	max_particles = min(adaptive_particles, quality_particles_cap)
 	var projectile_scale = lerpf(PERF_PROJECTILE_SCALE_MIN, 1.0, _adaptive_perf_scale)
-	max_projectiles = max(96, int(round(150.0 * projectile_scale)))
+	var adaptive_projectiles = max(64, int(round(150.0 * projectile_scale)))
+	var quality_projectiles_cap = max(64, int(caps.get("projectiles", adaptive_projectiles)))
+	max_projectiles = min(adaptive_projectiles, quality_projectiles_cap)
 	_flow_rebuild_interval_runtime = lerpf(FLOW_REBUILD_INTERVAL, PERF_FLOW_INTERVAL_MAX, 1.0 - _adaptive_perf_scale)
 
 func _instantiate_pause_menu() -> void:
@@ -1744,6 +2590,8 @@ func _can_pause_game() -> bool:
 		return false
 	if tech_open:
 		return false
+	if chest_modal_open:
+		return false
 	if settings_menu != null and is_instance_valid(settings_menu) and settings_menu.visible:
 		return false
 	return true
@@ -1760,12 +2608,51 @@ func is_tech_open() -> bool:
 func is_menu_open() -> bool:
 	if tech_open:
 		return true
+	if chest_modal_open:
+		return true
 	if pause_menu != null and is_instance_valid(pause_menu):
 		if pause_menu.has_method("is_paused") and pause_menu.is_paused():
 			return true
 	if settings_menu != null and is_instance_valid(settings_menu) and settings_menu.visible:
 		return true
 	return false
+
+func begin_chest_modal() -> void:
+	if game_over:
+		return
+	_chest_modal_depth += 1
+	chest_modal_open = true
+	_set_pause_allowed(false)
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(true)
+	_apply_base_time_scale()
+
+func end_chest_modal() -> void:
+	_chest_modal_depth = max(0, _chest_modal_depth - 1)
+	if _chest_modal_depth > 0:
+		return
+	chest_modal_open = false
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(false)
+	_set_pause_allowed(_can_pause_game())
+	_apply_base_time_scale()
+
+func is_damage_blocked() -> bool:
+	if game_over:
+		return true
+	if not game_started:
+		return true
+	if tech_open:
+		return true
+	if chest_modal_open:
+		return true
+	return false
+
+func show_chest_summary(gold_gain: int, upgrade_count: int) -> void:
+	if ui == null or not ui.has_method("show_announcement"):
+		return
+	var picks = max(1, upgrade_count)
+	ui.show_announcement("CHEST OPENED  +%d GOLD  |  %d AUGMENTS" % [gold_gain, picks], Color(1.0, 0.92, 0.35), 24, 1.15)
 
 func is_game_started() -> bool:
 	return game_started
@@ -1782,34 +2669,66 @@ func unlock_build(id: String) -> void:
 	unlocked_builds[id] = true
 
 func _handle_tech_input() -> void:
+	# Tech draft controls: keyboard picks 1/2/3 (or R to reroll); a gamepad moves a
+	# highlight with the shoulder buttons / left stick / d-pad and confirms with A.
+	# Keyboard direct-pick is preserved exactly so mouse/keyboard play is unchanged.
 	if Input.is_action_just_pressed("build_1"):
 		_choose_tech(0)
+		return
 	elif Input.is_action_just_pressed("build_2"):
 		_choose_tech(1)
+		return
 	elif Input.is_action_just_pressed("build_3"):
 		_choose_tech(2)
-	elif Input.is_action_just_pressed(TECH_INFUSE_1_ACTION):
-		_try_choose_infused(0)
-	elif Input.is_action_just_pressed(TECH_INFUSE_2_ACTION):
-		_try_choose_infused(1)
-	elif Input.is_action_just_pressed(TECH_INFUSE_3_ACTION):
-		_try_choose_infused(2)
-	elif Input.is_action_just_pressed(TECH_LOCK_1_ACTION):
-		_try_lock_tech(0)
-	elif Input.is_action_just_pressed(TECH_LOCK_2_ACTION):
-		_try_lock_tech(1)
-	elif Input.is_action_just_pressed(TECH_LOCK_3_ACTION):
-		_try_lock_tech(2)
-	elif Input.is_action_just_pressed(TECH_FORCE_TOWER_ACTION):
-		_try_force_category("tower")
-	elif Input.is_action_just_pressed(TECH_FORCE_ENGINEER_ACTION):
-		_try_force_category("engineer")
-	elif Input.is_action_just_pressed(TECH_FORCE_ECONOMY_ACTION):
-		_try_force_category("economy")
+		return
 	elif Input.is_action_just_pressed(TECH_REROLL_ACTION):
+		_try_reroll_tech()
+		return
+	_handle_tech_gamepad_input()
+
+func _handle_tech_gamepad_input() -> void:
+	var count: int = tech_choices.size()
+	if count <= 0:
+		return
+	_tech_nav_cooldown = max(0.0, _tech_nav_cooldown - get_process_delta_time())
+	# Discrete step navigation (shoulder buttons, ui_left/right, ui_up/down) with a
+	# small repeat cooldown so a held stick doesn't race through the options.
+	var dir: int = 0
+	if Input.is_action_just_pressed("build_next") or Input.is_action_just_pressed("ui_right") or Input.is_action_just_pressed("ui_down"):
+		dir = 1
+	elif Input.is_action_just_pressed("build_prev") or Input.is_action_just_pressed("ui_left") or Input.is_action_just_pressed("ui_up"):
+		dir = -1
+	elif _tech_nav_cooldown <= 0.0:
+		# Held left-stick fallback (the move_* actions are stick-bound).
+		if Input.is_action_pressed("build_cursor_right") or Input.is_action_pressed("build_cursor_down"):
+			dir = 1
+		elif Input.is_action_pressed("build_cursor_left") or Input.is_action_pressed("build_cursor_up"):
+			dir = -1
+	if dir != 0:
+		if _tech_cursor < 0:
+			_tech_cursor = 0
+		else:
+			_tech_cursor = (_tech_cursor + dir + count) % count
+		_tech_nav_cooldown = 0.18
+		if ui != null and ui.has_method("set_tech_highlight"):
+			ui.set_tech_highlight(_tech_cursor)
+		var am := get_node_or_null("/root/AudioManager")
+		if am != null and am.has_method("play_ui_sound"):
+			am.play_ui_sound("hover")
+		return
+	# Confirm with the gamepad place/accept button (only once a cursor exists).
+	if _tech_cursor >= 0 and (Input.is_action_just_pressed("build_place") or Input.is_action_just_pressed("ui_accept")):
+		var am2 := get_node_or_null("/root/AudioManager")
+		if am2 != null and am2.has_method("play_ui_sound"):
+			am2.play_ui_sound("click")
+		_choose_tech(_tech_cursor)
+		return
+	# Reroll with the gamepad upgrade/X button as well as the keyboard R.
+	if Input.is_action_just_pressed("upgrade"):
 		_try_reroll_tech()
 
 func _get_horde_count_multiplier(time_sec: float) -> float:
+	time_sec = max(time_sec, 0.0) * run_ramp_speed_mult
 	var minutes = int(floor(max(time_sec, 0.0) / 60.0))
 	var target = clampf(1.0 + float(minutes) * HORDE_MINUTE_MULT_STEP, 1.0, HORDE_MULT_MAX)
 	if time_sec < EARLY_GAME_HORDE_RAMP_TIME:
@@ -1877,11 +2796,46 @@ func _get_spawn_settings(time_sec: float) -> Dictionary:
 		"horde_mult": horde_mult
 	}
 
+# Number of active FFA participants (humans + bots). Used to scale the horde so
+# a fuller lobby — which fields many more towers — faces a proportionally bigger,
+# harder horde. Always >= 1; solo is handled separately so this is only meaningful
+# in FFA, but it stays safe either way.
+func _ffa_participant_count() -> int:
+	var n := 0
+	for pid in players.keys():
+		var p = players[pid]
+		if p != null and is_instance_valid(p):
+			n += 1
+	return max(1, n)
+
+# Live FFA spawn-rate multiplier: base aggression scaled up per extra player.
+func _ffa_spawn_rate_mult() -> float:
+	var extra := _ffa_participant_count() - 1
+	return FFA_SPAWN_RATE_MULT * (1.0 + FFA_RATE_PER_PLAYER * float(extra))
+
+# Live FFA enemy-cap multiplier (more bodies on the field with more players).
+func _ffa_max_enemy_mult() -> float:
+	var extra := _ffa_participant_count() - 1
+	return FFA_MAX_ENEMY_MULT * (1.0 + FFA_CAP_PER_PLAYER * float(extra))
+
+# Live FFA difficulty (HP/damage) multiplier: enemies get tougher with more
+# players so the extra towers don't trivialize the run.
+func _ffa_difficulty_mult() -> float:
+	var extra := _ffa_participant_count() - 1
+	return 1.0 + FFA_DIFFICULTY_PER_PLAYER * float(extra)
+
 func _get_threat_multiplier(time_sec: float) -> float:
+	var base: float
 	if time_sec <= 600.0:
-		return 1.0
-	var t = clamp((time_sec - 600.0) / 900.0, 0.0, 1.0)
-	return 1.0 + t * 0.6
+		base = run_threat_mult
+	else:
+		var t = clamp((time_sec - 600.0) / 900.0, 0.0, 1.0)
+		base = (1.0 + t * 1.8) * run_threat_mult
+	# FFA: fold the per-player difficulty scale into the threat multiplier so it
+	# flows through every difficulty read (spawn_enemy, bosses, minions, splits).
+	if is_ffa():
+		base *= _ffa_difficulty_mult()
+	return base
 
 func _update_dynamic_caps() -> void:
 	var extra = 0
@@ -1889,6 +2843,11 @@ func _update_dynamic_caps() -> void:
 		extra = int(clamp((elapsed - 300.0) / 60.0, 0.0, 20.0)) * 8
 	var horde_mult = _get_horde_count_multiplier(elapsed)
 	var cap_target = int(round(float(max_enemies_cap_base + extra) * horde_mult))
+	# FFA: lift the hard cap with the player count so the per-player enemy boost in
+	# _handle_spawning isn't immediately clamped back down. A full lobby can field
+	# a much larger horde than a duel.
+	if is_ffa():
+		cap_target = int(round(float(cap_target) * _ffa_max_enemy_mult()))
 	max_enemies_cap = clampi(cap_target, max_enemies_cap_base, HORDE_CAP_HARD_LIMIT)
 
 func _count_elites() -> int:
@@ -1904,11 +2863,16 @@ func _handle_spawning(delta: float) -> void:
 	var settings = _get_spawn_settings(elapsed)
 	var base_interval = float(settings.get("interval", 1.2))
 	var horde_mult = float(settings.get("horde_mult", 1.0))
-	var interval = max(0.12, base_interval / max(1.0, horde_mult))
+	var ffa := is_ffa()
+	if ffa:
+		horde_mult *= _ffa_spawn_rate_mult()
+	var interval = max(0.1, base_interval / max(1.0, horde_mult))
 	spawn_accumulator += delta
 	while spawn_accumulator >= interval:
 		spawn_accumulator -= interval
 		var max_enemies = min(max_enemies_cap, int(settings.get("max_enemies", max_enemies_cap)))
+		if ffa:
+			max_enemies = int(min(float(max_enemies_cap), float(max_enemies) * _ffa_max_enemy_mult()))
 		if enemies_root.get_child_count() >= max_enemies:
 			break
 		spawn_enemy(settings)
@@ -1923,8 +2887,15 @@ func _handle_boss_spawning(_delta: float) -> void:
 			return
 		_active_boss = null
 	if not _boss_warning_shown and elapsed >= _next_boss_time - BOSS_WARNING_LEAD:
+		var upcoming_final = false
+		if _boss_schedule_index < BOSS_SCHEDULE.size():
+			upcoming_final = bool(BOSS_SCHEDULE[_boss_schedule_index].get("final", false))
 		if ui != null and ui.has_method("show_announcement"):
-			ui.show_announcement("BOSS INCOMING", Color(1.0, 0.2, 0.2), 48, 2.4)
+			if upcoming_final:
+				ui.show_announcement("THE ENDBRINGER APPROACHES", Color(0.85, 0.05, 0.08), 56, 4.0)
+				flash_screen(Color(0.6, 0.0, 0.0, 0.18))
+			else:
+				ui.show_announcement("BOSS INCOMING", Color(1.0, 0.2, 0.2), 48, 2.4)
 		_boss_warning_shown = true
 	if elapsed < _next_boss_time:
 		return
@@ -1940,6 +2911,7 @@ func _spawn_next_boss() -> void:
 		_active_boss = boss
 		if entry.get("final", false):
 			_final_boss_spawned = true
+			_final_boss_active = true
 			call_deferred("_apply_final_boss_tuning", boss, entry)
 			if ui != null and ui.has_method("show_announcement"):
 				ui.show_announcement("FINAL BOSS", Color(1.0, 0.2, 0.2), 52, 3.2)
@@ -1954,7 +2926,8 @@ func _spawn_next_boss() -> void:
 	_boss_warning_shown = false
 
 func _spawn_boss(script_path: String) -> Node:
-	if enemies_root == null or player == null:
+	var anchor := _spawn_anchor_player()
+	if enemies_root == null or anchor == null:
 		return null
 	if script_path == "" or not ResourceLoader.exists(script_path):
 		push_warning("Boss script missing: %s" % script_path)
@@ -1967,15 +2940,22 @@ func _spawn_boss(script_path: String) -> Node:
 	boss.set_script(boss_script)
 	var angle = randf() * TAU
 	var distance = spawn_radius_max + randf_range(80.0, 140.0)
-	boss.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
+	boss.global_position = anchor.global_position + Vector2.RIGHT.rotated(angle) * distance
 	var difficulty = float(_get_spawn_settings(elapsed).get("difficulty", 1.0))
 	if boss.has_method("setup"):
 		boss.setup(self, difficulty)
 	enemies_root.add_child(boss)
+	_register_enemy_net(boss, ENEMY_SCENE.resource_path, script_path)
 	return boss
 
 func _on_boss_died(_boss: Node = null) -> void:
 	_active_boss = null
+	# Defeating the FINAL boss wins the run. Only the boss_died signal (not a despawn
+	# via tree_exited) counts as a victory.
+	if _final_boss_active and not _run_won:
+		_final_boss_active = false
+		_trigger_victory()
+		return
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("BOSS DEFEATED", Color(1.0, 0.85, 0.3), 36, 2.4)
 
@@ -2009,7 +2989,7 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	var spawn_settings = settings
 	if spawn_settings.is_empty():
 		spawn_settings = _get_spawn_settings(elapsed)
-	var siege_chance = clamp(float(spawn_settings.get("siege", 0.0)), 0.0, 0.35)
+	var siege_chance = clamp(float(spawn_settings.get("siege", 0.0)), 0.0, 0.5)
 	var scene = _pick_enemy_scene()
 	if randf() < siege_chance:
 		scene = SIEGE_ENEMY_SCENE
@@ -2019,18 +2999,21 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
-	var base_elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.14)
-	var time_scalar = 1.0 + min(elapsed / 360.0, 1.0) * 0.25
-	var elite_chance = clamp(base_elite_chance * time_scalar, 0.0, 0.12)
-	var elite_cap = clampi(int(6 + elapsed / 150.0), 6, 18)
+	var base_elite_chance = clamp(float(spawn_settings.get("elite", 0.0)), 0.0, 0.18)
+	var time_scalar = 1.0 + min(elapsed / 300.0, 2.5) * 0.35
+	var elite_chance = clamp(base_elite_chance * time_scalar, 0.0, 0.24)
+	var elite_cap = clampi(int(8 + elapsed / 120.0), 8, 42)
 	if _count_elites() < elite_cap and randf() < elite_chance and enemy.has_method("set_elite"):
 		enemy.set_elite(elite_health_mult)
 	enemies_root.add_child(enemy)
+	_register_enemy_net(enemy, scene.resource_path, "")
 
 func _pick_reachable_spawn_position() -> Vector2:
-	if player == null:
+	# FFA: anchor on a random living player so the horde surrounds everyone.
+	var anchor := _spawn_anchor_player()
+	if anchor == null:
 		return Vector2.ZERO
-	var origin = player.global_position
+	var origin = anchor.global_position
 	var attempts = 32
 	for i in range(attempts):
 		var angle = randf() * TAU
@@ -2051,6 +3034,7 @@ func spawn_minion(position: Vector2) -> void:
 	if enemy.has_method("setup"):
 		enemy.setup(self, difficulty)
 	enemies_root.add_child(enemy)
+	_register_enemy_net(enemy, ENEMY_SCENE.resource_path, "")
 
 func spawn_split_minions(position: Vector2, count: int) -> void:
 	if enemies_root == null:
@@ -2066,6 +3050,432 @@ func spawn_split_minions(position: Vector2, count: int) -> void:
 		if enemy.has_method("apply_split_child"):
 			enemy.apply_split_child()
 		enemies_root.add_child(enemy)
+		_register_enemy_net(enemy, ENEMY_SCENE.resource_path, "")
+
+# ---------------------------------------------------------------------------
+# Enemy replication (FFA custom RPC batch sync)
+#
+# Host is the only simulator. It assigns each enemy a monotonic net_id, tells
+# clients which scene/script to instantiate, then streams position batches at
+# ENEMY_SYNC_HZ. Clients render lightweight proxies (no AI, no collisions) and
+# lerp them toward the last synced position. On death the host broadcasts a
+# despawn so clients free the proxy.
+# ---------------------------------------------------------------------------
+
+# Host-only: tag a freshly spawned enemy with a net id and tell clients to make
+# a matching proxy. No-op in solo or on clients.
+func _register_enemy_net(enemy: Node, scene_path: String, script_path: String) -> void:
+	if not is_ffa() or not is_host():
+		return
+	if enemy == null or not is_instance_valid(enemy):
+		return
+	_enemy_net_seq += 1
+	var nid := _enemy_net_seq
+	if "net_id" in enemy:
+		enemy.net_id = nid
+	if "net_scene_path" in enemy:
+		enemy.net_scene_path = scene_path
+	if "net_script_path" in enemy:
+		enemy.net_script_path = script_path
+	# Free the proxy on every other peer when this enemy leaves the tree.
+	enemy.tree_exited.connect(_on_host_enemy_exited.bind(nid))
+	var pos := Vector2.ZERO
+	if enemy is Node2D:
+		pos = (enemy as Node2D).global_position
+	var is_boss := script_path != ""
+	_rpc_enemy_spawn.rpc(nid, scene_path, script_path, pos, is_boss)
+	if _net_verbose() and (nid <= 3 or nid % 50 == 0):
+		print("[FFA-ENEMY] host register nid=", nid, " scene=", scene_path.get_file(), " boss=", is_boss)
+
+# Host-only: an enemy left the tree (died/despawned) -> tell clients to drop it.
+func _on_host_enemy_exited(nid: int) -> void:
+	# tree_exited can fire during scene teardown, when this game node is itself
+	# detached and absolute node paths (/root/Net) are unreachable. Bail then.
+	if not is_inside_tree():
+		return
+	if not is_ffa() or not is_host():
+		return
+	_rpc_enemy_despawn.rpc(nid)
+
+# Host streams positions; clients smooth proxies toward their last target.
+var _enemy_net_heartbeat: float = 0.0
+func _update_enemy_net_sync(delta: float) -> void:
+	if is_host():
+		_host_stream_enemy_positions(delta)
+	else:
+		_client_interpolate_proxies(delta)
+	if _net_verbose():
+		_enemy_net_heartbeat += delta
+		if _enemy_net_heartbeat >= 5.0:
+			_enemy_net_heartbeat = 0.0
+			if is_host():
+				print("[FFA-ENEMY] host live enemies=", enemies_root.get_child_count(), " next_nid=", _enemy_net_seq)
+			else:
+				print("[FFA-ENEMY] client proxies=", _net_enemy_proxies.size())
+
+func _host_stream_enemy_positions(delta: float) -> void:
+	if enemies_root == null:
+		return
+	_enemy_sync_accum += delta
+	var interval := 1.0 / ENEMY_SYNC_HZ
+	if _enemy_sync_accum < interval:
+		return
+	_enemy_sync_accum = 0.0
+	# Pack (net_id, x, y) triples. Split into batches to bound packet size.
+	var ids := PackedInt32Array()
+	var xs := PackedFloat32Array()
+	var ys := PackedFloat32Array()
+	for child in enemies_root.get_children():
+		if not (child is Node2D):
+			continue
+		var nid := 0
+		if "net_id" in child:
+			nid = int(child.net_id)
+		if nid == 0:
+			continue
+		ids.append(nid)
+		var gp := (child as Node2D).global_position
+		xs.append(gp.x)
+		ys.append(gp.y)
+		if ids.size() >= ENEMY_SYNC_BATCH:
+			_rpc_enemy_positions.rpc(ids, xs, ys)
+			ids = PackedInt32Array()
+			xs = PackedFloat32Array()
+			ys = PackedFloat32Array()
+	if ids.size() > 0:
+		_rpc_enemy_positions.rpc(ids, xs, ys)
+
+func _client_interpolate_proxies(delta: float) -> void:
+	var lerp_factor: float = clamp(delta * 14.0, 0.0, 1.0)
+	for nid in _net_enemy_proxies.keys():
+		var proxy = _net_enemy_proxies[nid]
+		if proxy == null or not is_instance_valid(proxy):
+			continue
+		if not _net_enemy_targets.has(nid):
+			continue
+		var target: Vector2 = _net_enemy_targets[nid]
+		proxy.global_position = proxy.global_position.lerp(target, lerp_factor)
+
+# Client: instantiate a proxy enemy from the host's scene/script path.
+@rpc("authority", "call_remote", "reliable")
+func _rpc_enemy_spawn(nid: int, scene_path: String, script_path: String, pos: Vector2, _is_boss: bool) -> void:
+	if is_host():
+		return
+	if _net_enemy_proxies.has(nid):
+		return
+	if scene_path == "" or not ResourceLoader.exists(scene_path):
+		return
+	var packed: PackedScene = load(scene_path)
+	if packed == null:
+		return
+	var proxy = packed.instantiate()
+	if script_path != "" and ResourceLoader.exists(script_path):
+		var scr = load(script_path)
+		if scr != null:
+			proxy.set_script(scr)
+	if "is_net_proxy" in proxy:
+		proxy.is_net_proxy = true
+	if "net_id" in proxy:
+		proxy.net_id = nid
+	if proxy is Node2D:
+		(proxy as Node2D).global_position = pos
+	if enemies_root != null:
+		enemies_root.add_child(proxy)
+		# Proxies must not run host AI/collisions; the visual-only guard in
+		# enemy.gd keys off is_sim_authority(), which is false on clients.
+		if proxy.has_method("setup"):
+			proxy.setup(self, 1.0)
+	_net_enemy_proxies[nid] = proxy
+	_net_enemy_targets[nid] = pos
+	if _net_verbose() and (nid <= 3 or _net_enemy_proxies.size() % 50 == 0):
+		print("[FFA-ENEMY] client proxy nid=", nid, " total=", _net_enemy_proxies.size())
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_enemy_despawn(nid: int) -> void:
+	if is_host():
+		return
+	if _net_enemy_proxies.has(nid):
+		var proxy = _net_enemy_proxies[nid]
+		if proxy != null and is_instance_valid(proxy):
+			proxy.queue_free()
+		_net_enemy_proxies.erase(nid)
+	_net_enemy_targets.erase(nid)
+
+@rpc("authority", "call_remote", "unreliable_ordered")
+func _rpc_enemy_positions(ids: PackedInt32Array, xs: PackedFloat32Array, ys: PackedFloat32Array) -> void:
+	if is_host():
+		return
+	var n := ids.size()
+	for i in range(n):
+		var nid := ids[i]
+		_net_enemy_targets[nid] = Vector2(xs[i], ys[i])
+
+# ---------------------------------------------------------------------------
+# FFA match: 20-minute clock + ranked results
+#
+# The host owns the authoritative countdown and broadcasts it once a second so
+# every peer's HUD agrees. At zero the host compiles a ranked scoreboard from
+# the per-player econ ledger (most resources collected wins) and pushes it to
+# all peers, which each present results and award their own Cores locally.
+# ---------------------------------------------------------------------------
+
+func get_ffa_time_left() -> float:
+	return _ffa_time_left
+
+func _update_ffa_clock(delta: float) -> void:
+	if _ffa_match_over:
+		return
+	if not is_host():
+		return
+	_ffa_time_left = max(0.0, _ffa_time_left - delta)
+	_ffa_clock_accum += delta
+	if _ffa_clock_accum >= 1.0:
+		_ffa_clock_accum = 0.0
+		_rpc_ffa_clock.rpc(_ffa_time_left)
+		_update_ffa_clock_hud(_ffa_time_left)
+		if _net_verbose():
+			print("[FFA-MATCH] clock left=", int(_ffa_time_left), " ts=", Engine.time_scale)
+	if _ffa_time_left <= 0.0:
+		_end_ffa_match()
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_ffa_clock(time_left: float) -> void:
+	_ffa_time_left = time_left
+	_update_ffa_clock_hud(time_left)
+
+func _update_ffa_clock_hud(time_left: float) -> void:
+	if ui != null and ui.has_method("set_ffa_clock"):
+		ui.set_ffa_clock(time_left)
+
+# Count real (human) players in the locked match roster, regardless of alive state.
+func _count_real_players() -> int:
+	var n := _net()
+	if n == null:
+		return 0
+	var c := 0
+	for entry in n.match_roster:
+		if not bool(entry.get("is_bot", false)):
+			c += 1
+	return c
+
+# Count real (human) players who are still in the match: not a bot, not eliminated,
+# and (for remote peers) still connected. A friend who crashes / force-quits drops
+# off multiplayer.get_peers(), so they correctly stop counting as alive even though
+# they never sent a death. Host-only meaningful (uses the host's connection view).
+func _count_alive_real_players() -> int:
+	var n := _net()
+	if n == null:
+		return 0
+	var connected := {}
+	for pid in multiplayer.get_peers():
+		connected[int(pid)] = true
+	var local_id := multiplayer.get_unique_id()
+	var c := 0
+	for entry in n.match_roster:
+		if bool(entry.get("is_bot", false)):
+			continue
+		var pid := int(entry["peer_id"])
+		if _ffa_dead_players.has(pid):
+			continue
+		# The local host (id 1) is always "present"; remote peers must still be
+		# connected to count as alive.
+		if pid != local_id and not connected.has(pid):
+			continue
+		c += 1
+	return c
+
+# Host-authoritative: once the match started with >=2 humans and only one human
+# remains alive, run a short grace countdown (so the survivor can keep gathering
+# resources) and then end the match. Broadcast the remaining time at 1 Hz so all
+# peers show the same banner. Solo-host + bot matches never trigger this.
+func _update_ffa_lastman(delta: float) -> void:
+	if _ffa_match_over:
+		return
+	if not is_host():
+		return
+	if _ffa_started_real_count < 2:
+		return
+	if not _ffa_lastman_active:
+		if _count_alive_real_players() <= 1:
+			_ffa_lastman_active = true
+			_ffa_lastman_left = FFA_LASTMAN_SECONDS
+			_ffa_lastman_accum = 0.0
+			_rpc_ffa_lastman.rpc(_ffa_lastman_left)
+			_show_ffa_lastman_banner(_ffa_lastman_left)
+			if _net_verbose():
+				print("[FFA-MATCH] last survivor — grace countdown started (", int(FFA_LASTMAN_SECONDS), "s)")
+		return
+	_ffa_lastman_left = max(0.0, _ffa_lastman_left - delta)
+	_ffa_lastman_accum += delta
+	if _ffa_lastman_accum >= 1.0:
+		_ffa_lastman_accum = 0.0
+		_rpc_ffa_lastman.rpc(_ffa_lastman_left)
+		_show_ffa_lastman_banner(_ffa_lastman_left)
+	if _ffa_lastman_left <= 0.0:
+		_end_ffa_match()
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_ffa_lastman(time_left: float) -> void:
+	_ffa_lastman_active = true
+	_ffa_lastman_left = time_left
+	_show_ffa_lastman_banner(time_left)
+
+func _show_ffa_lastman_banner(time_left: float) -> void:
+	if ui != null and ui.has_method("show_announcement"):
+		var secs := int(ceil(max(0.0, time_left)))
+		ui.show_announcement("LAST SURVIVOR — match ends in %ds" % secs, Color(1.0, 0.55, 0.3), 30, 1.1)
+
+# Host: a player's HP hit zero. Mark them eliminated and broadcast so every peer
+# makes that player (and their towers) inert. Their score is already locked in
+# the econ ledger and keeps counting nothing further.
+func ffa_on_player_died(pid: int) -> void:
+	if not is_ffa():
+		return
+	if not is_host():
+		# Clients route the death to the host, which owns the authoritative state.
+		_rpc_request_player_death.rpc_id(1, pid)
+		return
+	if _ffa_dead_players.has(pid):
+		return
+	_ffa_dead_players[pid] = true
+	_rpc_player_eliminated.rpc(pid)
+	_apply_player_inert(pid)
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_request_player_death(pid: int) -> void:
+	if not is_host():
+		return
+	ffa_on_player_died(pid)
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_player_eliminated(pid: int) -> void:
+	if is_host():
+		return
+	_ffa_dead_players[pid] = true
+	_apply_player_inert(pid)
+
+# Make a dead/left player inert everywhere: freeze the player and stop their
+# towers/generators from firing or earning.
+func _apply_player_inert(pid: int) -> void:
+	var p = players.get(pid)
+	if p != null and is_instance_valid(p):
+		if "inert" in p:
+			p.inert = true
+	if buildings_root != null:
+		for b in buildings_root.get_children():
+			if b == null or not is_instance_valid(b):
+				continue
+			if "owner_id" in b and int(b.owner_id) == pid:
+				if "inert" in b:
+					b.inert = true
+	# If it's MY player that died, show the local death overlay. The match keeps
+	# running for everyone (including a dead host) until the clock ends.
+	if pid == _local_econ_id() and not _ffa_match_over:
+		_show_ffa_death_screen()
+
+# Local placement (1 = leading) computed from the live econ ledger, for the
+# spectate overlay shown to the dead local player.
+func _ffa_local_placement() -> int:
+	var board := _build_ffa_scoreboard()
+	var my_id := _local_econ_id()
+	for i in range(board.size()):
+		if int(board[i]["peer_id"]) == my_id:
+			return i + 1
+	return board.size()
+
+func _show_ffa_death_screen() -> void:
+	if ffa_death_ui == null or not is_instance_valid(ffa_death_ui):
+		return
+	var total := econ.size()
+	var placement := _ffa_local_placement()
+	if ffa_death_ui.has_method("show_death"):
+		ffa_death_ui.show_death(placement, total)
+
+func _end_ffa_match() -> void:
+	if _ffa_match_over:
+		return
+	if not is_host():
+		return
+	_ffa_match_over = true
+	var board := _build_ffa_scoreboard()
+	if _net_verbose():
+		print("[FFA-MATCH] host end. board size=", board.size())
+		for i in range(board.size()):
+			print("  #", i + 1, " pid=", board[i]["peer_id"], " currency=", board[i]["currency"], " treasures=", board[i]["treasures"], " bot=", board[i]["is_bot"])
+	_rpc_ffa_results.rpc(board)
+	_show_ffa_results(board)
+	# Remove this game from the optional lobby browser the instant it ends, so
+	# finished matches don't linger in other players' lists. Best-effort + guarded.
+	var ll := get_node_or_null("/root/LobbyList")
+	if ll != null and ll.has_method("end_lobby"):
+		ll.end_lobby()
+
+# Ranked board: [{peer_id, name, is_bot, currency, treasures}], best first.
+func _build_ffa_scoreboard() -> Array:
+	var rows: Array = []
+	var n := _net()
+	for pid in econ.keys():
+		var e: Dictionary = econ[pid]
+		var pname := "Player"
+		var is_bot := false
+		if n != null and n.lobby_players.has(pid):
+			var lp: Dictionary = n.lobby_players[pid]
+			pname = str(lp.get("name", pname))
+			is_bot = bool(lp.get("is_bot", false))
+		rows.append({
+			"peer_id": pid,
+			"name": pname,
+			"is_bot": is_bot,
+			"currency": int(e.get("currency_earned", 0)),
+			"treasures": int(e.get("treasures", 0)),
+		})
+	rows.sort_custom(_ffa_score_sort)
+	return rows
+
+func _ffa_score_sort(a: Dictionary, b: Dictionary) -> bool:
+	if int(a["currency"]) != int(b["currency"]):
+		return int(a["currency"]) > int(b["currency"])
+	return int(a["treasures"]) > int(b["treasures"])
+
+@rpc("authority", "call_remote", "reliable")
+func _rpc_ffa_results(board: Array) -> void:
+	if is_host():
+		return
+	_ffa_match_over = true
+	_show_ffa_results(board)
+
+# Each peer presents the same ranked board and awards its own Cores based on
+# this machine's placement.
+func _show_ffa_results(board: Array) -> void:
+	game_over = true
+	Engine.time_scale = 1.0
+	set_build_focus(false, "")
+	_force_close_menus()
+	_set_pause_allowed(false)
+	# The end-of-match scoreboard supersedes the local spectate/death overlay.
+	if ffa_death_ui != null and is_instance_valid(ffa_death_ui) and ffa_death_ui.has_method("hide_death"):
+		ffa_death_ui.hide_death()
+	var my_id := _local_econ_id()
+	var placement := board.size()
+	for i in range(board.size()):
+		if int(board[i]["peer_id"]) == my_id:
+			placement = i + 1
+			break
+	var won := placement == 1 and board.size() > 0
+	var my_score := 0
+	if placement >= 1 and placement <= board.size():
+		my_score = int(board[placement - 1]["currency"])
+	var cores := 0
+	var meta = _get_meta_progression()
+	if meta != null and meta.has_method("award_ffa_cores"):
+		cores = meta.award_ffa_cores(placement, my_score, won)
+	if _net_verbose():
+		print("[FFA-MATCH] results my_id=", my_id, " placement=", placement, " score=", my_score, " won=", won, " cores=", cores)
+	if ffa_results_ui != null and ffa_results_ui.has_method("show_results"):
+		ffa_results_ui.show_results(board, my_id, placement, cores)
+	elif ui != null and ui.has_method("show_announcement"):
+		var msg := "VICTORY" if won else "MATCH OVER  (#%d)" % placement
+		ui.show_announcement(msg, Color(1.0, 0.85, 0.3), 48, 5.0)
 
 func spawn_ally(config: Dictionary, position: Vector2) -> void:
 	if allies_root == null:
@@ -2148,7 +3558,10 @@ func _apply_play_bounds() -> void:
 			elif typeof(raw) == TYPE_VECTOR2:
 				tile_size = float(raw.x)
 		if "radius" in ground:
-			play_radius = float(ground.radius) * tile_size
+			var terrain_radius = float(ground.radius)
+			if "fill_margin_cells" in ground:
+				terrain_radius += float(ground.fill_margin_cells)
+			play_radius = terrain_radius * tile_size
 	# Clamp spawn distances to stay within play area
 	var max_spawn = max(300.0, play_radius - 120.0)
 	spawn_radius_max = min(spawn_radius_max, max_spawn)
@@ -2162,7 +3575,7 @@ func get_play_radius() -> float:
 func clamp_to_play_area(pos: Vector2) -> Vector2:
 	if play_radius <= 0.0:
 		return pos
-	var clamp_radius = max(0.0, play_radius - 200.0)
+	var clamp_radius = max(0.0, play_radius - 96.0)
 	var dist = pos.length()
 	if dist > clamp_radius:
 		return pos.normalized() * clamp_radius
@@ -2480,23 +3893,23 @@ func _rarity_weight_for(id: String) -> float:
 	var rarity = str(def.get("rarity", "common"))
 	return float(rarity_weights.get(rarity, 1.0))
 
-func spawn_projectile(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, pierce: int = 0, slow_factor: float = 1.0, slow_duration: float = 0.0, damage_type: String = "normal") -> void:
+func spawn_projectile(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, pierce: int = 0, slow_factor: float = 1.0, slow_duration: float = 0.0, damage_type: String = "normal", visual_profile: Dictionary = {}) -> void:
 	if projectiles_root.get_child_count() >= max_projectiles:
 		return
 	var projectile = PROJECTILE_SCENE.instantiate()
 	projectile.global_position = origin
 	if projectile.has_method("setup"):
-		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, pierce, slow_factor, slow_duration, damage_type)
+		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, pierce, slow_factor, slow_duration, damage_type, visual_profile)
 	projectiles_root.add_child(projectile)
 
-func spawn_cannonball(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, cluster_bombs: bool = false, burn_effect: bool = false) -> Node:
+func spawn_cannonball(origin: Vector2, direction: Vector2, speed: float, damage: float, max_range: float, explosion_radius: float, cluster_bombs: bool = false, burn_effect: bool = false, visual_profile: Dictionary = {}) -> Node:
 	if projectiles_root.get_child_count() >= max_projectiles:
 		return null
 	var projectile = PROJECTILE_SCENE.instantiate()
 	projectile.global_position = origin
 	var damage_type = "fire" if burn_effect else "normal"
 	if projectile.has_method("setup"):
-		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, 0, 1.0, 0.0, damage_type)
+		projectile.setup(self, direction, speed, damage, max_range, explosion_radius, 0, 1.0, 0.0, damage_type, visual_profile)
 	# Store cluster bomb and burn data on the projectile
 	projectile.set_meta("cluster_bombs", cluster_bombs)
 	projectile.set_meta("burn_effect", burn_effect)
@@ -2571,10 +3984,10 @@ func _update_essence_announcement(delta: float) -> void:
 	_essence_announce_count = 0
 	_essence_announce_timer = 0.0
 
-func spawn_fx(kind: String, position: Vector2) -> void:
+func spawn_fx(kind: String, position: Vector2, force_optional: bool = false) -> void:
 	if fx_root == null or not fx_defs.has(kind):
 		return
-	if not _should_spawn_optional_fx():
+	if not force_optional and not _should_spawn_optional_fx():
 		return
 	# Cap FX nodes to prevent runaway memory/crash
 	if fx_root.get_child_count() >= max_particles:
@@ -2602,6 +4015,62 @@ func spawn_fx(kind: String, position: Vector2) -> void:
 		_spawn_glow_burst(position, Color(1.0, 0.55, 0.2), 10, 10.0, 0.5, 220.0, 1.9)
 	elif kind == "elite_kill":
 		_spawn_glow_burst(position, Color(1.0, 0.85, 0.35), 12, 12.0, 0.55, 250.0, 2.1)
+
+func _setpiece_fx_allowed(kind: String) -> bool:
+	var cooldown_ms = int(SETPIECE_COOLDOWNS_MS.get(kind, 0))
+	if cooldown_ms <= 0:
+		return true
+	var now = Time.get_ticks_msec()
+	var last = int(_setpiece_fx_last_ms.get(kind, 0))
+	if now - last < cooldown_ms:
+		return false
+	_setpiece_fx_last_ms[kind] = now
+	return true
+
+func spawn_setpiece_fx(kind: String, position: Vector2, intensity: float = 1.0, damage_type: String = "normal") -> void:
+	if not _setpiece_fx_allowed(kind):
+		return
+	var power = clampf(intensity, 0.65, 2.4)
+	match kind:
+		"tower_evolution":
+			spawn_fx("hero_evolution", position, true)
+			spawn_fx("hero_evolution", position + Vector2(randf_range(-8.0, 8.0), randf_range(-8.0, 8.0)), true)
+			spawn_fx("upgrade_burst", position, true)
+			spawn_fx("shockwave", position, true)
+			_spawn_glow_burst(position, Color(0.6, 0.38, 1.0), int(round(20.0 * power)), 24.0 * power, 0.85, 280.0 * power, 2.9)
+			flash_screen(Color(0.65, 0.48, 1.0, 0.1), 0.16)
+			shake_camera(8.0 * power, 0.25)
+		"elite_death":
+			spawn_fx("hero_elite_death", position, true)
+			spawn_fx("elite_kill", position, true)
+			spawn_fx("shockwave", position, true)
+			spawn_fx("blood", position, true)
+			_spawn_glow_burst(position, Color(1.0, 0.76, 0.2), int(round(14.0 * power)), 16.0 * power, 0.62, 230.0 * power, 2.3)
+			flash_screen(Color(1.0, 0.86, 0.3, 0.08), 0.09)
+			if power >= 1.25:
+				flash_screen(Color(1.0, 0.9, 0.4, 0.14), 0.13)
+		"boss_death":
+			spawn_fx("hero_boss_death", position, true)
+			spawn_fx("hero_boss_death", position + Vector2(randf_range(-12.0, 12.0), randf_range(-12.0, 12.0)), true)
+			spawn_fx("hero_elite_death", position, true)
+			spawn_fx("upgrade_burst", position, true)
+			spawn_fx("shockwave", position, true)
+			_spawn_glow_burst(position, Color(1.0, 0.35, 0.2), int(round(28.0 * power)), 28.0 * power, 1.0, 300.0 * power, 3.2)
+			flash_screen(Color(1.0, 0.42, 0.26, 0.24), 0.3)
+			shake_camera(13.0 * power, 0.38)
+		"cannon_impact":
+			spawn_fx("hero_cannon_impact", position, true)
+			if damage_type == "fire":
+				spawn_fx("fire_burst", position, true)
+			if power >= 1.3:
+				spawn_fx("shockwave", position, true)
+			_spawn_glow_burst(position, Color(1.0, 0.45, 0.14), int(round(10.0 * power)), 12.0 * power, 0.44, 180.0 * power, 2.2)
+		"energy_impact":
+			spawn_fx("hero_energy_impact", position, true)
+			spawn_fx("tesla", position, true)
+			if damage_type == "lightning":
+				spawn_fx("tesla", position, true)
+			_spawn_glow_burst(position, Color(0.22, 0.98, 1.0), int(round(11.0 * power)), 11.0 * power, 0.4, 185.0 * power, 2.25)
 
 func spawn_glow_particle(position: Vector2, color: Color, size: float = 8.0, lifetime: float = 0.45, velocity: Vector2 = Vector2.ZERO, bloom: float = 1.6, trail_strength: float = 0.7, trail_length: float = 0.9, z: int = 1) -> Node:
 	if fx_root == null:
@@ -2649,6 +4118,12 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 		return
 	if fx_root == null:
 		return
+	# Perf gate: keep critical/elite feedback, thin low-value spam under heavy load.
+	if _adaptive_perf_scale < 0.72 and not is_crit and not is_kill and not is_elite:
+		if target_max > 0.0 and amount < target_max * 0.16:
+			return
+		if randf() < 0.4:
+			return
 	if not _consume_damage_number_budget():
 		return
 
@@ -2656,9 +4131,12 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	label.text = str(int(round(amount)))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.z_index = 30
-	_apply_damage_label_style(label, is_crit, is_kill, is_elite, damage_type)
+	var text_color = _apply_damage_label_style(label, is_crit, is_kill, is_elite, damage_type)
 	label.size = label.get_minimum_size()
 	label.position = -label.size * 0.5
+	var badge_key = _damage_badge_key(is_crit, is_kill, is_elite, damage_type)
+	var pattern_key = _damage_pattern_key(is_crit, is_kill, is_elite, damage_type)
+	_apply_damage_label_texture_style(label, pattern_key, text_color)
 
 	var container = Node2D.new()
 	var jitter = Vector2(
@@ -2668,6 +4146,14 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	container.position = position + jitter
 	container.z_index = 30
 	fx_root.add_child(container)
+	_add_damage_badge(container, label, badge_key)
+	# Drop shadow behind the number for separation from neighbors + bright tiles.
+	# Skipped under heavy load to respect the FX budget.
+	var shadow: Label = null
+	if _adaptive_perf_scale >= 0.72:
+		shadow = _make_damage_shadow(label)
+		if shadow != null:
+			container.add_child(shadow)
 	container.add_child(label)
 
 	var health_ratio = 0.0
@@ -2703,9 +4189,27 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	tween.tween_property(container, "scale", Vector2.ONE * base_scale, pop_time).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tween.tween_property(container, "position", container.position + Vector2(0, -rise), lifetime).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.parallel().tween_property(label, "modulate", Color(1.0, 1.0, 1.0, 0.0), lifetime)
+	if shadow != null:
+		tween.parallel().tween_property(shadow, "modulate", Color(1.0, 1.0, 1.0, 0.0), lifetime)
 	if is_crit:
 		tween.parallel().tween_property(container, "rotation", 0.0, lifetime).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(container.queue_free)
+
+func _make_damage_shadow(main_label: Label) -> Label:
+	if main_label == null:
+		return null
+	var shadow := Label.new()
+	shadow.text = main_label.text
+	shadow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	shadow.z_index = 29
+	if _damage_font != null:
+		shadow.add_theme_font_override("font", _damage_font)
+	shadow.add_theme_font_size_override("font_size", main_label.get_theme_font_size("font_size"))
+	shadow.add_theme_color_override("font_color", Color(0.02, 0.02, 0.04, 0.55))
+	shadow.add_theme_constant_override("outline_size", 0)
+	shadow.size = main_label.size
+	shadow.position = main_label.position + Vector2(2, 2)
+	return shadow
 
 func _load_damage_font() -> void:
 	var path = FeedbackConfig.DAMAGE_NUMBER_FONT_PATH
@@ -2722,9 +4226,147 @@ func _load_damage_font() -> void:
 	else:
 		push_warning("Loaded resource is not a Font: " + path + " (type: " + str(typeof(font)) + ")")
 
-func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> void:
+func _prepare_damage_badges() -> void:
+	_damage_badge_cache.clear()
+	for key in DAMAGE_BADGE_PATHS.keys():
+		var path = str(DAMAGE_BADGE_PATHS[key])
+		var tex = _load_damage_badge(path)
+		if tex != null:
+			_damage_badge_cache[key] = tex
+	_damage_pattern_cache.clear()
+	for key in DAMAGE_PATTERN_PATHS.keys():
+		var pattern_path = str(DAMAGE_PATTERN_PATHS[key])
+		var pattern_tex = _load_damage_pattern(pattern_path)
+		if pattern_tex != null:
+			_damage_pattern_cache[key] = pattern_tex
+	if _damage_label_shader == null:
+		_damage_label_shader = Shader.new()
+		_damage_label_shader.code = DAMAGE_LABEL_SHADER_CODE
+
+func _load_damage_badge(path: String) -> Texture2D:
+	if path == "" or not ResourceLoader.exists(path):
+		return null
+	var raw = load(path)
+	if not (raw is Texture2D):
+		return null
+	var src = raw as Texture2D
+	var img = src.get_image()
+	if img == null:
+		return src
+	img.convert(Image.FORMAT_RGBA8)
+	var w = img.get_width()
+	var h = img.get_height()
+	for y in range(h):
+		for x in range(w):
+			var c = img.get_pixel(x, y)
+			var max_c = max(c.r, max(c.g, c.b))
+			var min_c = min(c.r, min(c.g, c.b))
+			var chroma = max_c - min_c
+			if chroma < 0.11 and max_c > 0.18 and max_c < 0.96:
+				c.a = 0.0
+			else:
+				c.a = max(c.a, clampf((chroma - 0.06) / 0.45, 0.0, 1.0))
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
+
+func _load_damage_pattern(path: String) -> Texture2D:
+	if path == "" or not ResourceLoader.exists(path):
+		return null
+	var raw = load(path)
+	if not (raw is Texture2D):
+		return null
+	var src = raw as Texture2D
+	var img = src.get_image()
+	if img == null:
+		return src
+	img.convert(Image.FORMAT_RGBA8)
+	# Blur out literal "888" glyphs into a reusable color texture.
+	img.resize(24, 24, Image.INTERPOLATE_BILINEAR)
+	img.resize(96, 96, Image.INTERPOLATE_BILINEAR)
+	var w = img.get_width()
+	var h = img.get_height()
+	for y in range(h):
+		for x in range(w):
+			var c = img.get_pixel(x, y)
+			var lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+			var sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
+			if sat < 0.08:
+				var neutral = clampf(lum * 0.9 + 0.05, 0.0, 1.0)
+				c.r = neutral
+				c.g = neutral
+				c.b = neutral
+			c.a = 1.0
+			img.set_pixel(x, y, c)
+	return ImageTexture.create_from_image(img)
+
+func _damage_badge_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> String:
+	var large = is_crit or is_kill or (is_elite and is_kill)
+	if is_crit:
+		return "crit_large" if large else "crit_small"
+	var lower_type = damage_type.to_lower()
+	if lower_type in ["dot", "poison", "acid", "bleed"]:
+		return "dot_large" if large else "dot_small"
+	return "normal_large" if large else "normal_small"
+
+func _damage_pattern_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> String:
+	if is_crit or (is_elite and is_kill):
+		return "crit"
+	var lower_type = damage_type.to_lower()
+	if lower_type in ["dot", "poison", "acid", "bleed"]:
+		return "dot"
+	return "normal"
+
+func _apply_damage_label_texture_style(label: Label, pattern_key: String, base_color: Color) -> void:
 	if label == null:
 		return
+	if _damage_label_shader == null:
+		return
+	var raw_pattern = _damage_pattern_cache.get(pattern_key, null)
+	if not (raw_pattern is Texture2D):
+		return
+	var mat := ShaderMaterial.new()
+	mat.shader = _damage_label_shader
+	mat.set_shader_parameter("pattern_tex", raw_pattern)
+	mat.set_shader_parameter("primary_color", base_color.lightened(0.28))
+	mat.set_shader_parameter("secondary_color", base_color.darkened(0.38))
+	var pattern_scale = 2.0
+	var pattern_contrast = 1.12
+	if pattern_key == "crit":
+		pattern_scale = 2.4
+		pattern_contrast = 1.2
+	elif pattern_key == "dot":
+		pattern_scale = 1.8
+		pattern_contrast = 1.08
+	mat.set_shader_parameter("pattern_scale", pattern_scale)
+	mat.set_shader_parameter("contrast", pattern_contrast)
+	mat.set_shader_parameter("seed", randf() * 31.0)
+	mat.set_shader_parameter("shade_jitter", randf_range(-0.12, 0.12))
+	label.material = mat
+	label.self_modulate = Color.WHITE
+	label.add_theme_color_override("font_color", Color.WHITE)
+
+func _add_damage_badge(container: Node2D, label: Label, key: String) -> void:
+	if container == null or label == null:
+		return
+	var raw_tex = _damage_badge_cache.get(key, null)
+	if not (raw_tex is Texture2D):
+		return
+	var tex = raw_tex as Texture2D
+	var sprite = Sprite2D.new()
+	sprite.texture = tex
+	sprite.centered = true
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var large = key.ends_with("_large")
+	var base_width = max(label.size.x * 1.45, 58.0 if large else 42.0)
+	sprite.scale = Vector2.ONE * (base_width / float(max(1, tex.get_width())))
+	# Keep hook active but hide placeholder badge textures ("888" art).
+	sprite.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	sprite.z_index = 29
+	container.add_child(sprite)
+
+func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> Color:
+	if label == null:
+		return Color.WHITE
 	if _damage_font != null:
 		label.add_theme_font_override("font", _damage_font)
 	label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_FONT_SIZE)
@@ -2742,6 +4384,7 @@ func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_el
 		color = FeedbackConfig.DAMAGE_COLOR_ELITE_KILL
 		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
 	label.add_theme_color_override("font_color", color)
+	return color
 
 func _consume_damage_number_budget() -> bool:
 	var now_ms = Time.get_ticks_msec()
@@ -2765,17 +4408,49 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 			if enemy.has_method("take_damage"):
 				enemy.take_damage(final_damage, enemy.global_position, false, true, damage_type)
 
-func add_resources(amount: int) -> void:
+func add_resources(amount: int, owner_id: int = 0) ->void:
 	var applied = amount
 	if amount > 0:
 		applied = max(1, int(round(float(amount) * RESOURCE_GAIN_MULT)))
-	resources += applied
+	if is_solo():
+		resources += applied
+		if applied > 0:
+			_currency_earned += applied
+		return
+	# FFA: credit the owner's ledger (default = local player).
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	var e: Dictionary = _econ_for(owner_id)
+	e["resources"] = int(e["resources"]) + applied
+	if applied > 0:
+		e["currency_earned"] = int(e["currency_earned"]) + applied
+	_on_econ_changed(owner_id)
 
-func add_essence(amount: int) -> void:
-	essence += amount
+func on_treasure_opened(owner_id: int = 0) ->void:
+	if is_solo():
+		_treasures_opened += 1
+		return
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	var e: Dictionary = _econ_for(owner_id)
+	e["treasures"] = int(e["treasures"]) + 1
+	_on_econ_changed(owner_id)
+
+func add_essence(amount: int, owner_id: int = 0) ->void:
+	var applied = amount
+	if amount > 0 and meta_essence_mult != 1.0:
+		applied = max(1, int(round(float(amount) * meta_essence_mult)))
+	if is_solo():
+		essence += applied
+	else:
+		if owner_id == 0:
+			owner_id = _local_econ_id()
+		var e: Dictionary = _econ_for(owner_id)
+		e["essence"] = int(e["essence"]) + applied
+		_on_econ_changed(owner_id)
 	_update_ui()
 	if not _essence_tip_shown and ui != null and ui.has_method("show_announcement"):
-		ui.show_announcement("ESSENCE collected! Upgrade towers to T3 then press U to EVOLVE", Color(0.8, 0.4, 1.0), 18, 5.0)
+		ui.show_announcement("ESSENCE collected! U = tower infusion (500g + 1). T3 towers can EVOLVE.", Color(0.8, 0.4, 1.0), 18, 5.0)
 		_essence_tip_shown = true
 
 func add_xp(amount: int) -> void:
@@ -2807,14 +4482,52 @@ func _check_level_unlocks() -> void:
 		if ui != null and ui.has_method("show_announcement"):
 			ui.show_announcement("RESOURCE GENERATOR UNLOCKED", Color(0.9, 0.8, 0.3), 32, 2.6)
 
-func can_afford(cost: int) -> bool:
-	return resources >= cost
+func can_afford(cost: int, owner_id: int = 0) ->bool:
+	if is_solo():
+		return resources >= cost
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	return int(_econ_for(owner_id)["resources"]) >= cost
 
-func spend(cost: int) -> bool:
-	if resources < cost:
+func spend(cost: int, owner_id: int = 0) ->bool:
+	if is_solo():
+		if resources < cost:
+			return false
+		resources -= cost
+		_update_ui()
+		return true
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	var e: Dictionary = _econ_for(owner_id)
+	if int(e["resources"]) < cost:
 		return false
-	resources -= cost
-	_update_ui()
+	e["resources"] = int(e["resources"]) - cost
+	_on_econ_changed(owner_id)
+	return true
+
+func can_afford_essence(cost: int, owner_id: int = 0) ->bool:
+	if is_solo():
+		return essence >= cost
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	return int(_econ_for(owner_id)["essence"]) >= cost
+
+func spend_essence(cost: int, owner_id: int = 0) ->bool:
+	if cost <= 0:
+		return true
+	if is_solo():
+		if essence < cost:
+			return false
+		essence -= cost
+		_update_ui()
+		return true
+	if owner_id == 0:
+		owner_id = _local_econ_id()
+	var e: Dictionary = _econ_for(owner_id)
+	if int(e["essence"]) < cost:
+		return false
+	e["essence"] = int(e["essence"]) - cost
+	_on_econ_changed(owner_id)
 	return true
 
 func _open_tech_menu(is_reroll: bool = false) -> void:
@@ -2865,9 +4578,12 @@ func _open_tech_menu(is_reroll: bool = false) -> void:
 			"rarity": def.get("rarity", "common"),
 			"category": def.get("category", "engineer"),
 			"level": int(tech_levels.get(id, 0)),
-			"infusable": _can_infuse_tech(str(id))
+			"max_level": int(tech_defs.get(id, {}).get("max", 1)),
+			"infusable": false
 		})
 	tech_open = true
+	_tech_cursor = -1
+	_tech_nav_cooldown = 0.0
 	_set_pause_allowed(false)
 	if ui.has_method("show_tech"):
 		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost(), _build_tech_ui_meta(forced_category_for_roll))
@@ -2943,6 +4659,14 @@ func _play_tech_pick_feedback(choice: Dictionary, infused: bool) -> void:
 	if _rarity_index(rarity) >= _rarity_index("legendary"):
 		trigger_time_accent(0.5, 0.16)
 		flash_screen(Color(1.0, 0.85, 0.35, 0.14), 0.16)
+	if player != null:
+		if _rarity_index(rarity) >= _rarity_index("legendary"):
+			spawn_fx("elite_kill", player.global_position)
+			spawn_fx("upgrade_burst", player.global_position)
+		elif _rarity_index(rarity) >= _rarity_index("epic"):
+			spawn_fx("upgrade_burst", player.global_position)
+		elif _rarity_index(rarity) >= _rarity_index("rare"):
+			spawn_fx("build", player.global_position)
 
 func _apply_tech(id: String) -> void:
 	tech_levels[id] = int(tech_levels.get(id, 0)) + 1
@@ -2954,12 +4678,13 @@ func _apply_tech(id: String) -> void:
 			build_manager.refresh_controls()
 		_refresh_build_palette()
 	if id == "essence_cache":
-		add_essence(2)
+		var essence_gain = 3 + int(int(tech_levels.get(id, 1)) / 2)
+		add_essence(essence_gain)
 	elif id == "resource_cache":
-		var resource_gain = 45 + 15 * int(tech_levels.get(id, 1))
+		var resource_gain = 95 + 40 * int(tech_levels.get(id, 1))
 		add_resources(resource_gain)
 	elif id == "field_repairs":
-		var heal_amount = 8.0 + 6.0 * float(int(tech_levels.get(id, 1)))
+		var heal_amount = 14.0 + 10.0 * float(int(tech_levels.get(id, 1)))
 		heal_player(heal_amount)
 	elif id == "engineer_vitality":
 		var level_value = int(tech_levels.get(id, 1))
@@ -2977,23 +4702,23 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 	match id:
 		# Common upgrades
 		"gun_damage":
-			chest_damage_bonus += 2.0 if rarity == "common" else (3.0 if rarity == "rare" else 4.0)
+			chest_damage_bonus += 3.0 if rarity == "common" else (5.0 if rarity == "rare" else 7.0)
 			_apply_player_damage_bonuses()
 		"tower_range":
-			var mult = 1.06 if rarity == "common" else (1.09 if rarity == "rare" else 1.12)
-			chest_tower_range_mult = min(1.8, chest_tower_range_mult * mult)
+			var mult = 1.12 if rarity == "common" else (1.18 if rarity == "rare" else 1.24)
+			chest_tower_range_mult = min(3.0, chest_tower_range_mult * mult)
 		"speed":
-			chest_speed_bonus += 12.0 if rarity == "common" else (18.0 if rarity == "rare" else 25.0)
+			chest_speed_bonus += 16.0 if rarity == "common" else (24.0 if rarity == "rare" else 34.0)
 			if player != null and player.has_method("apply_speed_bonus"):
 				player.apply_speed_bonus(chest_speed_bonus)
 		"max_hp":
-			chest_max_hp_bonus += 12.0 if rarity == "common" else (20.0 if rarity == "rare" else 30.0)
+			chest_max_hp_bonus += 18.0 if rarity == "common" else (28.0 if rarity == "rare" else 42.0)
 			_apply_player_max_health_bonuses()
 		"build_cost":
-			var cost_mult = 0.92 if rarity == "common" else (0.88 if rarity == "rare" else 0.83)
-			build_cost_mult = max(0.55, build_cost_mult * cost_mult)
+			var cost_mult = 0.90 if rarity == "common" else (0.85 if rarity == "rare" else 0.78)
+			build_cost_mult = max(0.45, build_cost_mult * cost_mult)
 		"reload_speed":
-			reload_speed_mult *= 0.90 if rarity == "common" else (0.85 if rarity == "rare" else 0.80)
+			reload_speed_mult *= 0.86 if rarity == "common" else (0.80 if rarity == "rare" else 0.74)
 		
 		# Rare upgrades
 		"crit_chance":
@@ -3003,14 +4728,15 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 		"pierce":
 			pierce_bonus += 1
 		"cooldown":
-			cooldown_mult *= 0.88 if rarity == "rare" else 0.82
+			cooldown_mult *= 0.84 if rarity == "rare" else 0.76
 		"pickup_range":
-			pickup_range_mult *= 1.30
+			pickup_range_mult *= 1.45
 		"tower_core_damage":
-			chest_tower_damage_bonus += 3.0 if rarity == "rare" else 4.0
+			chest_tower_damage_bonus += 8.0 if rarity == "rare" else 12.0
 		"tower_targeting":
-			var rate_mult = 1.10 if rarity == "rare" else 1.15
-			chest_tower_rate_mult = min(2.5, chest_tower_rate_mult * rate_mult)
+			var rate_mult = 1.18 if rarity == "rare" else 1.25
+			chest_tower_rate_mult = min(4.0, chest_tower_rate_mult * rate_mult)
+			chest_tower_chain_bonus += 1
 		
 		# Epic upgrades
 		"multishot":
@@ -3033,8 +4759,9 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 			has_vampiric = true
 			vampiric_percent = max(vampiric_percent, 0.08)
 		"tower_barrage":
-			chest_tower_rate_mult = min(2.8, chest_tower_rate_mult * 1.18)
-			chest_tower_damage_bonus += 2.0
+			chest_tower_rate_mult = min(4.4, chest_tower_rate_mult * 1.30)
+			chest_tower_damage_bonus += 8.0
+			chest_tower_aoe_mult = min(3.0, chest_tower_aoe_mult * 1.18)
 		
 		# DIAMOND upgrades - game changers
 		"multishot_split":
@@ -3057,9 +4784,26 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 			tower_hp_mult = 1.5
 			towers_self_repair = true
 		"orbital_matrix":
-			chest_tower_rate_mult = min(3.0, chest_tower_rate_mult * 1.35)
-			chest_tower_damage_bonus += 10.0
-			chest_tower_range_mult = min(2.0, chest_tower_range_mult * 1.2)
+			chest_tower_rate_mult = min(5.0, chest_tower_rate_mult * 1.55)
+			chest_tower_damage_bonus += 20.0
+			chest_tower_range_mult = min(3.6, chest_tower_range_mult * 1.35)
+			chest_tower_aoe_mult = min(3.4, chest_tower_aoe_mult * 1.25)
+			chest_tower_chain_bonus += 2
+
+	if player != null:
+		match rarity:
+			"diamond":
+				spawn_fx("elite_kill", player.global_position)
+				spawn_fx("upgrade_burst", player.global_position)
+			"legendary", "mythic":
+				spawn_fx("upgrade_burst", player.global_position)
+				spawn_fx("fire_burst", player.global_position)
+			"epic":
+				spawn_fx("fire_burst", player.global_position)
+			"rare":
+				spawn_fx("chain_hit", player.global_position)
+			_:
+				spawn_fx("hit", player.global_position)
 	
 	_refresh_tech_scalars()
 	_update_ui()
@@ -3098,16 +4842,95 @@ func _apply_player_max_health_bonuses() -> void:
 		player.apply_max_health_bonus(chest_max_hp_bonus + tech_max_hp_bonus)
 
 func get_tower_rate_mult() -> float:
-	return tower_rate_mult
+	return tower_rate_mult * keystone_rate_mult
 
 func get_tower_damage_bonus() -> float:
 	return tower_damage_bonus
 
+func get_tower_damage_mult() -> float:
+	return meta_tower_damage_mult * keystone_damage_mult
+
 func get_tower_range_mult() -> float:
-	return tower_range_mult * chest_tower_range_mult
+	return tower_range_mult * chest_tower_range_mult * keystone_range_mult
+
+func get_tower_chain_bonus() -> int:
+	return tower_chain_bonus + keystone_chain_bonus
+
+func get_tower_aoe_mult() -> float:
+	return tower_aoe_mult * keystone_aoe_mult
 
 func get_build_cost_mult() -> float:
-	return build_cost_mult
+	var mult = build_cost_mult
+	if elapsed > BUILD_COST_TIME_PRESSURE_START:
+		var span = max(1.0, BUILD_COST_TIME_PRESSURE_END - BUILD_COST_TIME_PRESSURE_START)
+		var t = clampf((elapsed - BUILD_COST_TIME_PRESSURE_START) / span, 0.0, 1.0)
+		mult *= lerpf(1.0, BUILD_COST_TIME_PRESSURE_MAX, t)
+	return mult
+
+func _update_controls_hint() -> void:
+	# Keep the verbose hint up while building or during the opening minutes, then
+	# fade it away once so the HUD declutters for the mid/late game.
+	if ui == null or not ui.has_method("set_controls_visible"):
+		return
+	var building = build_manager != null and "build_mode" in build_manager and build_manager.build_mode
+	if building:
+		return
+	if not _controls_hint_faded and elapsed >= CONTROLS_HINT_FADE_TIME:
+		# Don't fade while a modal panel is open (player may be reading).
+		if tech_open or chest_modal_open:
+			return
+		ui.set_controls_visible(false)
+		_controls_hint_faded = true
+
+func _update_income_decay_telegraph() -> void:
+	# One-shot warnings as passive generator yield decays, nudging expansion.
+	var mult = get_generator_income_mult()
+	if _income_decay_notice_stage < 1 and mult < 0.95:
+		_income_decay_notice_stage = 1
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("RESOURCE YIELD WANING", Color(1.0, 0.75, 0.25), 36, 2.6)
+	elif _income_decay_notice_stage < 2 and mult < 0.85:
+		_income_decay_notice_stage = 2
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("RESOURCE YIELD LOW — EXPAND", Color(1.0, 0.55, 0.2), 38, 3.0)
+
+func get_generator_income_mult() -> float:
+	var active_count = active_generators.size()
+	var count_mult = 1.0
+	if active_count > GENERATOR_INCOME_SOFT_CAP:
+		var over = float(active_count - GENERATOR_INCOME_SOFT_CAP)
+		count_mult = 1.0 / (1.0 + over * 0.2)
+		count_mult = max(count_mult, GENERATOR_INCOME_MIN_MULT)
+	var time_mult = 1.0
+	if elapsed > GENERATOR_INCOME_DECAY_START:
+		var span = max(1.0, GENERATOR_INCOME_DECAY_END - GENERATOR_INCOME_DECAY_START)
+		var t = clampf((elapsed - GENERATOR_INCOME_DECAY_START) / span, 0.0, 1.0)
+		time_mult = lerpf(1.0, GENERATOR_INCOME_LATE_MIN, t)
+	return count_mult * time_mult
+
+func get_adaptive_perf_scale() -> float:
+	return _adaptive_perf_scale
+
+func get_optional_fx_quality_cap() -> float:
+	return _optional_fx_quality_cap
+
+func get_runtime_target_fps() -> float:
+	return _runtime_target_fps
+
+func get_runtime_perf_snapshot() -> Dictionary:
+	var quality = "high"
+	var manager = _get_settings_manager()
+	if manager != null and manager.has_method("get_quality"):
+		quality = str(manager.get_quality()).to_lower()
+	return {
+		"fps": int(Engine.get_frames_per_second()),
+		"quality": quality,
+		"adaptive_scale": _adaptive_perf_scale,
+		"max_particles": max_particles,
+		"max_projectiles": max_projectiles,
+		"enemy_count": enemies_root.get_child_count() if enemies_root != null else 0,
+		"tower_count": buildings_root.get_child_count() if buildings_root != null else 0,
+	}
 
 func get_pickup_range_mult() -> float:
 	return pickup_range_mult
@@ -3184,10 +5007,11 @@ func get_heal_drop_amount(is_elite: bool = false, is_siege: bool = false, source
 	return clampi(amount, min_amount, max_amount)
 
 func get_enemy_health_mult() -> float:
-	var growth = 1.0 + (max(elapsed, 0.0) / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
+	var ramp_elapsed = max(elapsed, 0.0) * run_ramp_speed_mult
+	var growth = 1.0 + (ramp_elapsed / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
 	var mult = ENEMY_HEALTH_BASE_MULT * growth
-	if elapsed < EARLY_GAME_HORDE_RAMP_TIME:
-		var t = clampf(elapsed / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
+	if ramp_elapsed < EARLY_GAME_HORDE_RAMP_TIME:
+		var t = clampf(ramp_elapsed / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
 		mult *= lerpf(EARLY_GAME_ENEMY_HEALTH_GRACE_MIN, 1.0, t)
 	return mult
 
@@ -3237,6 +5061,10 @@ func shake_camera(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE
 	if camera.has_method("shake"):
 		camera.shake(shake_strength, duration)
 
+func kick_camera_zoom(amount: float = 0.06) -> void:
+	if camera != null and camera.has_method("kick_zoom"):
+		camera.kick_zoom(amount)
+
 func _refresh_build_palette() -> void:
 	if ui == null:
 		return
@@ -3246,11 +5074,19 @@ func _refresh_build_palette() -> void:
 	if ui.has_method("update_palette"):
 		ui.update_palette(unlocked_builds, active_id)
 
-func heal_player(amount: float) -> void:
-	if player == null:
+func heal_player(amount: float, owner_id: int = 0) -> void:
+	# FFA: heal the player who actually grabbed the pickup, not always the local
+	# one. owner_id == 0 means "local/solo" so every existing solo call is unchanged.
+	var target: Node = player
+	if not is_solo():
+		if owner_id == 0:
+			owner_id = _local_econ_id()
+		if players.has(owner_id):
+			target = players[owner_id]
+	if target == null or not is_instance_valid(target):
 		return
-	if player.has_method("heal"):
-		player.heal(amount)
+	if target.has_method("heal"):
+		target.heal(amount)
 	_update_ui()
 
 # ============================================
@@ -3284,6 +5120,7 @@ func start_death_camera_zoom(player_position: Vector2) -> void:
 
 func on_death_animation_complete() -> void:
 	"""Called by player.gd when death animation finishes"""
+	set_build_focus(false, "")
 	_force_close_menus()
 	game_over = true
 	Engine.time_scale = 1.0
@@ -3323,33 +5160,90 @@ func _fade_to_black() -> void:
 	var tween = fade.create_tween()
 	tween.tween_property(fade, "modulate", Color(1, 1, 1, 1), 2.0).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 
-func _show_game_over_screen() -> void:
-	"""Display the game over stats screen"""
-	if game_over_ui == null:
-		return
-	
-	# Update wave reached from wave_manager
+func _compile_run_stats() -> Dictionary:
 	if wave_manager != null and wave_manager.has_method("get_current_wave"):
 		_wave_reached = wave_manager.get_current_wave()
-	
-	# Compile stats
-	var stats = {
+	return {
 		"time_survived": elapsed,
 		"enemies_killed": _enemy_kill_count,
 		"damage_dealt": _total_damage_dealt,
 		"towers_built": _towers_built,
 		"generators_lost": _generators_lost,
 		"best_streak": _best_streak,
-		"wave_reached": _wave_reached
+		"wave_reached": _wave_reached,
+		"treasures_opened": _treasures_opened,
+		"currency_earned": _currency_earned
 	}
-	
+
+func _trigger_victory() -> void:
+	"""Final boss defeated: end the run as a WIN (endless continues optionally)."""
+	# FFA never wins on a boss kill — the match is decided by the 20-min clock and
+	# resource score. Bosses are just shared threats. Keep playing.
+	if is_ffa():
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("BOSS DEFEATED", Color(1.0, 0.85, 0.3), 36, 2.4)
+		return
+	if _run_won:
+		return
+	_run_won = true
+	game_over = true
+	Engine.time_scale = 1.0
+	set_build_focus(false, "")
+	_force_close_menus()
+	_set_pause_allowed(false)
+	AudioManager.play_one_shot("level_up", player.global_position if player != null else Vector2.ZERO, AudioManager.CRITICAL_PRIORITY)
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("THE ENDBRINGER FALLS", Color(1.0, 0.85, 0.3), 52, 3.5)
+	# Unlock the victory milestone (space level) before presenting the screen.
+	var meta = _get_meta_progression()
+	if meta != null and meta.has_method("mark_victory_unlock"):
+		meta.mark_victory_unlock()
+	_present_run_end(true)
+
+func _show_game_over_screen() -> void:
+	"""Display the game over stats screen (player death path)."""
+	_present_run_end(false)
+
+func _present_run_end(won: bool = false) -> void:
+	"""Shared run-end presentation for both death (won=false) and victory (won=true)."""
+	if game_over_ui == null:
+		return
+
+	var stats = _compile_run_stats()
+
 	# Check for new records
 	var is_new_record = _check_and_save_record(stats)
 	_log_draft_telemetry()
-	
-	# Show the game over UI
+
+	# Award persistent meta-progression currency (Cores) for this run.
+	var cores_earned = 0
+	var meta = _get_meta_progression()
+	if meta != null and meta.has_method("award_run_cores"):
+		cores_earned = meta.award_run_cores(stats, won)
+
+	# Show the run-end UI
 	if game_over_ui.has_method("show_game_over"):
-		game_over_ui.show_game_over(stats, is_new_record)
+		game_over_ui.show_game_over(stats, is_new_record, cores_earned, won)
+
+const FFA_RESULTS_UI_SCRIPT := preload("res://scripts/ffa_results_ui.gd")
+
+func _instantiate_ffa_results_ui() -> void:
+	"""Create the FFA end-of-match scoreboard overlay (hidden until match end)."""
+	if ffa_results_ui != null and is_instance_valid(ffa_results_ui):
+		return
+	ffa_results_ui = FFA_RESULTS_UI_SCRIPT.new()
+	ffa_results_ui.name = "FFAResultsUI"
+	add_child(ffa_results_ui)
+
+const FFA_DEATH_UI_SCRIPT := preload("res://scripts/ffa_death_ui.gd")
+
+func _instantiate_ffa_death_ui() -> void:
+	"""Create the local 'you died' spectate overlay (hidden until local death)."""
+	if ffa_death_ui != null and is_instance_valid(ffa_death_ui):
+		return
+	ffa_death_ui = FFA_DEATH_UI_SCRIPT.new()
+	ffa_death_ui.name = "FFADeathUI"
+	add_child(ffa_death_ui)
 
 func _instantiate_game_over_ui() -> void:
 	"""Create and setup the game over UI"""
@@ -3366,38 +5260,41 @@ func _instantiate_game_over_ui() -> void:
 		game_over_ui.try_again_pressed.connect(_on_try_again)
 	if game_over_ui.has_signal("main_menu_pressed"):
 		game_over_ui.main_menu_pressed.connect(_on_main_menu_pressed)
-	if game_over_ui.has_signal("stats_pressed"):
-		game_over_ui.stats_pressed.connect(_on_stats_pressed)
+	if game_over_ui.has_signal("continue_endless_pressed"):
+		game_over_ui.continue_endless_pressed.connect(_on_continue_endless)
 
 func _on_try_again() -> void:
 	"""Restart the current run"""
 	_restart_game()
 
-func _on_main_menu_pressed() -> void:
-	"""Return to main menu"""
-	_force_close_menus()
-	# Hide game over UI
+func _on_continue_endless() -> void:
+	"""After victory: resume the same run into endless boss cycling."""
 	if game_over_ui != null:
 		game_over_ui.hide_game_over()
-	
-	# Reset game state
-	_reset_game_state()
-	
-	# Show start screen
-	if ui != null and ui.has_method("show_start"):
-		ui.show_start(true)
+	game_over = false
+	_run_won = false
+	# Allow the boss scheduler to resume; the schedule index/cycle and _next_boss_time
+	# were already advanced when the final boss spawned, so cycling continues cleanly.
+	_final_boss_spawned = false
+	_final_boss_active = false
+	Engine.time_scale = 1.0
+	_set_pause_allowed(true)
 
-func _on_stats_pressed() -> void:
-	"""Show detailed stats (could expand to show charts)"""
-	# For now, just toggle the detailed view
-	# This could be expanded to show damage over time charts, etc.
-	print("Stats button pressed - detailed view coming soon!")
+func _on_main_menu_pressed() -> void:
+	"""Return to the main menu scene"""
+	_force_close_menus()
+	# Restore time scale before leaving the run scene.
+	Engine.time_scale = 1.0
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 func _handle_game_over_input() -> void:
 	"""Handle input during game over screen"""
-	# Allow quick restart with Enter/R keys
+	# Allow quick restart with Enter/R keys (continue endless after a victory).
 	if Input.is_action_just_pressed("start_game"):
-		_on_try_again()
+		if _run_won:
+			_on_continue_endless()
+		else:
+			_on_try_again()
 	if Input.is_action_just_pressed("cancel") or Input.is_action_just_pressed("pause"):
 		_on_main_menu_pressed()
 
@@ -3437,6 +5334,10 @@ func _reset_run_modifiers() -> void:
 	chest_tower_range_mult = 1.0
 	chest_tower_damage_bonus = 0.0
 	chest_tower_rate_mult = 1.0
+	chest_tower_chain_bonus = 0
+	chest_tower_aoe_mult = 1.0
+	tower_chain_bonus = 0
+	tower_aoe_mult = 1.0
 	build_cost_mult = 1.0
 	reload_speed_mult = 1.0
 	crit_chance_bonus = 0.0
@@ -3471,6 +5372,7 @@ func _reset_run_modifiers() -> void:
 
 func _reset_game_state() -> void:
 	"""Reset all game state for a new run"""
+	set_build_focus(false, "")
 	_force_close_menus()
 	game_over = false
 	game_started = false
@@ -3484,6 +5386,8 @@ func _reset_game_state() -> void:
 	xp_next = 12
 	pending_picks = 0
 	tech_open = false
+	chest_modal_open = false
+	_chest_modal_depth = 0
 	tech_choices.clear()
 	tech_levels.clear()
 	_unlock_core_builds()
@@ -3492,6 +5396,8 @@ func _reset_game_state() -> void:
 	_refresh_tech_scalars()
 	if ui != null and ui.has_method("hide_tech"):
 		ui.hide_tech()
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(false)
 	if build_manager != null and build_manager.has_method("refresh_controls"):
 		build_manager.refresh_controls()
 	_refresh_build_palette()
@@ -3526,6 +5432,8 @@ func _reset_game_state() -> void:
 
 func _force_close_menus() -> void:
 	get_tree().paused = false
+	chest_modal_open = false
+	_chest_modal_depth = 0
 	if settings_menu != null and is_instance_valid(settings_menu):
 		settings_menu.visible = false
 	if pause_menu != null and is_instance_valid(pause_menu):
@@ -3533,6 +5441,8 @@ func _force_close_menus() -> void:
 			pause_menu.unpause()
 		else:
 			pause_menu.visible = false
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(false)
 
 func _reset_run_stats() -> void:
 	"""Reset stats for a new run"""
@@ -3543,6 +5453,8 @@ func _reset_run_stats() -> void:
 	_current_streak = 0
 	_best_streak = 0
 	_wave_reached = 1
+	_treasures_opened = 0
+	_currency_earned = 0
 	_next_chest_time = 0.0
 	_essence_announce_count = 0
 	_essence_announce_timer = 0.0
@@ -3550,6 +5462,17 @@ func _reset_run_stats() -> void:
 	_last_minute_announcement = -1
 	_essence_tip_shown = false
 	_final_boss_spawned = false
+	_final_boss_active = false
+	_run_won = false
+	run_threat_mult = 1.0
+	run_player_damage_taken_mult = 1.0
+	run_ramp_speed_mult = 1.0
+	meta_tower_damage_mult = 1.0
+	meta_pickup_radius_mult = 1.0
+	_income_decay_notice_stage = 0
+	_controls_hint_faded = false
+	if ui != null and ui.has_method("set_controls_visible"):
+		ui.set_controls_visible(true)
 	_reset_progression_state()
 	if ui != null and ui.has_method("clear_tech_ledger"):
 		ui.clear_tech_ledger()
@@ -3591,6 +5514,39 @@ func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
 	# Update kill streak HUD
 	if ui != null and ui.has_method("update_streak"):
 		ui.update_streak(_current_streak)
+	# Escalating dopamine milestones: each tier punches harder so streaks feel
+	# like a building crescendo rather than a flat counter.
+	if _current_streak == 5 or _current_streak == 10 or _current_streak == 25 \
+			or _current_streak == 50 or _current_streak == 100:
+		_celebrate_streak_milestone(_current_streak)
+
+	var shake := 4.0
+	var slow := 0.85
+	if streak >= 100:
+		color = Color(1.0, 0.2, 0.2, 0.22)
+		shake = 12.0
+		slow = 0.4
+	elif streak >= 50:
+		color = Color(1.0, 0.35, 0.1, 0.18)
+		shake = 9.0
+		slow = 0.5
+	elif streak >= 25:
+		color = Color(1.0, 0.55, 0.1, 0.15)
+		shake = 7.0
+		slow = 0.6
+	elif streak >= 10:
+		color = Color(1.0, 0.85, 0.2, 0.13)
+		shake = 5.0
+		slow = 0.7
+	if has_method("flash_screen"):
+		flash_screen(color, 0.18)
+	if has_method("shake_camera"):
+		shake_camera(shake, 0.25)
+	# Bigger streaks earn a punchier slow-mo beat.
+	if streak >= 25:
+		trigger_time_accent(slow, 0.12)
+	if ui != null and ui.has_method("update_streak"):
+		ui.update_streak(streak)
 
 func reset_kill_streak() -> void:
 	"""Call when player takes damage to reset streak"""
@@ -3707,27 +5663,29 @@ func _spawn_initial_breakables() -> void:
 func _spawn_props() -> void:
 	if props_root == null:
 		return
-	var textures: Array = []
-	for path in PROP_PATHS:
-		if ResourceLoader.exists(path):
-			textures.append(load(path))
-	if textures.is_empty():
+	# Build the weighted, biome-tagged prop pool (skip any missing assets).
+	var pool: Array = []
+	var weights: Array = []
+	for d in PROP_DEFS:
+		var path := str(d.get("path", ""))
+		if path != "" and ResourceLoader.exists(path):
+			pool.append({"tex": load(path), "size": int(d.get("size", 32)), "biomes": d.get("biomes", [])})
+			weights.append(max(1, int(d.get("weight", 1))))
+	if pool.is_empty():
 		return
+	var placed: Array = []  # accepted prop world positions (for spacing checks)
 	for i in range(prop_count):
-		var sprite = Sprite2D.new()
-		sprite.texture = textures[randi_range(0, textures.size() - 1)]
-		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		sprite.z_index = -2
-		var pos = Vector2.ZERO
-		for attempt in range(6):
-			var angle = randf() * TAU
-			var distance = randf_range(prop_min_distance, prop_spawn_radius)
-			pos = Vector2.RIGHT.rotated(angle) * distance
-		sprite.global_position = pos
-		props_root.add_child(sprite)
-	_spawn_clusters()
+		var def: Dictionary = _weighted_pick_prop(pool, weights)
+		var pos = _find_prop_position(placed, prop_min_distance, prop_spawn_radius, prop_min_separation, def.get("biomes", []))
+		if pos == null:
+			continue
+		placed.append(pos)
+		var node := _make_grounded_prop(def["tex"], int(def.get("size", 32)))
+		node.global_position = pos
+		props_root.add_child(node)
+	_spawn_clusters(placed)
 
-func _spawn_clusters() -> void:
+func _spawn_clusters(placed: Array = []) -> void:
 	if props_root == null:
 		return
 	var textures: Array = []
@@ -3737,17 +5695,103 @@ func _spawn_clusters() -> void:
 	if textures.is_empty():
 		return
 	for i in range(cluster_count):
-		var sprite = Sprite2D.new()
-		sprite.texture = textures[randi_range(0, textures.size() - 1)]
-		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		sprite.z_index = -2
-		var pos = Vector2.ZERO
-		for attempt in range(8):
-			var angle = randf() * TAU
-			var distance = randf_range(cluster_min_distance, prop_spawn_radius)
-			pos = Vector2.RIGHT.rotated(angle) * distance
-		sprite.global_position = pos
-		props_root.add_child(sprite)
+		var tex: Texture2D = textures[randi_range(0, textures.size() - 1)]
+		var pos = _find_prop_position(placed, cluster_min_distance, prop_spawn_radius, cluster_min_separation, [])
+		if pos == null:
+			continue
+		placed.append(pos)
+		var node := _make_grounded_prop(tex, 96)
+		node.global_position = pos
+		props_root.add_child(node)
+
+# Rejection sampling: try several candidate positions, accept the first that is
+# far enough from already-placed props, outside the spawn pocket, and (when a
+# biome filter is given) sitting on an allowed biome. Returns null on failure so
+# the caller can simply skip that prop rather than stack it on another.
+func _find_prop_position(placed: Array, min_dist: float, max_dist: float, separation: float, allowed_biomes: Array):
+	var sep_sq := separation * separation
+	for attempt in range(18):
+		var angle := randf() * TAU
+		# sqrt() biases distance so density is even across the disc, not clumped.
+		var distance: float = min_dist + sqrt(randf()) * (max_dist - min_dist)
+		var pos := Vector2.RIGHT.rotated(angle) * distance
+		if pos.length() < prop_safe_spawn_radius:
+			continue
+		if not allowed_biomes.is_empty() and ground != null and ground.has_method("get_biome_at"):
+			var biome := str(ground.get_biome_at(pos))
+			if not allowed_biomes.has(biome):
+				continue
+		var ok := true
+		for p in placed:
+			if pos.distance_squared_to(p) < sep_sq:
+				ok = false
+				break
+		if ok:
+			return pos
+	return null
+
+func _weighted_pick_prop(pool: Array, weights: Array) -> Dictionary:
+	if pool.is_empty():
+		return {}
+	if weights.size() != pool.size():
+		return pool[randi_range(0, pool.size() - 1)]
+	var total := 0
+	for w in weights:
+		total += int(w)
+	if total <= 0:
+		return pool[0]
+	var target := randf() * float(total)
+	var acc := 0.0
+	for i in range(pool.size()):
+		acc += float(weights[i])
+		if target <= acc:
+			return pool[i]
+	return pool[pool.size() - 1]
+
+# Wrap a prop texture so its base sits at the node origin (the ground-contact
+# point used by y-sort) and add a soft contact shadow underneath. This gives
+# props depth and stops them reading as flat stickers.
+func _make_grounded_prop(tex: Texture2D, art_size: int) -> Node2D:
+	var root := Node2D.new()
+	var half := float(art_size) * 0.5
+	var shadow := _make_contact_shadow(float(art_size) * 0.62)
+	shadow.position = Vector2(0, -2)
+	root.add_child(shadow)
+	var sprite := Sprite2D.new()
+	sprite.texture = tex
+	sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	# Sprite is centered by default; lift it so its bottom edge meets the origin.
+	sprite.offset = Vector2(0, -half)
+	root.add_child(sprite)
+	return root
+
+# Cached soft ellipse shadow texture, scaled per prop. One radial-gradient image
+# is built once and reused for every shadow (cheap, no per-prop image work).
+var _shadow_tex: Texture2D = null
+func _make_contact_shadow(width: float) -> Sprite2D:
+	if _shadow_tex == null:
+		_shadow_tex = _build_shadow_texture()
+	var spr := Sprite2D.new()
+	spr.texture = _shadow_tex
+	spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	spr.modulate = Color(0, 0, 0, 0.32)
+	var base_w := float(_shadow_tex.get_width())
+	var sx: float = width / max(1.0, base_w)
+	spr.scale = Vector2(sx, sx * 0.42)  # flattened ellipse
+	spr.z_index = -1
+	return spr
+
+func _build_shadow_texture() -> Texture2D:
+	var size := 64
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	var c := float(size) * 0.5
+	for y in range(size):
+		for x in range(size):
+			var d: float = Vector2(x - c, y - c).length() / c
+			var a: float = clamp(1.0 - d, 0.0, 1.0)
+			a = a * a  # softer falloff toward the edge
+			img.set_pixel(x, y, Color(1, 1, 1, a))
+	return ImageTexture.create_from_image(img)
 
 func _spawn_environmental_particles() -> void:
 	"""Spawn ambient environmental particles based on zone type"""
@@ -3773,26 +5817,18 @@ func spawn_breakable() -> void:
 	var angle = randf() * TAU
 	var distance = randf_range(breakable_spawn_min, breakable_spawn_max)
 	breakable.global_position = player.global_position + Vector2.RIGHT.rotated(angle) * distance
-	var chest = randf() < 0.28
-	var value = 0
-	var xp_amount = 0
+	var value = randi_range(4, 8)
+	var xp_amount = randi_range(2, 3)
 	var style = "small"
-	if chest:
-		value = randi_range(18, 28)
-		xp_amount = randi_range(8, 12)
-		style = "large"
-	else:
-		value = randi_range(4, 8)
-		xp_amount = randi_range(2, 3)
-		var roll = randf()
-		if roll < 0.25:
-			style = "skull"
-		elif roll < 0.5:
-			style = "fence"
-		elif roll < 0.7:
-			style = "pillar"
+	var roll = randf()
+	if roll < 0.25:
+		style = "skull"
+	elif roll < 0.5:
+		style = "fence"
+	elif roll < 0.7:
+		style = "pillar"
 	if breakable.has_method("setup"):
-		breakable.setup(self, value, xp_amount, style, chest)
+		breakable.setup(self, value, xp_amount, style, false)
 	breakables_root.add_child(breakable)
 
 func spawn_powerup() -> void:
@@ -3885,6 +5921,11 @@ func _is_valid_powerup_position(pos: Vector2) -> bool:
 func show_floating_text(text: String, position: Vector2, color: Color = Color.WHITE) -> void:
 	if fx_root == null or not is_instance_valid(fx_root) or not fx_root.is_inside_tree():
 		return
+	if _adaptive_perf_scale < 0.72:
+		if text.begins_with("+") and randf() < 0.75:
+			return
+		if randf() < 0.35:
+			return
 	if fx_root.get_child_count() >= max_particles:
 		return
 	var label = Label.new()
@@ -4004,6 +6045,9 @@ func _spawn_resource_zones() -> void:
 		$World.add_child(zone)
 		resource_zones.append(zone)
 	print("Spawned %d resource zones" % resource_zones.size())
+	# Mark bonus zones with blight-corruption ground tiles.
+	if ground != null and ground.has_method("paint_blight_zones") and not placed.is_empty():
+		ground.paint_blight_zones(placed, ResourceZone.ZONE_RADIUS)
 
 func get_zone_at(world_pos: Vector2):
 	for zone in resource_zones:
@@ -4025,6 +6069,8 @@ func on_zone_depleted(zone: Node) -> void:
 
 # Hitstop - freeze frame effect for critical hits
 func trigger_hitstop() -> void:
+	if is_ffa():
+		return
 	if _time_scale_tween != null:
 		_time_scale_tween.kill()
 	Engine.time_scale = FeedbackConfig.HITSTOP_TIME_SCALE
@@ -4055,9 +6101,11 @@ func spawn_muzzle_flash(position: Vector2, direction: Vector2) -> void:
 	tween.tween_property(flash, "scale", Vector2.ONE * 1.2, FeedbackConfig.MUZZLE_FLASH_DURATION * 0.3)
 	tween.tween_property(flash, "modulate:a", 0.0, FeedbackConfig.MUZZLE_FLASH_DURATION * 0.7)
 	tween.tween_callback(flash.queue_free)
-	
-	# Also spawn a quick glow particle
-	spawn_glow_particle(position, Color(1.0, 0.9, 0.5, 0.8), 10.0, 0.08, Vector2.ZERO, 2.5, 0.0, 0.5, 4)
+
+	# Also spawn a quick glow particle — gated by the optional-FX budget so dense
+	# fire doesn't stack additive glow into a bright wash.
+	if should_spawn_optional_fx():
+		spawn_glow_particle(position, Color(1.0, 0.9, 0.5, 0.8), 10.0, 0.08, Vector2.ZERO, 2.5, 0.0, 0.5, 4)
 
 func _get_muzzle_flash_texture() -> Texture2D:
 	var path = "res://assets/fx/fx_hit_spark_16_f001_v001.png"
@@ -4101,9 +6149,11 @@ func _create_shell_casing() -> Sprite2D:
 func spawn_glow_burst_death(position: Vector2, base_color: Color) -> void:
 	if fx_root == null:
 		return
+	var density = _get_effective_fx_density_scale()
+	var burst_count = max(2, int(round(8.0 * density)))
 	# Spawn multiple glow particles in burst pattern
-	for i in range(8):
-		var angle = (TAU / 8.0) * i + randf_range(-0.2, 0.2)
+	for i in range(burst_count):
+		var angle = (TAU / float(burst_count)) * i + randf_range(-0.2, 0.2)
 		var speed = randf_range(60.0, 120.0)
 		var vel = Vector2.RIGHT.rotated(angle) * speed
 		var size = randf_range(4.0, 8.0)
@@ -4131,12 +6181,19 @@ func play_heartbeat_sound() -> void:
 	print("*THUMP*... *thump*... *thump*...")
 
 func _ensure_input_map() -> void:
-	_ensure_action("start_game", [KEY_ENTER, KEY_SPACE])
-	_ensure_action("move_up", [KEY_W, KEY_UP])
-	_ensure_action("move_down", [KEY_S, KEY_DOWN])
-	_ensure_action("move_left", [KEY_A, KEY_LEFT])
-	_ensure_action("move_right", [KEY_D, KEY_RIGHT])
-	_ensure_action("build_toggle", [KEY_B])
+	# --- Gamepad layout (Xbox/SDL): added alongside keyboard, never replacing it ---
+	# A=confirm/place, B=cancel, X=upgrade, Y=build toggle, Start=pause, Back=sell,
+	# LB/RB=cycle build, left stick=move, right stick=build cursor, triggers=zoom.
+	_ensure_action("start_game", [KEY_ENTER, KEY_SPACE], [JOY_BUTTON_A, JOY_BUTTON_START])
+	# Movement: left stick (analog) + d-pad fallback. Low deadzone so the stick
+	# responds near center — a high deadzone is the classic "controller won't move"
+	# complaint. Both axis directions are bound so the full stick range maps to
+	# action strength.
+	_ensure_action("move_up", [KEY_W, KEY_UP], [JOY_BUTTON_DPAD_UP], [[JOY_AXIS_LEFT_Y, -1.0]], 0.2)
+	_ensure_action("move_down", [KEY_S, KEY_DOWN], [JOY_BUTTON_DPAD_DOWN], [[JOY_AXIS_LEFT_Y, 1.0]], 0.2)
+	_ensure_action("move_left", [KEY_A, KEY_LEFT], [JOY_BUTTON_DPAD_LEFT], [[JOY_AXIS_LEFT_X, -1.0]], 0.2)
+	_ensure_action("move_right", [KEY_D, KEY_RIGHT], [JOY_BUTTON_DPAD_RIGHT], [[JOY_AXIS_LEFT_X, 1.0]], 0.2)
+	_ensure_action("build_toggle", [KEY_B], [JOY_BUTTON_Y])
 	_ensure_action("build_1", [KEY_1])
 	_ensure_action("build_2", [KEY_2])
 	_ensure_action("build_3", [KEY_3])
@@ -4160,19 +6217,50 @@ func _ensure_input_map() -> void:
 	_ensure_action(TECH_FORCE_TOWER_ACTION, [KEY_Q])
 	_ensure_action(TECH_FORCE_ENGINEER_ACTION, [KEY_W])
 	_ensure_action(TECH_FORCE_ECONOMY_ACTION, [KEY_E])
-	_ensure_action("upgrade", [KEY_U])
+	_ensure_action("upgrade", [KEY_U], [JOY_BUTTON_X])
+	_ensure_action("resource_dump", [KEY_H])
 	_ensure_action("toggle_gate", [KEY_G])
-	_ensure_action("interact", [KEY_F])
-	_ensure_action("cancel", [KEY_ESCAPE])
-	_ensure_action("pause", [KEY_P])
-	_ensure_action("ui_cancel", [KEY_ESCAPE])
+	_ensure_action("interact", [KEY_F], [JOY_BUTTON_A])
+	_ensure_action("sell", [KEY_X], [JOY_BUTTON_BACK])
+	_ensure_action("cancel", [KEY_ESCAPE], [JOY_BUTTON_B])
+	_ensure_action("pause", [KEY_P], [JOY_BUTTON_START])
+	_ensure_action("ui_cancel", [KEY_ESCAPE], [JOY_BUTTON_B])
+	_ensure_action("zoom_in", [KEY_EQUAL], [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]], 0.5)
+	_ensure_action("zoom_out", [KEY_MINUS], [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]], 0.5)
+	# Gamepad-only build placement helpers (no keyboard equivalent needed).
+	_ensure_action("build_place", [], [JOY_BUTTON_A])
+	_ensure_action("build_prev", [], [JOY_BUTTON_LEFT_SHOULDER])
+	_ensure_action("build_next", [], [JOY_BUTTON_RIGHT_SHOULDER])
+	# Build cursor: RIGHT stick only. D-pad is intentionally NOT bound here so it
+	# always means "move the player" — sharing the d-pad between movement and the
+	# build cursor made movement feel ambiguous/unresponsive.
+	_ensure_action("build_cursor_up", [], [], [[JOY_AXIS_RIGHT_Y, -1.0]], 0.2)
+	_ensure_action("build_cursor_down", [], [], [[JOY_AXIS_RIGHT_Y, 1.0]], 0.2)
+	_ensure_action("build_cursor_left", [], [], [[JOY_AXIS_RIGHT_X, -1.0]], 0.2)
+	_ensure_action("build_cursor_right", [], [], [[JOY_AXIS_RIGHT_X, 1.0]], 0.2)
 	_ensure_action(DEBUG_FLOW_ACTION, [KEY_F8, KEY_F9, KEY_F10])
 
-func _ensure_action(name: String, keys: Array) -> void:
+func _ensure_action(name: String, keys: Array, buttons: Array = [], axes: Array = [], deadzone: float = -1.0) -> void:
 	if not InputMap.has_action(name):
 		InputMap.add_action(name)
+	if deadzone >= 0.0:
+		InputMap.action_set_deadzone(name, deadzone)
 	for key in keys:
 		var ev = InputEventKey.new()
 		ev.physical_keycode = key
 		if not InputMap.action_has_event(name, ev):
 			InputMap.action_add_event(name, ev)
+	# Gamepad buttons (e.g. JOY_BUTTON_A).
+	for button in buttons:
+		var bev = InputEventJoypadButton.new()
+		bev.button_index = button
+		if not InputMap.action_has_event(name, bev):
+			InputMap.action_add_event(name, bev)
+	# Gamepad analog axes. Each entry is [axis, direction] where direction is
+	# +1.0 or -1.0 (the half of the axis that triggers the action).
+	for axis_entry in axes:
+		var mev = InputEventJoypadMotion.new()
+		mev.axis = axis_entry[0]
+		mev.axis_value = axis_entry[1]
+		if not InputMap.action_has_event(name, mev):
+			InputMap.action_add_event(name, mev)

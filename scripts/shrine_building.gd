@@ -1,30 +1,30 @@
 extends "res://scripts/building.gd"
 
-var summon_interval: float = 30.0
-var demon_health: float = 160.0
-var demon_damage: float = 24.0
-var demon_speed: float = 125.0
-var demon_attack_rate: float = 1.0
-var demon_attack_range: float = 24.0
+var summon_interval: float = 28.0
+var demon_health: float = 220.0
+var demon_damage: float = 34.0
+var demon_speed: float = 118.0
+var demon_attack_rate: float = 0.95
+var demon_attack_range: float = 34.0
 var caster_chance: float = 0.35
-var caster_aoe_radius: float = 70.0
-var caster_aoe_damage: float = 36.0
+var caster_aoe_radius: float = 96.0
+var caster_aoe_damage: float = 54.0
 var _timer: float = 0.0
 var _game: Node = null
 var _spawned_once: bool = false
 
-const DEMON_FRAMES = [
-	"res://assets/level1/level1_buildings_traps_anim60/unit_demon_fiend_duelist_32_move_f001_v001.png",
-	"res://assets/level1/level1_buildings_traps_anim60/unit_demon_fiend_duelist_32_move_f002_v001.png",
-	"res://assets/level1/level1_buildings_traps_anim60/unit_demon_fiend_duelist_32_move_f003_v001.png",
-	"res://assets/level1/level1_buildings_traps_anim60/unit_demon_fiend_duelist_32_move_f004_v001.png"
+const STARGATE_DEMON_FRAMES = [
+	"res://assets/level1/level1_anim60/unit_demon_void_gargant_64_move_f001_v001.png",
+	"res://assets/level1/level1_anim60/unit_demon_void_gargant_64_move_f002_v001.png",
+	"res://assets/level1/level1_anim60/unit_demon_void_gargant_64_move_f003_v001.png",
+	"res://assets/level1/level1_anim60/unit_demon_void_gargant_64_move_f004_v001.png"
 ]
 
-const DEMON_CASTER_FRAMES = [
-	"res://assets/level1/level1_monsters_more/unit_demon_cultist_32_move_f001_v001.png",
-	"res://assets/level1/level1_monsters_more/unit_demon_cultist_32_move_f002_v001.png",
-	"res://assets/level1/level1_monsters_more/unit_demon_cultist_32_move_f003_v001.png",
-	"res://assets/level1/level1_monsters_more/unit_demon_cultist_32_move_f004_v001.png"
+const STARGATE_FALLBACK_FRAMES = [
+	"res://assets/level1/level1_monsters_more/unit_demon_gargoyle_flying_48_move_f001_v001.png",
+	"res://assets/level1/level1_monsters_more/unit_demon_gargoyle_flying_48_move_f002_v001.png",
+	"res://assets/level1/level1_monsters_more/unit_demon_gargoyle_flying_48_move_f003_v001.png",
+	"res://assets/level1/level1_monsters_more/unit_demon_gargoyle_flying_48_move_f004_v001.png"
 ]
 
 func _ready() -> void:
@@ -57,30 +57,52 @@ func _process(delta: float) -> void:
 	_timer = 0.0
 	_summon_demon()
 
+func _all_paths_exist(paths: Array) -> bool:
+	for raw_path in paths:
+		if not ResourceLoader.exists(str(raw_path)):
+			return false
+	return true
+
+func _pick_demon_frames() -> Array:
+	if _all_paths_exist(STARGATE_DEMON_FRAMES):
+		return STARGATE_DEMON_FRAMES
+	return STARGATE_FALLBACK_FRAMES
+
 func _summon_demon() -> void:
 	if _game == null or not _game.has_method("spawn_ally"):
 		return
-	var is_caster = randf() < caster_chance
-	var frames = DEMON_CASTER_FRAMES if is_caster else DEMON_FRAMES
+	var is_overlord = randf() < caster_chance
+	var frames = _pick_demon_frames()
+	var hp_mult = 2.2 if is_overlord else 1.8
+	var dmg_mult = 1.55 if is_overlord else 1.25
+	var scale_mult = 1.95 if is_overlord else 1.65
+	var aoe_mult = 1.5 if is_overlord else 1.2
 	var config: Dictionary = {
 		"frame_paths": frames,
-		"fps": 7.0,
-		"max_health": demon_health * (0.9 if is_caster else 1.0),
-		"attack_damage": demon_damage * (1.25 if is_caster else 1.0),
-		"attack_rate": demon_attack_rate * (1.15 if is_caster else 1.0),
-		"attack_range": demon_attack_range,
-		"speed": demon_speed * (0.95 if is_caster else 1.0),
-		"aggro_range": 300.0,
-		"orbit_radius": 170.0 if is_caster else 140.0,
-		"leash_radius": 340.0,
-		"attack_fx": "ally_lightning" if is_caster else "ally_slash",
-		"spawn_fx": "summon_fire",
-		"death_fx": "elite_kill",
-		"scale": 1.15 if is_caster else 1.1,
-		"z": 3,
-		"aoe_radius": caster_aoe_radius if is_caster else 0.0,
-		"aoe_damage": caster_aoe_damage if is_caster else 0.0,
-		"aoe_fx": "summon_fire"
+		"fps": 8.5,
+		"max_health": demon_health * hp_mult,
+		"attack_damage": demon_damage * dmg_mult,
+		"attack_rate": demon_attack_rate * (0.95 if is_overlord else 1.08),
+		"attack_range": demon_attack_range + (8.0 if is_overlord else 4.0),
+		"speed": demon_speed * (0.88 if is_overlord else 0.95),
+		"aggro_range": 430.0,
+		"orbit_radius": 250.0 if is_overlord else 220.0,
+		"leash_radius": 540.0,
+		"orbit_speed": 1.7 if is_overlord else 2.0,
+		"attack_fx": "hero_energy_impact" if is_overlord else "ally_lightning",
+		"spawn_fx": "summon_shadow",
+		"death_fx": "hero_elite_death",
+		"damage_type": "lightning",
+		"scale": scale_mult,
+		"z": 4,
+		"hit_radius": 16.0 if is_overlord else 13.0,
+		"aoe_radius": caster_aoe_radius * aoe_mult,
+		"aoe_damage": caster_aoe_damage * aoe_mult,
+		"aoe_fx": "hero_energy_impact"
 	}
-	var spawn_pos = global_position + Vector2(randf_range(-14.0, 14.0), randf_range(-14.0, 14.0))
+	var spawn_pos = global_position + Vector2(randf_range(-22.0, 22.0), randf_range(-22.0, 22.0))
+	if _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("energy_impact", spawn_pos, 1.2 if is_overlord else 1.0, "lightning")
+	elif _game.has_method("spawn_fx"):
+		_game.spawn_fx("summon_shadow", spawn_pos)
 	_game.spawn_ally(config, spawn_pos)

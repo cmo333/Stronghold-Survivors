@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/game_over_ui.gd" id="1_v8k5x"]
-[ext_resource type="FontFile" uid="uid://c8j7y3r2j1q0w" path="res://assets/ui/pixel_font.ttf" id="2_8j3m9"]
+[ext_resource type="FontFile" path="res://assets/ui/pixel_font.ttf" id="2_8j3m9"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_1"]
 bg_color = Color(0.08, 0.08, 0.1, 0.95)
@@ -86,12 +86,12 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -180.0
-offset_top = -80.0
+offset_top = -120.0
 offset_right = 180.0
-offset_bottom = 120.0
+offset_bottom = 160.0
 grow_horizontal = 2
 grow_vertical = 2
-theme_override_constants/separation = 12
+theme_override_constants/separation = 10
 
 [node name="ButtonsContainer" type="HBoxContainer" parent="Panel"]
 layout_mode = 1
@@ -121,13 +121,6 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_fonts/font = ExtResource("2_8j3m9")
 theme_override_font_sizes/font_size = 12
-text = "MAIN MENU"
-
-[node name="StatsBtn" type="Button" parent="Panel/ButtonsContainer"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_fonts/font = ExtResource("2_8j3m9")
-theme_override_font_sizes/font_size = 12
-text = "STATS"
+text = "ACCEPT"
 
 [node name="AnimationPlayer" type="AnimationPlayer" parent="."]

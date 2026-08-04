@@ -13,6 +13,9 @@ script = ExtResource(1)
 script = ExtResource(2)
 frame_paths = ["res://assets/level1/level1_anim60/tower_mortar_2x2_fire_f001_v001.png", "res://assets/level1/level1_anim60/tower_mortar_2x2_fire_f002_v001.png", "res://assets/level1/level1_anim60/tower_mortar_2x2_fire_f003_v001.png", "res://assets/level1/level1_anim60/tower_mortar_2x2_fire_f004_v001.png"]
 fps = 6.0
+auto_play = false
+use_single_frame = true
+single_frame_index = 0
 
 [node name="Collider" type="StaticBody2D" parent="."]
 

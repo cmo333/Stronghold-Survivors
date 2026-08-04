@@ -3,3 +3,7 @@
 .import/
 *.import
 .mono/
+
+build/
+output/
+*.zip

@@ -15,6 +15,12 @@ var is_siege = false
 
 var _attack_cooldown = 0.0
 var _game: Node = null
+# FFA replication. Host assigns net_id (monotonic) and remembers the scene/script
+# path it spawned from so clients can instantiate a matching proxy. 0 = unreplicated.
+var net_id: int = 0
+var net_scene_path: String = ""
+var net_script_path: String = ""
+var is_net_proxy: bool = false
 var _slow_sources: Dictionary = {}
 var _slow_multiplier = 1.0
 var _stun_timer = 0.0
@@ -107,6 +113,11 @@ func _physics_process(delta: float) -> void:
 	_tick_aura_bonus(delta)
 	_tick_elite(delta)
 	_tick_elite_glow_particles(delta)
+	# FFA clients: the host owns enemy AI/damage; we only render the replicated
+	# transform + visuals. Skip targeting, attacking, and movement integration.
+	if _game.has_method("is_sim_authority") and not _game.is_sim_authority():
+		_update_status_visuals()
+		return
 	# Knockback shove is independent of AI: it plays during stun/attack/move so
 	# every hit registers as a physical flinch, then decays back to zero.
 	var knockback_step := _consume_knockback(delta)
@@ -176,8 +187,13 @@ func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
 func _find_target() -> Node2D:
 	if _game == null:
 		return null
-	
-	var player: Node2D = _game.player as Node2D
+
+	# FFA: chase the NEAREST living player. Solo: this is just the one player.
+	var player: Node2D = null
+	if _game.has_method("get_nearest_player"):
+		player = _game.get_nearest_player(global_position) as Node2D
+	if player == null:
+		player = _game.player as Node2D
 	var best: Node2D = null
 	var best_dist = INF
 	var is_generator = false
@@ -474,7 +490,9 @@ func apply_slow(source_id: int, factor: float, duration: float = 0.0) -> void:
 	_update_status_visuals()
 	if duration > 0.0:
 		var timer = get_tree().create_timer(duration)
-		timer.timeout.connect(func(): remove_slow(source_id))
+		timer.timeout.connect(func():
+			remove_slow(source_id)
+		)
 
 func remove_slow(source_id: int) -> void:
 	_slow_sources.erase(source_id)

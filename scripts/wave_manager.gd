@@ -45,9 +45,41 @@ func update(_delta: float, time_sec: float) -> void:
 	_check_events()
 	_update_announcement()
 
+# Centers each timed wave event targets. Solo: the single player. FFA: every
+# living player, so a bat swarm / plague wall descends on EACH person at once
+# (the host owns this sim; clients receive the spawned enemies via replication).
+func _event_target_centers() -> Array:
+	var centers: Array = []
+	if game != null and game.has_method("is_ffa") and game.is_ffa():
+		# Prefer the game's roster so all participants (incl. remotes/bots) count.
+		if "players" in game:
+			for pid in game.players.keys():
+				var p = game.players[pid]
+				if p == null or not is_instance_valid(p):
+					continue
+				if "inert" in p and p.inert:
+					continue
+				centers.append(p.global_position)
+		if centers.is_empty() and player != null and is_instance_valid(player):
+			centers.append(player.global_position)
+	else:
+		if player != null and is_instance_valid(player):
+			centers.append(player.global_position)
+	return centers
+
 func _check_events() -> void:
-	if game == null or player == null or enemies_root == null:
+	if game == null or enemies_root == null:
 		return
+	# Only the simulation authority (solo, or the FFA host) spawns wave enemies;
+	# clients receive them via replication. Without this guard a client would
+	# double-spawn unregistered bats/plants. The timer state still advances on the
+	# authority so the announcement countdown (run by everyone) stays in sync.
+	if game.has_method("is_sim_authority") and not game.is_sim_authority():
+		return
+	# Keep a valid local player reference for solo; FFA pulls centers per-event.
+	if player == null or not is_instance_valid(player):
+		if game != null and "player" in game:
+			player = game.player
 	if game_time >= _next_bat_swarm_time:
 		_spawn_bat_swarm()
 		_bat_swarm_count += 1
@@ -72,42 +104,53 @@ func _update_announcement() -> void:
 		ui.show_wave_announcement("", 0.0, false)
 
 func _spawn_bat_swarm() -> void:
-	var count = _get_event_spawn_budget(int(round(BAT_SWARM_COUNT * _get_event_scalar())))
-	if count <= 0:
+	var centers := _event_target_centers()
+	if centers.is_empty():
 		return
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("BAT SWARM!", Color(0.7, 0.3, 1.0), 44, 2.4)
-	var center = player.global_position
+	# Each player gets their OWN swarm so the wave goes for everyone (FFA). The
+	# per-player count keeps individual pressure constant instead of splitting one
+	# swarm across the map.
+	var per_center = int(round(BAT_SWARM_COUNT * _get_event_scalar()))
 	var edge_distance = _get_edge_distance()
 	var spread = edge_distance
-	var spawned = 0
-	for edge in range(4):
-		if spawned >= count:
-			break
-		var position = _random_edge_position(edge, center, edge_distance, spread)
-		_spawn_bat(position)
-		spawned += 1
-	while spawned < count:
-		var edge = randi() % 4
-		var position = _random_edge_position(edge, center, edge_distance, spread)
-		_spawn_bat(position)
-		spawned += 1
+	for center in centers:
+		var count = _get_event_spawn_budget(per_center)
+		if count <= 0:
+			continue
+		var spawned = 0
+		for edge in range(4):
+			if spawned >= count:
+				break
+			var position = _random_edge_position(edge, center, edge_distance, spread)
+			_spawn_bat(position)
+			spawned += 1
+		while spawned < count:
+			var edge = randi() % 4
+			var position = _random_edge_position(edge, center, edge_distance, spread)
+			_spawn_bat(position)
+			spawned += 1
 
 func _spawn_plant_wall() -> void:
-	var desired = int(round(_get_plant_wall_count() * _get_event_scalar()))
-	var count = min(desired, _get_event_spawn_budget(desired))
-	if count <= 0:
+	var centers := _event_target_centers()
+	if centers.is_empty():
 		return
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("PLAGUE WALL!", Color(0.3, 1.0, 0.3), 44, 2.4)
-	var center = player.global_position
 	var edge_distance = _get_edge_distance() + PLANT_WALL_EDGE_OFFSET
-	var side = randi() % 4
-	var half_span = (count - 1) * 0.5 * PLANT_WALL_SPACING
-	for i in range(count):
-		var offset = -half_span + float(i) * PLANT_WALL_SPACING
-		var position = _wall_position_for_side(side, center, edge_distance, offset)
-		_spawn_plant(position)
+	# A wall rises against EACH player (FFA) so no one is spared.
+	for center in centers:
+		var desired = int(round(_get_plant_wall_count() * _get_event_scalar()))
+		var count = min(desired, _get_event_spawn_budget(desired))
+		if count <= 0:
+			continue
+		var side = randi() % 4
+		var half_span = (count - 1) * 0.5 * PLANT_WALL_SPACING
+		for i in range(count):
+			var offset = -half_span + float(i) * PLANT_WALL_SPACING
+			var position = _wall_position_for_side(side, center, edge_distance, offset)
+			_spawn_plant(position)
 
 func _spawn_bat(position: Vector2) -> void:
 	if enemies_root == null:

@@ -15,7 +15,8 @@ const DEFAULT_SETTINGS := {
 	"graphics": {
 		"fullscreen": false,
 		"vsync": true,
-		"quality": "high"
+		"quality": "high",
+		"render_fps_cap": 30
 	},
 	"gameplay": {
 		"screenshake_intensity": 1.0,
@@ -41,7 +42,28 @@ func _ready() -> void:
 	_settings = _deep_copy(DEFAULT_SETTINGS)
 	_load_from_disk()
 	_apply_all_settings()
+	apply_custom_cursor()
 	settings_loaded.emit()
+
+const CURSOR_TEXTURE_PATH := "res://assets/ui/cursor_arrowhead_48_v001.png"
+# Hotspot sits on the arrowhead tip (near the top of the emblem).
+const CURSOR_HOTSPOT := Vector2(8, 2)
+
+func apply_custom_cursor() -> void:
+	if not ResourceLoader.exists(CURSOR_TEXTURE_PATH):
+		return
+	var tex = load(CURSOR_TEXTURE_PATH)
+	if not (tex is Texture2D):
+		return
+	# Apply to every cursor shape so the emblem stays consistent over buttons,
+	# the play area, etc. (a Control hovering with a non-ARROW shape would
+	# otherwise fall back to the OS cursor in-game).
+	for shape in [
+		Input.CURSOR_ARROW, Input.CURSOR_POINTING_HAND, Input.CURSOR_IBEAM,
+		Input.CURSOR_CROSS, Input.CURSOR_BUSY, Input.CURSOR_DRAG,
+		Input.CURSOR_CAN_DROP, Input.CURSOR_MOVE, Input.CURSOR_HELP,
+	]:
+		Input.set_custom_mouse_cursor(tex, shape, CURSOR_HOTSPOT)
 
 func _deep_copy(value: Variant) -> Variant:
 	if value is Dictionary:
@@ -102,11 +124,13 @@ func _apply_setting(category: String, key: String, value: Variant) -> void:
 	if category == "audio":
 		_apply_audio_setting(key, value)
 		return
-	if category == "graphics":
-		if key == "fullscreen":
-			_apply_fullscreen(bool(value))
-		elif key == "vsync":
-			_apply_vsync(bool(value))
+		if category == "graphics":
+			if key == "fullscreen":
+				_apply_fullscreen(bool(value))
+			elif key == "vsync":
+				_apply_vsync(bool(value))
+			elif key == "render_fps_cap":
+				_apply_render_fps_cap(int(value))
 
 func _apply_audio_setting(key: String, value: Variant) -> void:
 	if AudioManager == null:
@@ -128,6 +152,10 @@ func _apply_fullscreen(enabled: bool) -> void:
 func _apply_vsync(enabled: bool) -> void:
 	var mode := DisplayServer.VSYNC_ENABLED if enabled else DisplayServer.VSYNC_DISABLED
 	DisplayServer.window_set_vsync_mode(mode)
+
+func _apply_render_fps_cap(cap: int) -> void:
+	var clamped_cap := clampi(cap, 30, 240)
+	Engine.max_fps = clamped_cap
 
 func get_setting(category: String, key: String, default_value: Variant = null) -> Variant:
 	if not _settings.has(category):
@@ -190,6 +218,26 @@ func is_vsync() -> bool:
 
 func get_quality() -> String:
 	return str(get_setting("graphics", "quality", "high"))
+
+func get_render_fps_cap() -> int:
+	return clampi(int(get_setting("graphics", "render_fps_cap", 30)), 30, 240)
+
+func set_render_fps_cap(cap: int) -> void:
+	set_setting("graphics", "render_fps_cap", clampi(cap, 30, 240))
+
+func get_quality_levels() -> Array[String]:
+	return ["low", "medium", "high", "ultra"]
+
+func cycle_quality(step: int = 1) -> String:
+	var levels = get_quality_levels()
+	var current = get_quality().to_lower()
+	var idx = levels.find(current)
+	if idx < 0:
+		idx = levels.find("high")
+	var next_idx = posmod(idx + step, levels.size())
+	var next_quality = levels[next_idx]
+	set_setting("graphics", "quality", next_quality)
+	return next_quality
 
 func get_screenshake_intensity() -> float:
 	return clampf(float(get_setting("gameplay", "screenshake_intensity", 1.0)), 0.0, 2.0)
@@ -265,6 +313,22 @@ func get_damage_budget_scale() -> float:
 	if is_reduced_motion():
 		scale *= 0.8
 	return clampf(scale, 0.4, 1.5)
+
+func get_glow_settings() -> Dictionary:
+	# Punchy / neon bloom, gated by quality tier for perf safety.
+	# Low tier disables glow entirely; higher tiers ramp intensity/bloom.
+	var quality := get_quality()
+	match quality:
+		"low":
+			return {"enabled": false, "intensity": 0.0, "strength": 0.0, "bloom": 0.0, "hdr_threshold": 1.0}
+		"medium":
+			return {"enabled": true, "intensity": 0.55, "strength": 0.9, "bloom": 0.10, "hdr_threshold": 0.95}
+		"high":
+			return {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
+		"ultra":
+			return {"enabled": true, "intensity": 1.0, "strength": 1.25, "bloom": 0.25, "hdr_threshold": 0.75}
+		_:
+			return {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
 
 func get_screenshake_multiplier() -> float:
 	var mult = get_screenshake_intensity()

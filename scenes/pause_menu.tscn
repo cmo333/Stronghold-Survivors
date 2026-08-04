@@ -83,6 +83,14 @@ text = "Wave: 1"
 layout_mode = 2
 text = "Health: 0/0"
 
+[node name="QualityLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Quality: High"
+
+[node name="PerfLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Perf: 60 FPS | 100%"
+
 [node name="PowerupsContainer" type="VBoxContainer" parent="Panel"]
 layout_mode = 0
 offset_left = 314.0
@@ -120,6 +128,11 @@ text = "Resume"
 custom_minimum_size = Vector2(0, 44)
 layout_mode = 2
 text = "Settings"
+
+[node name="QualityButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Quality: High"
 
 [node name="QuitMenuButton" type="Button" parent="Panel/VBoxContainer"]
 custom_minimum_size = Vector2(0, 44)

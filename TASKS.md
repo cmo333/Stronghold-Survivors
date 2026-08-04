@@ -1,6 +1,33 @@
 # Tasks
 
 ## Now
+- Phase 3 pass shipped:
+- set-piece hero FX wired to evolution/elite/boss/major impact events.
+- pause-menu quality cycling + live perf snapshot labels.
+- code-level perf review documented in `docs/PHASE3_PERFORMANCE_REVIEW.md`.
+- Tower graphics overhaul plan locked:
+- `docs/TOWER_GRAPHICS_UPDATE_PLAN.md`
+- 8-state motion standard + evolution-specific animation sets.
+- Style pivot lock:
+- `docs/STYLE_PIVOT_SCIFI_FIDELITY.md`
+- blend target = Halls of Torment + Warcraft 3 TD + StarCraft 1 sci-fi readability.
+- Update core art briefs:
+- `MOODBOARD.md`
+- `ART_BRIEF.md`
+- Lock and execute `docs/HYBRID_ANIMATION_FX_SPEC.md` v1:
+- tower deterministic motion hooks + procedural FX-first runtime
+- AI-assisted content limited to hero set-piece effects
+- Phase 1 hybrid implementation:
+- replace per-shot tower tween spam with deterministic fire impulse motion
+- increase player contrast/readability in dense combat
+- increase build-preview visibility under swarm overlap
+- Add 4090 batch pipeline tooling/docs for BiRefNet+luma merge:
+- `tools/win4090_biref_batch.py`
+- `docs/WIN4090_AI_FX_PIPELINE.md`
+- Player readability emergency pass:
+- render-priority player marker + halo amplification + local enemy occlusion near player.
+- Validate readability at 300s/600s/900s wave density.
+- Lock visual/performance roadmap in `VISUAL_PERF_PLAN.md` and execute by phase.
 - Finalize progression overhaul spec and lock v1 decisions:
 - all towers unlocked at run start
 - draft-first progression
@@ -23,6 +50,19 @@
 - tower-focused chest upgrades (rare/epic/diamond) wired into tower damage/rate scalars
 
 ## Next
+- Phase 2 hybrid animation/FX runtime:
+- shared procedural emitter hooks for tower fire/impact states
+- low/mid/high quality profile caps for particles, overlays, and optional FX
+- Build first AI-assisted hero FX batch using 4090 pipeline:
+- evolution transform burst
+- elite death burst
+- large impact variants for cannon/missile finals
+- Phase 2 animation smoothing pass from `VISUAL_PERF_PLAN.md`:
+- timing table unification for player/enemy/tower states.
+- remove high-frequency tween churn in combat hot paths.
+- Phase 3 performance controls from `VISUAL_PERF_PLAN.md`:
+- particle/floating-text caps by quality tier.
+- adaptive optional-FX downscaling under load.
 - Implement draft generator v1 with no-dead-screen and pity logic.
 - Balance/tune Essence costs and cap behavior for reroll/lock/infuse/force actions.
 - Rework elite/boss chest pipeline into 3-option reward flow.

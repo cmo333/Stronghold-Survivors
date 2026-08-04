@@ -23,7 +23,8 @@ func setup(target: Node2D, trail_color: Color, trail_width: float = 3.0, fade_ti
     width = trail_width
     width_curve = _create_width_curve()
     texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-    z_index = -1
+    # Trails must render in front of enemies/terrain so shots read clearly
+    z_index = 24
     
     # Gradient for fade effect
     gradient = _create_gradient(trail_color)

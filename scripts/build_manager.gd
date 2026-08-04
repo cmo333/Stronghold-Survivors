@@ -4,19 +4,16 @@ const BUILD_BINDINGS = {
 	"build_1": "arrow_turret",
 	"build_2": "cannon_tower",
 	"build_3": "tesla_tower",
-	"build_4": "mine_trap",
-	"build_5": "ice_trap",
-	"build_6": "acid_trap",
-	"build_7": "resource_generator",
-	"build_8": "barracks",
-	"build_9": "armory",
-	"build_barracks": "tech_lab",
-	"build_armory": "shrine"
+	"build_4": "resource_generator",
+	"build_5": "shrine",
+	"build_shrine": "shrine"
 }
+# NOTE: traps + extra towers/utility buildings were removed from the buildable
+# set; their hotkey bindings were dropped here. See docs/REMOVED_BUILDINGS.md.
 
-const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
-const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
-const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
+const PREVIEW_COLOR_OK = Color(0.24, 1.0, 0.92, 0.62)
+const PREVIEW_COLOR_BLOCKED = Color(1.0, 0.22, 0.22, 0.6)
+const PREVIEW_COLOR_UNAFFORDABLE = Color(1.0, 0.76, 0.24, 0.6)
 const RANGE_PREVIEW_IDS = ["arrow_turret", "cannon_tower", "tesla_tower"]
 const PREVIEW_STATUS_REFRESH_INTERVAL = 0.08
 
@@ -51,26 +48,52 @@ var _preview_cached_id: String = ""
 var _preview_cached_resources: int = -999999
 var _preview_cached_status: Dictionary = {}
 var _show_tower_range: bool = true
+var _selection_pulse: float = 0.0
+var _selection_ring_base_scale: float = 1.18
+
+# --- Gamepad / virtual build cursor ---
+# When the player's last input came from a controller, build placement uses a
+# code-driven cursor (right stick / d-pad) instead of the mouse. Both input
+# methods coexist; switching device flips _using_gamepad automatically.
+const VIRTUAL_CURSOR_SPEED := 520.0
+# Build ids the prev/next shoulder buttons cycle through (matches BUILD_BINDINGS order).
+const BUILD_CYCLE_ORDER := ["arrow_turret", "cannon_tower", "tesla_tower", "resource_generator", "shrine"]
+var _using_gamepad: bool = false
+var _virtual_cursor: Vector2 = Vector2.ZERO
+var _virtual_cursor_seeded: bool = false
+var _virtual_cursor_sprite: Sprite2D = null
+var _evo_pad_cooldown: float = 0.0
 
 func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
 	buildings_root = buildings_ref
 	ui = ui_ref
+	# Mouse/touch selection of evolution choices routes through this signal so
+	# clicking a card behaves identically to the keyboard/controller picks.
+	if ui != null and ui.has_signal("evolution_card_clicked"):
+		if not ui.evolution_card_clicked.is_connected(_on_evolution_card_clicked):
+			ui.evolution_card_clicked.connect(_on_evolution_card_clicked)
 	set_process_unhandled_input(true)
 	_create_preview()
 	_create_selection_ring()
-	build_mode = true
+	# Start OUT of build mode: the player opts in via a build hotkey (1-5) or the
+	# build toggle. current_id is pre-seeded so the first toggle has a sensible
+	# default, but no preview/placement is shown until the player asks for it.
+	build_mode = false
 	current_id = "arrow_turret"
 	_update_preview_state()
 	_set_selection_text(_describe_current_build())
 	_set_controls_text()
 	_refresh_palette()
+	_sync_build_focus()
 
 func _process(delta: float) -> void:
 	_preview_status_timer = max(0.0, _preview_status_timer - delta)
+	_animate_selection_ring(delta)
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		if preview != null:
 			preview.visible = false
+		_set_virtual_cursor_visible(false)
 		return
 	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
 		if preview != null:
@@ -79,10 +102,12 @@ func _process(delta: float) -> void:
 			selection_ring.visible = false
 		if range_ring != null:
 			range_ring.visible = false
+		_set_virtual_cursor_visible(false)
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
 		if preview != null:
 			preview.visible = false
+		_set_virtual_cursor_visible(false)
 		return
 	if selected_building != null and not is_instance_valid(selected_building):
 		selected_building = null
@@ -100,6 +125,15 @@ func _process(delta: float) -> void:
 				choose_evolution(key_idx)
 				break
 		_evo_input_cooldown = max(0.0, _evo_input_cooldown - delta)
+		# Gamepad: A = option 1, X (upgrade) = option 2.
+		_evo_pad_cooldown = max(0.0, _evo_pad_cooldown - delta)
+		if _evo_pad_cooldown <= 0.0:
+			if Input.is_action_just_pressed("build_place"):
+				_evo_pad_cooldown = 0.3
+				choose_evolution(0)
+			elif Input.is_action_just_pressed("upgrade"):
+				_evo_pad_cooldown = 0.3
+				choose_evolution(1)
 		return  # Block all other input while evolution panel open
 
 	_handle_hotkeys()
@@ -115,14 +149,41 @@ func _process(delta: float) -> void:
 		else:
 			_clear_selection()
 			_set_selection_text("")
+	# Gamepad: cycle the selected build with the shoulder buttons.
+	if Input.is_action_just_pressed("build_next"):
+		_cycle_build_selection(1)
+	elif Input.is_action_just_pressed("build_prev"):
+		_cycle_build_selection(-1)
+	# Gamepad: move the virtual cursor and place/select with the confirm button.
+	_update_virtual_cursor(delta)
+	if _using_gamepad and Input.is_action_just_pressed("build_place"):
+		if build_mode and current_id != "":
+			_try_place()
+		else:
+			_try_select()
 	_update_preview_position()
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Track the active input device so build placement uses the matching pointer
+	# (mouse position vs. virtual cursor). Cheap + reliable.
+	if event is InputEventMouse:
+		_using_gamepad = false
+	elif event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		_using_gamepad = true
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		return
 	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
+		return
+	# While the evolution chooser is open, swallow world clicks so a stray click
+	# off the cards doesn't place/select a tower behind the dialog. A right-click
+	# (or ESC, handled in _process) cancels the chooser instead.
+	if ui != null and ui.has_method("is_evolution_panel_open") and ui.is_evolution_panel_open():
+		if event is InputEventMouseButton and event.pressed:
+			if event.button_index == MOUSE_BUTTON_RIGHT:
+				_hide_evolution_panel()
+			get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
@@ -162,14 +223,30 @@ func _create_selection_ring() -> void:
 	selection_ring = Sprite2D.new()
 	selection_ring.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 	selection_ring.visible = false
-	selection_ring.z_index = 20
+	# Sit above gameplay FX so the selected tower is never lost in the horde.
+	selection_ring.z_as_relative = false
+	selection_ring.z_index = 60
+	selection_ring.scale = Vector2.ONE * 1.18
+	# Brighter, fully opaque cyan reads instantly against any backdrop.
+	selection_ring.modulate = Color(0.35, 1.0, 1.0, 1.0)
 	buildings_root.add_child(selection_ring)
 	range_ring = Sprite2D.new()
 	range_ring.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 	range_ring.visible = false
-	range_ring.z_index = 19
-	range_ring.modulate = Color(0.4, 0.8, 1.0, 0.35)
+	range_ring.z_as_relative = false
+	range_ring.z_index = 58
+	range_ring.modulate = Color(0.4, 0.95, 1.0, 0.7)
 	buildings_root.add_child(range_ring)
+	# Gamepad pointer: a small bright ring so controller players can see where the
+	# virtual cursor is when aiming at a tower to select/upgrade or placing a build.
+	_virtual_cursor_sprite = Sprite2D.new()
+	_virtual_cursor_sprite.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
+	_virtual_cursor_sprite.visible = false
+	_virtual_cursor_sprite.z_as_relative = false
+	_virtual_cursor_sprite.z_index = 70
+	_virtual_cursor_sprite.scale = Vector2.ONE * 0.5
+	_virtual_cursor_sprite.modulate = Color(1.0, 0.95, 0.4, 0.95)
+	buildings_root.add_child(_virtual_cursor_sprite)
 
 func _update_preview_state() -> void:
 	if preview == null:
@@ -189,7 +266,7 @@ func _update_preview_state() -> void:
 func _update_preview_position() -> void:
 	if preview == null or not preview.visible:
 		return
-	var pos = _get_mouse_world_position()
+	var pos = _get_build_world_position()
 	var snapped = _snap_to_grid(pos)
 	preview.global_position = snapped
 	if current_id != "" and preview.has_method("set_color"):
@@ -238,7 +315,7 @@ func _try_place() -> void:
 		_set_selection_text("Locked: earn tech picks to unlock")
 		return
 	var tier = 0
-	var pos = _snap_to_grid(_get_mouse_world_position())
+	var pos = _snap_to_grid(_get_build_world_position())
 	var status = _evaluate_placement(pos, def)
 	if not status["can_place"]:
 		_set_selection_text(status["reason"])
@@ -250,15 +327,25 @@ func _try_place() -> void:
 	var scene: PackedScene = load(scene_path)
 	if scene == null:
 		return
+	# In FFA, charge the local player's pool and tag ownership so this builder's
+	# towers go inert when they die/leave. Damage stays host-authoritative.
+	var owner_id := 1
+	if game != null and game.has_method("local_player_id"):
+		owner_id = game.local_player_id()
+	if game != null and not game.can_afford(cost, owner_id):
+		_set_selection_text("Not enough resources")
+		return
 	var building: Node2D = scene.instantiate()
 	building.global_position = pos
+	if "owner_id" in building:
+		building.owner_id = owner_id
 	buildings_root.add_child(building)
 	if building.has_method("configure"):
 		building.configure(current_id, def, tier)
 	if game != null:
 		if game.has_method("mark_flow_field_dirty"):
 			game.mark_flow_field_dirty()
-		game.spend(cost)
+		game.spend(cost, owner_id)
 		if game.has_method("spawn_fx"):
 			game.spawn_fx("build", pos)
 		# Track tower built
@@ -267,9 +354,52 @@ func _try_place() -> void:
 	_invalidate_preview_cache()
 	_set_selection_text("Built %s" % def.get("name", current_id))
 
+# Host-side tower placement for an FFA bot. Mirrors _try_place() but charges the
+# bot's own economy (owner_id) and runs without any local UI/preview side effects.
+# Returns true if a tower was placed. Added to the scene tree so it auto-replicates
+# to all peers, exactly like a real player's tower.
+func bot_place_tower(owner_id: int, pos: Vector2, tower_id: String) -> bool:
+	if game == null or buildings_root == null:
+		return false
+	var def = StructureDB.get_def(tower_id)
+	if def.is_empty():
+		return false
+	var snapped = _snap_to_grid(pos)
+	var footprint = _get_effective_footprint_radius(def)
+	if not _is_clear(snapped, footprint):
+		return false
+	var blocks_path = bool(def.get("blocks_path", true))
+	if blocks_path and not _check_path_validity(snapped, footprint):
+		return false
+	var tier_data = StructureDB.get_tier(def, 0)
+	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
+	if not game.can_afford(cost, owner_id):
+		return false
+	var scene_path: String = str(def.get("scene", ""))
+	if scene_path == "":
+		return false
+	var scene: PackedScene = load(scene_path)
+	if scene == null:
+		return false
+	var building: Node2D = scene.instantiate()
+	building.global_position = snapped
+	if "owner_id" in building:
+		building.owner_id = owner_id
+	buildings_root.add_child(building)
+	if building.has_method("configure"):
+		building.configure(tower_id, def, 0)
+	game.spend(cost, owner_id)
+	if game.has_method("mark_flow_field_dirty"):
+		game.mark_flow_field_dirty()
+	if game.has_method("spawn_fx"):
+		game.spawn_fx("build", snapped)
+	if game.has_method("track_tower_built"):
+		game.track_tower_built()
+	return true
+
 func _try_select() -> void:
 	selected_building = null
-	var pos = _get_mouse_world_position()
+	var pos = _get_build_world_position()
 	var best_dist = INF
 	var buildings_found = get_tree().get_nodes_in_group("buildings")
 	for raw_building in buildings_found:
@@ -281,6 +411,11 @@ func _try_select() -> void:
 		var radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			radius = building.get_footprint_radius()
+		# FFA: only allow selecting/upgrading your OWN buildings.
+		if game != null and game.has_method("is_ffa") and game.is_ffa():
+			if "owner_id" in building and game.has_method("local_player_id"):
+				if int(building.owner_id) != game.local_player_id():
+					continue
 		# Increase selection radius significantly for easier clicking (3x footprint, min 40px)
 		var select_radius = max(radius * 3.0, 40.0)
 		var dist = pos.distance_to(building.global_position)
@@ -314,11 +449,28 @@ func _try_upgrade_selected() -> void:
 	if not can_up:
 		_set_selection_text("No upgrade available")
 		return
-	var upgrade_cost = _apply_cost_mult(int(selected_building.get_upgrade_cost()))
+	var upgrade_cost = int(selected_building.get_upgrade_cost())
+	var upgrade_essence_cost = 0
+	if selected_building.has_method("get_upgrade_essence_cost"):
+		upgrade_essence_cost = int(selected_building.get_upgrade_essence_cost())
+	if upgrade_essence_cost <= 0:
+		upgrade_cost = _apply_cost_mult(upgrade_cost)
 	var can_afford = game != null and game.can_afford(upgrade_cost)
 	if not can_afford:
 		_set_selection_text("Not enough resources")
 		return
+	if upgrade_essence_cost > 0:
+		if game == null:
+			_set_selection_text("Need %d Essence" % upgrade_essence_cost)
+			return
+		var has_essence = false
+		if game.has_method("can_afford_essence"):
+			has_essence = bool(game.can_afford_essence(upgrade_essence_cost))
+		else:
+			has_essence = int(game.essence) >= upgrade_essence_cost
+		if not has_essence:
+			_set_selection_text("Need %d Essence" % upgrade_essence_cost)
+			return
 
 	# Store position before upgrade (in case building dies)
 	var building_pos = selected_building.global_position
@@ -350,6 +502,13 @@ func _try_upgrade_selected() -> void:
 
 		if game != null:
 			game.spend(upgrade_cost)
+			if upgrade_essence_cost > 0:
+				if game.has_method("spend_essence"):
+					game.spend_essence(upgrade_essence_cost)
+				else:
+					game.essence -= upgrade_essence_cost
+					if game.has_method("_update_ui"):
+						game._update_ui()
 			# Premium upgrade FX
 			if game.has_method("spawn_fx"):
 				game.spawn_fx("upgrade_burst", building_pos)
@@ -384,6 +543,13 @@ func _show_evolution_choice(building: Node) -> void:
 	if ui != null and ui.has_method("show_evolution_panel"):
 		ui.show_evolution_panel(_evolution_options, game.essence if game != null else 0)
 
+func _on_evolution_card_clicked(index: int) -> void:
+	# A card was clicked in the UI. Only act while we actually have a pending
+	# evolution (guards against stray clicks after the panel closed).
+	if _evolution_target == null or not is_instance_valid(_evolution_target):
+		return
+	choose_evolution(index)
+
 func choose_evolution(index: int) -> void:
 	if _evolution_target == null or not is_instance_valid(_evolution_target):
 		_hide_evolution_panel()
@@ -397,7 +563,12 @@ func choose_evolution(index: int) -> void:
 		_set_selection_text("Not enough Essence (%d needed)" % cost)
 		return
 	# Spend essence and evolve
-	game.essence -= cost
+	if game.has_method("spend_essence"):
+		game.spend_essence(cost)
+	else:
+		game.essence -= cost
+		if game.has_method("_update_ui"):
+			game._update_ui()
 	_evolution_target.evolve(option.get("id", ""))
 	_hide_evolution_panel()
 	_set_selection_text(_describe_building(_evolution_target))
@@ -475,12 +646,23 @@ func _describe_building(building: Node) -> String:
 	if building.has_method("can_evolve") and building.can_evolve():
 		base_name += " [U: EVOLVE]"
 	elif building.has_method("can_upgrade") and building.can_upgrade():
-		var cost = _apply_cost_mult(building.get_upgrade_cost())
-		base_name += " [U:%d]" % cost
+		var cost = int(building.get_upgrade_cost())
+		var essence_cost = 0
+		if building.has_method("get_upgrade_essence_cost"):
+			essence_cost = int(building.get_upgrade_essence_cost())
+		if essence_cost <= 0:
+			cost = _apply_cost_mult(cost)
+		if essence_cost > 0:
+			base_name += " [U:%dG + %dE]" % [cost, essence_cost]
+		else:
+			base_name += " [U:%d]" % cost
 
 	# Add sell value
 	if building.has_method("get_sell_value"):
 		base_name += " [X: Sell +%d]" % building.get_sell_value()
+	if building.has_method("get_health_ratio"):
+		var hp_ratio := float(building.get_health_ratio())
+		base_name += " [HP %d%%]" % int(round(clampf(hp_ratio, 0.0, 1.0) * 100.0))
 
 	return base_name
 
@@ -492,7 +674,16 @@ func _describe_current_build() -> String:
 		return "Build: %s" % current_id
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
-	return "Build: %s (Cost %d)" % [def.get("name", current_id), cost]
+	var blocks_path := bool(def.get("blocks_path", false))
+	var tags: Array[String] = []
+	if current_id in RANGE_PREVIEW_IDS:
+		tags.append("tower")
+	if blocks_path:
+		tags.append("wall")
+	var suffix = ""
+	if not tags.is_empty():
+		suffix = " [%s]" % ", ".join(tags)
+	return "Build: %s (Cost %d)%s" % [def.get("name", current_id), cost, suffix]
 
 func _set_controls_text() -> void:
 	if ui == null:
@@ -516,6 +707,12 @@ func _notify_palette_active() -> void:
 	if ui.has_method("set_palette_active"):
 		ui.set_palette_active(current_id)
 
+func _sync_build_focus() -> void:
+	if game == null or not game.has_method("set_build_focus"):
+		return
+	var active = build_mode and current_id != "" and _is_unlocked(current_id)
+	game.set_build_focus(active, current_id)
+
 func _set_selection_text(text: String) -> void:
 	if ui == null:
 		return
@@ -535,10 +732,24 @@ func _update_selection_ring() -> void:
 		radius = selected_building.get_footprint_radius()
 	var diameter = radius * 2.2
 	var scale = diameter / 64.0
+	_selection_ring_base_scale = scale
 	selection_ring.scale = Vector2.ONE * scale
 	selection_ring.global_position = selected_building.global_position
 	selection_ring.visible = true
 	_update_range_ring()
+
+func _animate_selection_ring(delta: float) -> void:
+	# Soft breathing pulse + position follow so the highlight feels alive and
+	# is easy to track even while the camera and horde churn around it.
+	if selection_ring == null or not selection_ring.visible:
+		return
+	_selection_pulse += delta * 4.5
+	var pulse := 1.0 + sin(_selection_pulse) * 0.07
+	selection_ring.scale = Vector2.ONE * _selection_ring_base_scale * pulse
+	var glow := 0.85 + (sin(_selection_pulse) * 0.5 + 0.5) * 0.15
+	selection_ring.modulate = Color(0.35, 1.0, 1.0, glow)
+	if selected_building != null and is_instance_valid(selected_building):
+		selection_ring.global_position = selected_building.global_position
 
 func _update_range_ring() -> void:
 	if range_ring == null or selected_building == null:
@@ -609,6 +820,62 @@ func _get_mouse_world_position() -> Vector2:
 	var viewport = get_viewport()
 	return viewport.get_camera_2d().get_global_mouse_position()
 
+func _get_build_world_position() -> Vector2:
+	# Gamepad uses the virtual cursor; mouse/keyboard uses the real cursor.
+	if _using_gamepad:
+		return _virtual_cursor
+	return _get_mouse_world_position()
+
+func _update_virtual_cursor(delta: float) -> void:
+	if not _using_gamepad:
+		_virtual_cursor_seeded = false
+		_set_virtual_cursor_visible(false)
+		return
+	# Seed the cursor near the player the first frame we need it so it starts
+	# on-screen rather than at world origin.
+	if not _virtual_cursor_seeded:
+		if game != null and game.player != null and is_instance_valid(game.player):
+			_virtual_cursor = game.player.global_position
+		else:
+			_virtual_cursor = _get_mouse_world_position()
+		_virtual_cursor_seeded = true
+	var move := Vector2(
+		Input.get_action_strength("build_cursor_right") - Input.get_action_strength("build_cursor_left"),
+		Input.get_action_strength("build_cursor_down") - Input.get_action_strength("build_cursor_up")
+	)
+	if move.length() > 1.0:
+		move = move.normalized()
+	if move != Vector2.ZERO:
+		_virtual_cursor += move * VIRTUAL_CURSOR_SPEED * delta
+		if game != null and game.has_method("clamp_to_play_area"):
+			_virtual_cursor = game.clamp_to_play_area(_virtual_cursor)
+	# Keep the visible pointer glued to the cursor whenever the pad is active.
+	if _virtual_cursor_sprite != null and is_instance_valid(_virtual_cursor_sprite):
+		_virtual_cursor_sprite.global_position = _virtual_cursor
+	_set_virtual_cursor_visible(true)
+
+func _set_virtual_cursor_visible(v: bool) -> void:
+	if _virtual_cursor_sprite != null and is_instance_valid(_virtual_cursor_sprite):
+		_virtual_cursor_sprite.visible = v
+
+func _cycle_build_selection(step: int) -> void:
+	# Cycle current_id through the unlocked buildable structures (LB/RB on a pad).
+	var available: Array = []
+	for id in BUILD_CYCLE_ORDER:
+		if _is_unlocked(id):
+			available.append(id)
+	if available.is_empty():
+		return
+	var idx := available.find(current_id)
+	if idx < 0:
+		idx = 0
+	else:
+		idx = (idx + step + available.size()) % available.size()
+	current_id = available[idx]
+	_set_build_mode(true)
+	_set_selection_text(_describe_current_build())
+	_notify_palette_active()
+
 func _is_unlocked(id: String) -> bool:
 	if game != null and game.has_method("is_build_unlocked"):
 		return game.is_build_unlocked(id)
@@ -618,6 +885,10 @@ func _set_build_mode(active: bool) -> void:
 	build_mode = active
 	_invalidate_preview_cache()
 	_update_preview_state()
+	_sync_build_focus()
+	# Surface the full controls hint whenever the player is actively building.
+	if active and ui != null and ui.has_method("set_controls_visible"):
+		ui.set_controls_visible(true)
 
 func _clear_selection() -> void:
 	selected_building = null
@@ -898,4 +1169,4 @@ func _apply_cost_mult(cost: int) -> int:
 	return max(0, final_cost)
 
 func _controls_text() -> String:
-	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build | P: pause"
+	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build | H: resource dump | P: pause"

@@ -29,29 +29,63 @@ func _ready() -> void:
     _apply_magnet_settings()
 
 func _process(delta: float) -> void:
-    if _player == null:
+    # Magnet toward the NEAREST player (FFA). In solo this is just the one player.
+    var target := _magnet_target()
+    if target == null:
         return
-    var dist = global_position.distance_to(_player.global_position)
+    var dist = global_position.distance_to(target.global_position)
     if dist <= magnet_radius:
-        var dir = (_player.global_position - global_position).normalized()
+        var dir = (target.global_position - global_position).normalized()
         global_position += dir * magnet_speed * delta
+
+func _magnet_target() -> Node2D:
+    if _game != null and _game.has_method("get_nearest_player"):
+        var n = _game.get_nearest_player(global_position)
+        if n != null:
+            return n
+    if _player == null or not is_instance_valid(_player):
+        _player = get_tree().get_first_node_in_group("player")
+    return _player
 
 func _on_body_entered(body: Node) -> void:
     if body == null:
         return
     if body.is_in_group("player"):
+        # Credit the collecting player's pool (FFA). owner_id == 0 => local/solo.
+        var owner_id := 0
+        if "peer_id" in body:
+            owner_id = int(body.peer_id)
+        # Only the local player's pickups show floating feedback on this screen;
+        # a bot/remote player grabbing loot is still credited to THEIR ledger but
+        # doesn't spam this machine's HUD with text/heals it doesn't own.
+        var is_local := _is_local_player_body(body)
         if _game != null:
             if kind == "heal":
                 if _game.has_method("heal_player"):
-                    _game.heal_player(value)
-                if _game.has_method("show_floating_text"):
+                    _game.heal_player(value, owner_id)
+                if is_local and _game.has_method("show_floating_text"):
                     _game.show_floating_text("+%d HP" % value, global_position + Vector2(0.0, -10.0), Color(0.45, 1.0, 0.55, 1.0))
             elif kind == "essence":
                 if _game.has_method("add_essence"):
-                    _game.add_essence(value)
+                    _game.add_essence(value, owner_id)
             else:
-                _game.add_resources(value)
+                _game.add_resources(value, owner_id)
         queue_free()
+
+# True only for the player this machine controls (so HUD feedback stays local).
+func _is_local_player_body(body: Node) -> bool:
+    if _game == null or not is_instance_valid(_game):
+        return true
+    if _game.has_method("is_solo") and _game.is_solo():
+        return true
+    if "is_bot" in body and bool(body.is_bot):
+        return false
+    var lp = _game.local_player if "local_player" in _game else null
+    if lp != null and is_instance_valid(lp):
+        return body == lp
+    if "peer_id" in body and _game.has_method("local_player_id"):
+        return int(body.peer_id) == int(_game.local_player_id())
+    return true
 
 func _apply_visual() -> void:
     if sprite == null:

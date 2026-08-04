@@ -48,15 +48,15 @@ const UPGRADE_COUNTS = [
 
 @export var auto_open_delay = 0.25
 
-# Static: only one chest can run the slow-mo animation at a time
-static var _chest_opening: bool = false
-static var _saved_time_scale: float = 1.0
+# Static: only one chest can run modal resolution at a time.
+static var _chest_modal_in_progress: bool = false
 
 var _game: Node = null
 var _player_in_range = false
+var _opener_id: int = 0  # peer_id of the player opening (FFA score credit; 0 = local)
 var _opened = false
 var _opening = false
-var _owns_time_scale = false  # True if THIS chest set Engine.time_scale
+var _owns_modal = false
 var _proximity_timer = 0.0
 var _upgrades_to_grant: Array = []
 
@@ -75,16 +75,21 @@ func _ready() -> void:
 	tree_exiting.connect(_on_tree_exiting)
 	_start_glow_pulse()
 
-# Safety net: if this chest is freed for ANY reason while it owns time_scale, restore it
+# Safety net: if this chest is freed for any reason while it owns modal state, release it.
 func _on_tree_exiting() -> void:
-	if _owns_time_scale:
-		_restore_time_scale()
+	_release_modal()
 
+func _release_modal() -> void:
+	if not _owns_modal:
+		return
+	_owns_modal = false
+	_chest_modal_in_progress = false
+	if _game != null and is_instance_valid(_game) and _game.has_method("end_chest_modal"):
+		_game.call_deferred("end_chest_modal")
+
+# Backward-compatible alias for older helper flow paths.
 func _restore_time_scale() -> void:
-	if _owns_time_scale:
-		_owns_time_scale = false
-		_chest_opening = false
-		Engine.time_scale = _saved_time_scale
+	_release_modal()
 
 func _process(delta: float) -> void:
 	if _opened or _opening:
@@ -99,43 +104,88 @@ func _process(delta: float) -> void:
 
 func _on_body_entered(body_node: Node) -> void:
 	if body_node.is_in_group("player"):
+		# FFA: chests/pickups only exist on the host's sim, so EVERY player body
+		# (the local player, remote proxies, and bots) physically overlaps this
+		# chest here. Only the LOCAL player may open it — otherwise a bot or a
+		# remote player walking past would auto-open the chest and flash the
+		# modal/screen FX on THIS machine's screen (the reported bug). Remote/bot
+		# players open their own chests on their own machines.
+		if not _is_local_player_body(body_node):
+			return
 		_player_in_range = true
 		_proximity_timer = 0.0
+		# Remember who is opening so FFA credits the right player's score.
+		if "peer_id" in body_node:
+			_opener_id = int(body_node.peer_id)
 
 func _on_body_exited(body_node: Node) -> void:
 	if body_node.is_in_group("player"):
+		if not _is_local_player_body(body_node):
+			return
 		_player_in_range = false
 		_proximity_timer = 0.0
+
+# True only for the player this machine controls. In solo there is a single
+# player and it always qualifies. In FFA we compare against _game.local_player
+# (falling back to a peer_id match) so bots/remote proxies are ignored.
+func _is_local_player_body(body_node: Node) -> bool:
+	if _game == null and is_inside_tree():
+		_game = get_tree().get_first_node_in_group("game")
+	if _game == null or not is_instance_valid(_game):
+		return true
+	# Solo: the only player is local.
+	if _game.has_method("is_solo") and _game.is_solo():
+		return true
+	# Never let host-driven bots trip the chest.
+	if "is_bot" in body_node and bool(body_node.is_bot):
+		return false
+	var lp = _game.local_player if "local_player" in _game else null
+	if lp != null and is_instance_valid(lp):
+		return body_node == lp
+	# Fallback: compare peer ids if local_player isn't bound yet.
+	if "peer_id" in body_node and _game.has_method("local_player_id"):
+		return int(body_node.peer_id) == int(_game.local_player_id())
+	return true
 
 func _start_open() -> void:
 	if _opened or _opening:
 		return
 	_opening = true
 	_upgrades_to_grant = _roll_upgrades()
-	# Bonus gold on every chest open (50-150)
+	# Bonus gold on every chest open (50-150).
 	var bonus_gold = randi_range(50, 150)
 	if _game == null and is_inside_tree():
 		_game = get_tree().get_first_node_in_group("game")
-	if _game != null and _game.has_method("add_resources"):
-		_game.add_resources(bonus_gold)
-	if _game != null and _game.has_method("show_floating_text"):
-		_game.show_floating_text("+%d Gold" % bonus_gold, global_position + Vector2(0, -20), Color(1.0, 0.84, 0.2))
+	if _game == null or not is_instance_valid(_game) or not _game.is_inside_tree():
+		queue_free()
+		return
 
-	# If another chest is already animating, skip the slow-mo sequence entirely
-	# Just grant upgrades instantly to avoid time_scale corruption
-	if _chest_opening:
+	# Count this chest toward the run scorecard exactly once, before either the
+	# fast-path or the modal branch below.
+	if _game.has_method("on_treasure_opened"):
+		_game.on_treasure_opened(_opener_id)
+
+	if _chest_modal_in_progress:
 		_grant_all_upgrades_instant()
 		_opened = true
 		queue_free()
 		return
 
-	# This chest owns the slow-mo animation
-	_chest_opening = true
-	_owns_time_scale = true
-	_saved_time_scale = Engine.time_scale
-	Engine.time_scale = 0.6  # Subtle slow mo during opening
-
-	_play_vs_opening_sequence()
+	_chest_modal_in_progress = true
+	_owns_modal = true
+	if _game.has_method("begin_chest_modal"):
+		_game.begin_chest_modal()
+	if _game.has_method("add_resources"):
+		_game.add_resources(bonus_gold, _opener_id)
+	if _game.has_method("show_chest_summary"):
+		_game.show_chest_summary(bonus_gold, _upgrades_to_grant.size())
+	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
+	_grant_all_upgrades_instant()
+	_opened = true
+	if is_inside_tree():
+		await get_tree().create_timer(0.4, true, false, true).timeout
+	_release_modal()
+	queue_free()
 
 # Fast path: grant all upgrades without animation (used when another chest is mid-animation)
 func _grant_all_upgrades_instant() -> void:
@@ -146,11 +196,7 @@ func _grant_all_upgrades_instant() -> void:
 	for upgrade in _upgrades_to_grant:
 		var id = upgrade.get("id", "")
 		if _game.has_method("apply_chest_upgrade"):
-			_game.call_deferred("apply_chest_upgrade", id, upgrade)
-		if _game.has_method("show_floating_text"):
-			var rarity = upgrade.get("rarity", "common")
-			var color = RARITY_COLORS.get(rarity, Color.WHITE)
-			_game.call_deferred("show_floating_text", upgrade.get("name", ""), global_position + Vector2(0, -40), color)
+			_game.apply_chest_upgrade(id, upgrade)
 
 # Vampire Survivors style dramatic opening sequence
 func _play_vs_opening_sequence() -> void:
@@ -191,7 +237,9 @@ func _play_vs_opening_sequence() -> void:
 		var open_tween = create_tween()
 		open_tween.set_speed_scale(1.0 / max(Engine.time_scale, 0.01))
 		open_tween.tween_property(body, "rotation", -0.6, 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-		open_tween.parallel().tween_property(body, "scale", Vector2(1.1, 0.9), 0.1).set_trans(Tween.TRANS_ELASTIC)
+		# Squash relative to the body's authored base scale so the pop scales with
+		# the chest size instead of snapping it back to ~1x.
+		open_tween.parallel().tween_property(body, "scale", body.scale * Vector2(1.1, 0.9), 0.1).set_trans(Tween.TRANS_ELASTIC)
 
 	if _game != null and _game.has_method("shake_camera"):
 		_game.shake_camera(8.0)

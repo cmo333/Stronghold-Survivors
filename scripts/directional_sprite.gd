@@ -6,13 +6,20 @@ extends AnimatedSprite2D
 @export var frames_per_dir = 4
 @export var fps = 8.0
 @export var loop = true
-@export var sprite_scale = 2.2
+@export var sprite_scale = 1.5
 
 var _last_dir = "S"
+var _moving := false
+var _speed_ratio := 0.0
+var _base_fps := 8.0
 
 func _ready() -> void:
+	_base_fps = fps
 	_build_frames()
-	play()
+	# Start standing still: the player drives playback via set_moving(). Calling
+	# play() here would leave the walk loop running while idle (the moonwalk bug)
+	# because set_moving(false) early-returns when already not moving.
+	_hold_idle_frame()
 
 func configure(new_base_path: String, new_prefix: String) -> void:
 	if new_base_path != "":
@@ -20,7 +27,12 @@ func configure(new_base_path: String, new_prefix: String) -> void:
 	if new_prefix != "":
 		prefix = new_prefix
 	_build_frames()
-	play()
+	# Respect current movement state after a reconfigure instead of forcing the
+	# walk loop on (which would animate while standing still).
+	if _moving:
+		play()
+	else:
+		_hold_idle_frame()
 
 func _build_frames() -> void:
 	_ensure_defaults()
@@ -60,4 +72,35 @@ func set_direction(dir: String) -> void:
 	_last_dir = dir
 	if animation != dir:
 		animation = dir
+		# Only resume the walk cycle when actually moving; otherwise hold the
+		# facing frame so the character doesn't moonwalk in place.
+		if _moving:
+			play()
+		else:
+			_hold_idle_frame()
+
+func set_moving(moving: bool) -> void:
+	if moving == _moving:
+		return
+	_moving = moving
+	if _moving:
 		play()
+	else:
+		_hold_idle_frame()
+
+func set_speed_ratio(r: float) -> void:
+	_speed_ratio = clampf(r, 0.0, 1.4)
+	if sprite_frames == null:
+		return
+	# Match walk cadence to travel speed (slow shuffle vs fast run).
+	var anim_fps: float = _base_fps * clampf(_speed_ratio * 1.15, 0.45, 1.4)
+	if sprite_frames.has_animation(_last_dir):
+		sprite_frames.set_animation_speed(_last_dir, anim_fps)
+
+func _hold_idle_frame() -> void:
+	# Pause on the planted/contact frame so the silhouette reads as standing.
+	if sprite_frames != null and sprite_frames.has_animation(_last_dir):
+		if animation != _last_dir:
+			animation = _last_dir
+		frame = 0
+	stop()

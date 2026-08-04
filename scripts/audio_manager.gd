@@ -294,7 +294,9 @@ func play_ui_sound(sound_name: String) -> void:
 		var player = AudioStreamPlayer.new()
 		player.bus = "UI"
 		player.stream = _sound_cache[sound_name]
-		player.finished.connect(func(): player.queue_free())
+		player.finished.connect(func():
+			player.queue_free()
+		)
 		add_child(player)
 		player.play()
 

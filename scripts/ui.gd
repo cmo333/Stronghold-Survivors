@@ -10,6 +10,15 @@ const TECH_CARD_TEXTURES = {
 	"epic": "res://assets/ui/tech/ui_tech_card_epic_420x74_v001.png",
 	"diamond": "res://assets/ui/tech/ui_tech_card_diamond_420x74_v001.png"
 }
+const RARITY_FRAME_TEXTURES = {
+	"common": "res://assets/ui_build_icons/ui_rarity_common_frame_32_v001.png",
+	"rare": "res://assets/ui_build_icons/ui_rarity_rare_frame_32_v001.png",
+	"epic": "res://assets/ui_build_icons/ui_rarity_epic_frame_32_v001.png",
+	"legendary": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
+	"mythic": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
+	"diamond": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png"
+}
+const UPGRADE_POPUP_TEX = "res://assets/ui/ui_tooltip_frame_256x96_v001.png"
 const TECH_PANEL_SIZE = Vector2(480, 320)
 const TECH_CARD_SIZE = Vector2(420, 74)
 const TECH_CARD_POSITIONS = [
@@ -18,6 +27,7 @@ const TECH_CARD_POSITIONS = [
 	Vector2(30, 232)
 ]
 const TECH_ICON_SIZE = Vector2(42, 42)
+const TECH_ICON_FRAME_SIZE = Vector2(32, 32)
 
 @onready var resources_label: Label = $HUD/Resources
 @onready var time_label: Label = $HUD/Time
@@ -45,12 +55,15 @@ const TECH_ICON_SIZE = Vector2(42, 42)
 @onready var start_hint: Label = $HUD/StartHint
 
 var rarity_colors = {
-	"common": Color(0.85, 0.85, 0.85),
-	"rare": Color(0.35, 0.65, 1.0),
-	"epic": Color(0.72, 0.5, 1.0),
-	"legendary": Color(1.0, 0.8, 0.2),
-	"mythic": Color(1.0, 0.35, 0.35),
-	"diamond": Color(0.6, 0.95, 1.0)
+	# Brightened + lifted toward white so the upgrade-card text stays legible over
+	# the busy battlefield behind the modal. The rarity hue still reads at a glance,
+	# but every color is now high-luminance instead of muted/desaturated.
+	"common": Color(1.0, 1.0, 1.0),
+	"rare": Color(0.55, 0.82, 1.0),
+	"epic": Color(0.85, 0.68, 1.0),
+	"legendary": Color(1.0, 0.88, 0.4),
+	"mythic": Color(1.0, 0.55, 0.55),
+	"diamond": Color(0.75, 0.98, 1.0)
 }
 
 # --- Build Palette ---
@@ -58,26 +71,32 @@ const PALETTE_ORDER = [
 	{"id": "arrow_turret", "key": "1"},
 	{"id": "cannon_tower", "key": "2"},
 	{"id": "tesla_tower", "key": "3"},
-	{"id": "mine_trap", "key": "4"},
-	{"id": "ice_trap", "key": "5"},
-	{"id": "acid_trap", "key": "6"},
-	{"id": "resource_generator", "key": "7"},
-	{"id": "barracks", "key": "8"},
-	{"id": "armory", "key": "9"},
-	{"id": "tech_lab", "key": "Q"},
-	{"id": "shrine", "key": "E"},
+	{"id": "resource_generator", "key": "4"},
+	{"id": "shrine", "key": "5"},
 ]
+# NOTE: traps + extra towers/utility buildings (mine_trap, ice_trap, acid_trap,
+# spike_trap, spike_burst_tower, flamethrower_tower, barracks, tech_lab, armory)
+# were removed from the buildable set. See docs/REMOVED_BUILDINGS.md to re-add.
 
 var palette_slots: Dictionary = {}
 var palette_active_id: String = ""
 
 # Tech rarity frames (ColorRects behind each option icon)
 var tech_frames: Array = []
+var tech_icon_frames: Array = []
 var _ui_font: Font = null
 var _last_level: int = -1
 var _xp_tween: Tween = null
 var _level_flash_tween: Tween = null
 var _announcement_root: Control = null
+# Center-screen warnings (boss/swarm/etc) are tracked here so they stack vertically
+# instead of piling up on the exact same spot. World-anchored popups (essence
+# pickups via at_position) are NOT tracked and keep their own placement.
+var _active_announcements: Array[Label] = []
+var _recent_announcements: Dictionary = {}  # text -> last-shown msec (dedupe)
+const ANNOUNCE_DEDUPE_MS := 400
+const ANNOUNCE_STACK_TOP := 78.0    # px below the top edge (under wave countdown)
+const ANNOUNCE_STACK_GAP := 8.0     # vertical gap between stacked rows
 var _upgrade_popup: PanelContainer = null
 var _upgrade_popup_vbox: VBoxContainer = null
 var _upgrade_popup_labels: Dictionary = {}
@@ -89,6 +108,15 @@ var _tech_ledger_visible: bool = false
 var _wave_announce_label: Label = null
 var _wave_preview_enabled: bool = true
 var _tech_backdrop: ColorRect = null
+var _modal_backdrop_for_tech: bool = false
+var _modal_backdrop_for_chest: bool = false
+
+# Build mode focus overlay
+var _build_focus_overlay: ColorRect = null
+var _build_focus_label: Label = null
+var _build_focus_visible: bool = false
+var _build_focus_name: String = ""
+var _build_focus_scale: float = 1.0
 
 # Low health vignette
 var _vignette: ColorRect = null
@@ -115,6 +143,7 @@ func _ready() -> void:
 	_build_tech_ledger()
 	set_tech_ledger_visible(false)
 	_build_vignette()
+	_build_build_focus_ui()
 	_build_streak_label()
 
 func _setup_upgrade_popup_timer() -> void:
@@ -132,14 +161,47 @@ func _ensure_upgrade_popup() -> void:
 		return
 	_upgrade_popup = PanelContainer.new()
 	_upgrade_popup.name = "UpgradePopup"
-	_upgrade_popup.size = Vector2(220, 60)
+	_upgrade_popup.size = Vector2(320, 220)
 	var viewport = get_viewport()
 	var view_size = viewport.get_visible_rect().size if viewport != null else Vector2(1280, 720)
-	_upgrade_popup.position = Vector2(view_size.x / 2 - 110, 120)
+	_upgrade_popup.position = Vector2(view_size.x / 2 - 160, 98)
+	var popup_style: StyleBox = null
+	if ResourceLoader.exists(UPGRADE_POPUP_TEX):
+		var style_tex = StyleBoxTexture.new()
+		style_tex.texture = load(UPGRADE_POPUP_TEX)
+		style_tex.texture_margin_left = 28.0
+		style_tex.texture_margin_top = 24.0
+		style_tex.texture_margin_right = 28.0
+		style_tex.texture_margin_bottom = 24.0
+		popup_style = style_tex
+	else:
+		var style_fallback = StyleBoxFlat.new()
+		style_fallback.bg_color = Color(0.08, 0.08, 0.12, 0.92)
+		style_fallback.border_width_left = 2
+		style_fallback.border_width_top = 2
+		style_fallback.border_width_right = 2
+		style_fallback.border_width_bottom = 2
+		style_fallback.border_color = Color(0.75, 0.72, 0.62, 0.8)
+		style_fallback.corner_radius_top_left = 6
+		style_fallback.corner_radius_top_right = 6
+		style_fallback.corner_radius_bottom_left = 6
+		style_fallback.corner_radius_bottom_right = 6
+		popup_style = style_fallback
+	if popup_style != null:
+		_upgrade_popup.add_theme_stylebox_override("panel", popup_style)
 	add_child(_upgrade_popup)
 	_upgrade_popup_vbox = VBoxContainer.new()
 	_upgrade_popup_vbox.name = "VBox"
+	_upgrade_popup_vbox.anchor_left = 0.0
+	_upgrade_popup_vbox.anchor_top = 0.0
+	_upgrade_popup_vbox.anchor_right = 1.0
+	_upgrade_popup_vbox.anchor_bottom = 1.0
+	_upgrade_popup_vbox.offset_left = 18.0
+	_upgrade_popup_vbox.offset_top = 18.0
+	_upgrade_popup_vbox.offset_right = -18.0
+	_upgrade_popup_vbox.offset_bottom = -18.0
 	_upgrade_popup_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+	_upgrade_popup_vbox.add_theme_constant_override("separation", 4)
 	_upgrade_popup.add_child(_upgrade_popup_vbox)
 	_upgrade_popup.visible = false
 
@@ -149,13 +211,13 @@ func _cleanup_upgrade_popup() -> void:
 	var now = Time.get_ticks_msec()
 	var keys = _upgrade_popup_labels.keys()
 	for key in keys:
-		var label = _upgrade_popup_labels[key]
-		if label == null or not is_instance_valid(label):
+		var row = _upgrade_popup_labels[key]
+		if row == null or not is_instance_valid(row):
 			_upgrade_popup_labels.erase(key)
 			continue
-		var expires_at = int(label.get_meta("expires_at", now))
+		var expires_at = int(row.get_meta("expires_at", now))
 		if expires_at <= now:
-			label.queue_free()
+			row.queue_free()
 			_upgrade_popup_labels.erase(key)
 	if _upgrade_popup != null and is_instance_valid(_upgrade_popup):
 		_upgrade_popup.visible = _upgrade_popup_vbox.get_child_count() > 0
@@ -268,6 +330,30 @@ func _world_to_screen(world_pos: Vector2) -> Vector2:
 	var zoom = camera.zoom
 	return (world_pos - camera.global_position) * zoom + screen_center
 
+var _ffa_clock_label: Label = null
+
+# FFA match countdown shown top-center. Lazily built on first call so solo never
+# pays for it. Turns amber under one minute.
+func set_ffa_clock(time_left: float) -> void:
+	if _ffa_clock_label == null or not is_instance_valid(_ffa_clock_label):
+		_ffa_clock_label = Label.new()
+		_ffa_clock_label.name = "FFAClock"
+		_ffa_clock_label.anchor_left = 0.5
+		_ffa_clock_label.anchor_right = 0.5
+		_ffa_clock_label.offset_left = -120.0
+		_ffa_clock_label.offset_right = 120.0
+		_ffa_clock_label.offset_top = 12.0
+		_ffa_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_ffa_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _ui_font != null:
+			_ffa_clock_label.add_theme_font_override("font", _ui_font)
+		_ffa_clock_label.add_theme_font_size_override("font_size", 22)
+		add_child(_ffa_clock_label)
+	var secs := int(ceil(max(0.0, time_left)))
+	_ffa_clock_label.text = "%d:%02d" % [secs / 60, secs % 60]
+	var col := Color(1.0, 0.3, 0.25) if secs <= 60 else Color(0.9, 0.92, 1.0)
+	_ffa_clock_label.add_theme_color_override("font_color", col)
+
 func show_announcement(text: String, color: Color, size: int, duration: float = 2.5, at_position: Vector2 = Vector2.ZERO) -> void:
 	if text == "":
 		return
@@ -277,6 +363,18 @@ func show_announcement(text: String, color: Color, size: int, duration: float = 
 		return
 	if not is_inside_tree():
 		return
+
+	var is_centered := at_position == Vector2.ZERO
+
+	# Drop rapid duplicate center warnings (same text within a short window) so a
+	# repeated trigger doesn't stamp two copies on top of each other.
+	if is_centered:
+		var now := Time.get_ticks_msec()
+		var last = _recent_announcements.get(text, -100000)
+		if now - int(last) < ANNOUNCE_DEDUPE_MS:
+			return
+		_recent_announcements[text] = now
+
 	var label = Label.new()
 	label.text = text
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -285,28 +383,35 @@ func show_announcement(text: String, color: Color, size: int, duration: float = 
 	label.z_index = 200
 	label.add_theme_font_size_override("font_size", size)
 	label.add_theme_color_override("font_color", color)
+	# A subtle outline keeps stacked warnings legible over busy backgrounds.
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.85))
+	label.add_theme_constant_override("outline_size", 4)
 	if _ui_font != null:
 		label.add_theme_font_override("font", _ui_font)
 	_announcement_root.add_child(label)
 	label.size = label.get_minimum_size()
 	label.scale = Vector2.ONE * 0.5
 	label.modulate = Color(1.0, 1.0, 1.0, 0.0)
-	var screen_pos = Vector2.ZERO
-	var view_size = Vector2.ZERO
-	var viewport = get_viewport()
-	if viewport != null:
-		view_size = viewport.get_visible_rect().size
-	if at_position == Vector2.ZERO:
-		screen_pos = view_size * 0.5 if viewport != null else Vector2.ZERO
+
+	if is_centered:
+		# Track and stack vertically in the upper-center band.
+		_active_announcements.append(label)
+		_relayout_announcements()
 	else:
-		screen_pos = _world_to_screen(at_position)
-	var pos = screen_pos - label.size * 0.5
-	if view_size != Vector2.ZERO:
-		pos.x = clamp(pos.x, 0.0, max(0.0, view_size.x - label.size.x))
-		pos.y = clamp(pos.y, 0.0, max(0.0, view_size.y - label.size.y))
-	label.position = pos
+		# World-anchored popup (e.g. essence pickup): keep its own placement.
+		var view_size = Vector2.ZERO
+		var viewport = get_viewport()
+		if viewport != null:
+			view_size = viewport.get_visible_rect().size
+		var screen_pos = _world_to_screen(at_position)
+		var pos = screen_pos - label.size * 0.5
+		if view_size != Vector2.ZERO:
+			pos.x = clamp(pos.x, 0.0, max(0.0, view_size.x - label.size.x))
+			pos.y = clamp(pos.y, 0.0, max(0.0, view_size.y - label.size.y))
+		label.position = pos
 
 	if not label.is_inside_tree():
+		_active_announcements.erase(label)
 		label.queue_free()
 		return
 	var fade_in = 0.3
@@ -318,7 +423,40 @@ func show_announcement(text: String, color: Color, size: int, duration: float = 
 	if hold_time > 0.0:
 		tween.tween_interval(hold_time)
 	tween.tween_property(label, "modulate:a", 0.0, fade_out).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-	tween.tween_callback(label.queue_free)
+	tween.tween_callback(_on_announcement_finished.bind(label))
+
+# An active center warning expired: drop it from the stack, free it, and repack
+# the remaining warnings so they slide up to fill the gap.
+func _on_announcement_finished(label: Label) -> void:
+	_active_announcements.erase(label)
+	if label != null and is_instance_valid(label):
+		label.queue_free()
+	_relayout_announcements()
+
+# Position all live center warnings as a centered vertical stack in the upper band.
+func _relayout_announcements() -> void:
+	# Prune any freed entries first.
+	for i in range(_active_announcements.size() - 1, -1, -1):
+		var l = _active_announcements[i]
+		if l == null or not is_instance_valid(l):
+			_active_announcements.remove_at(i)
+	var view_size = Vector2.ZERO
+	var viewport = get_viewport()
+	if viewport != null:
+		view_size = viewport.get_visible_rect().size
+	var center_x: float = view_size.x * 0.5
+	var y: float = ANNOUNCE_STACK_TOP
+	for l in _active_announcements:
+		l.size = l.get_minimum_size()
+		var target: Vector2 = Vector2(center_x - l.size.x * 0.5, y)
+		# A label that hasn't been placed yet (just spawned, still at origin) snaps
+		# straight to its slot; already-placed labels slide to repack smoothly.
+		if l.is_inside_tree() and l.position != Vector2.ZERO:
+			var t = l.create_tween()
+			t.tween_property(l, "position", target, 0.18).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		else:
+			l.position = target
+		y += l.size.y + ANNOUNCE_STACK_GAP
 
 func show_wave_announcement(text: String, time_left: float, active: bool) -> void:
 	if _wave_announce_label == null:
@@ -387,7 +525,10 @@ func show_upgrade_panel(building: Node) -> void:
 	if next_tier < 0:
 		next_tier = 0
 	
-	upgrade_title.text = "UPGRADE: %s" % tier_names[next_tier]
+	var upgrade_label = "UPGRADE"
+	if building.has_method("get_upgrade_label"):
+		upgrade_label = str(building.get_upgrade_label()).to_upper()
+	upgrade_title.text = "%s: %s" % [upgrade_label, tier_names[next_tier]]
 	upgrade_title.add_theme_color_override("font_color", tier_colors[next_tier])
 	
 	# Update border color to match tier
@@ -432,8 +573,17 @@ func show_upgrade_panel(building: Node) -> void:
 	var upgrade_cost_value = 0
 	if building.has_method("get_upgrade_cost"):
 		upgrade_cost_value = building.get_upgrade_cost()
-	
-	upgrade_cost.text = "⚡ %d RESOURCES" % upgrade_cost_value
+	var upgrade_essence_cost = 0
+	if building.has_method("get_upgrade_essence_cost"):
+		upgrade_essence_cost = int(building.get_upgrade_essence_cost())
+	if upgrade_essence_cost > 0:
+		upgrade_cost.text = "⚡ %d GOLD + %d ESSENCE" % [upgrade_cost_value, upgrade_essence_cost]
+		if stats_text != "":
+			stats_text += "\n"
+		stats_text += "Infusion grants amplified tier power."
+		upgrade_stats.text = stats_text
+	else:
+		upgrade_cost.text = "⚡ %d RESOURCES" % upgrade_cost_value
 	upgrade_panel.visible = true
 	
 	# Animate panel entrance
@@ -468,6 +618,10 @@ func _get_next_tier_data(def: Dictionary, next_tier: int) -> Dictionary:
 # =========================================================
 # EVOLUTION PANEL
 # =========================================================
+
+# Emitted when a player clicks an evolution card. build_manager connects to this
+# so the choice is selectable by mouse/touch in addition to keyboard/controller.
+signal evolution_card_clicked(index: int)
 
 var evolution_panel: PanelContainer = null
 var _evo_cards: Array[PanelContainer] = []
@@ -521,7 +675,7 @@ func _build_evolution_panel() -> void:
 		_evo_cards.append(card)
 
 	var hint = Label.new()
-	hint.text = "Press 1 or 2 to choose  |  ESC to cancel"
+	hint.text = "Click a card, press 1/2, or use your controller  |  ESC to cancel"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.add_theme_font_size_override("font_size", 9)
 	hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.6))
@@ -534,6 +688,13 @@ func _build_evolution_panel() -> void:
 func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 	var card = PanelContainer.new()
 	card.custom_minimum_size = Vector2(190, 140)
+	# Make the whole card a click target (mouse/touch). Controller + keyboard
+	# selection still works via build_manager; this adds pointer selection.
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.gui_input.connect(_on_evo_card_gui_input.bind(index))
+	card.mouse_entered.connect(_on_evo_card_hover.bind(index, true))
+	card.mouse_exited.connect(_on_evo_card_hover.bind(index, false))
 
 	var card_style = StyleBoxFlat.new()
 	card_style.bg_color = Color(0.1, 0.06, 0.18, 0.95)
@@ -550,10 +711,13 @@ func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 
 	var vbox = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 4)
+	# Let clicks fall through the inner content to the card so gui_input fires.
+	vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(vbox)
 
 	var key_label = Label.new()
 	key_label.name = "KeyLabel"
+	key_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	key_label.text = "[%d]" % (index + 1)
 	key_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	key_label.add_theme_font_size_override("font_size", 10)
@@ -564,6 +728,7 @@ func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 
 	var name_label = Label.new()
 	name_label.name = "NameLabel"
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	name_label.add_theme_font_size_override("font_size", 11)
 	name_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
@@ -573,6 +738,7 @@ func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 
 	var desc_label = Label.new()
 	desc_label.name = "DescLabel"
+	desc_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	desc_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	desc_label.add_theme_font_size_override("font_size", 8)
 	desc_label.add_theme_color_override("font_color", Color(0.8, 0.8, 0.8))
@@ -583,6 +749,7 @@ func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 
 	var cost_label = Label.new()
 	cost_label.name = "CostLabel"
+	cost_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	cost_label.add_theme_font_size_override("font_size", 9)
 	cost_label.add_theme_color_override("font_color", Color(0.7, 0.3, 1.0))
@@ -592,6 +759,30 @@ func _create_evo_card(parent: HBoxContainer, index: int) -> PanelContainer:
 
 	parent.add_child(card)
 	return card
+
+func _on_evo_card_gui_input(event: InputEvent, index: int) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if evolution_panel == null or not evolution_panel.visible:
+			return
+		# Consume so the click doesn't also fall through to the world (place/select).
+		get_viewport().set_input_as_handled()
+		evolution_card_clicked.emit(index)
+
+func _on_evo_card_hover(index: int, entered: bool) -> void:
+	if index < 0 or index >= _evo_cards.size():
+		return
+	var card = _evo_cards[index]
+	if card == null or not is_instance_valid(card):
+		return
+	var sb = card.get_theme_stylebox("panel")
+	if sb is StyleBoxFlat:
+		var box := sb as StyleBoxFlat
+		if entered:
+			box.border_color = Color(1.0, 0.65, 1.0, 1.0)
+			box.bg_color = Color(0.16, 0.1, 0.26, 0.98)
+		else:
+			box.border_color = Color(0.5, 0.2, 0.8, 0.7)
+			box.bg_color = Color(0.1, 0.06, 0.18, 0.95)
 
 func show_evolution_panel(options: Array, current_essence: int) -> void:
 	if evolution_panel == null:
@@ -801,7 +992,7 @@ func set_essence(amount: int) -> void:
 	if _essence_hint_label != null:
 		_essence_hint_label.visible = true
 		if amount >= 3:
-			_essence_hint_label.text = "Select T3 tower + U to evolve!"
+			_essence_hint_label.text = "U = Essence Infusion (500g+1) | T3 can evolve."
 			_essence_hint_label.add_theme_color_override("font_color", Color(0.8, 0.5, 1.0, 0.9))
 			# Pulse the essence label when enough to evolve
 			if _essence_pulse_tween == null and is_inside_tree():
@@ -810,7 +1001,7 @@ func set_essence(amount: int) -> void:
 				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 0.5, 0.6).set_trans(Tween.TRANS_SINE)
 				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
 		else:
-			_essence_hint_label.text = "Evolves T3 towers (need 3)"
+			_essence_hint_label.text = "Tower infusion costs 500g + 1 Essence"
 			_essence_hint_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.8, 0.7))
 			if _essence_pulse_tween != null:
 				_essence_pulse_tween.kill()
@@ -825,6 +1016,22 @@ func set_selection(text: String) -> void:
 
 func set_controls(text: String) -> void:
 	controls_label.text = text
+
+var _controls_fade_tween: Tween = null
+
+func set_controls_visible(v: bool) -> void:
+	if controls_label == null:
+		return
+	var target_a := 1.0 if v else 0.0
+	if is_equal_approx(controls_label.modulate.a, target_a):
+		return
+	if _controls_fade_tween != null and _controls_fade_tween.is_valid():
+		_controls_fade_tween.kill()
+	if not is_inside_tree():
+		controls_label.modulate.a = target_a
+		return
+	_controls_fade_tween = create_tween()
+	_controls_fade_tween.tween_property(controls_label, "modulate:a", target_a, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func set_level(level: int, xp: int, xp_next: int) -> void:
 	level_label.text = "Level: %d (%d/%d)" % [level, xp, xp_next]
@@ -858,6 +1065,65 @@ func set_health(current: float, maximum: float) -> void:
 	health_bar.max_value = max(1.0, maximum)
 	health_bar.value = clamp(current, 0.0, maximum)
 	_update_vignette(current, maximum)
+
+func _build_build_focus_ui() -> void:
+	if _build_focus_overlay != null and is_instance_valid(_build_focus_overlay):
+		return
+	var hud = $HUD
+	_build_focus_overlay = ColorRect.new()
+	_build_focus_overlay.name = "BuildFocusOverlay"
+	_build_focus_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_focus_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_build_focus_overlay.color = Color(0.03, 0.11, 0.16, 0.34)
+	_build_focus_overlay.visible = false
+	hud.add_child(_build_focus_overlay)
+	hud.move_child(_build_focus_overlay, 0)
+
+	_build_focus_label = Label.new()
+	_build_focus_label.name = "BuildFocusLabel"
+	_build_focus_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_focus_label.anchor_left = 0.5
+	_build_focus_label.anchor_right = 0.5
+	_build_focus_label.anchor_top = 0.0
+	_build_focus_label.anchor_bottom = 0.0
+	_build_focus_label.offset_left = -220.0
+	_build_focus_label.offset_right = 220.0
+	_build_focus_label.offset_top = 8.0
+	_build_focus_label.offset_bottom = 32.0
+	_build_focus_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_focus_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_build_focus_label.add_theme_font_size_override("font_size", 14)
+	_build_focus_label.add_theme_color_override("font_color", Color(0.85, 0.97, 1.0, 0.95))
+	if _ui_font != null:
+		_build_focus_label.add_theme_font_override("font", _ui_font)
+	_build_focus_label.visible = false
+	hud.add_child(_build_focus_label)
+
+func set_build_focus(active: bool, build_name: String = "", time_scale: float = 1.0) -> void:
+	if _build_focus_overlay == null or not is_instance_valid(_build_focus_overlay):
+		_build_build_focus_ui()
+	if _build_focus_overlay == null or _build_focus_label == null:
+		return
+	var display_name = build_name.strip_edges()
+	var changed = active != _build_focus_visible
+	if display_name != _build_focus_name:
+		changed = true
+	if absf(time_scale - _build_focus_scale) > 0.001:
+		changed = true
+	if not changed:
+		return
+	_build_focus_visible = active
+	_build_focus_name = display_name
+	_build_focus_scale = time_scale
+	if active:
+		var percent = int(round(clamp(time_scale, 0.0, 2.0) * 100.0))
+		var tower_name = display_name if display_name != "" else "Tower"
+		_build_focus_label.text = "BUILD MODE | %s | TIME %d%%" % [tower_name.to_upper(), percent]
+		_build_focus_overlay.visible = true
+		_build_focus_label.visible = true
+	else:
+		_build_focus_overlay.visible = false
+		_build_focus_label.visible = false
 
 # =========================================================
 # LOW HEALTH VIGNETTE
@@ -1004,6 +1270,37 @@ func _add_tech_rarity_frames() -> void:
 		tech_panel.add_child(frame)
 		tech_panel.move_child(frame, 0)
 		tech_frames.append(frame)
+	_add_tech_icon_frames()
+
+func _add_tech_icon_frames() -> void:
+	for raw_frame in tech_icon_frames:
+		if raw_frame != null and is_instance_valid(raw_frame):
+			raw_frame.queue_free()
+	tech_icon_frames.clear()
+	var icons = [tech_icon1, tech_icon2, tech_icon3]
+	for idx in range(icons.size()):
+		var icon = icons[idx]
+		if icon == null:
+			continue
+		var frame = TextureRect.new()
+		frame.name = "TechIconFrame_%d" % idx
+		frame.size = TECH_ICON_FRAME_SIZE
+		frame.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.visible = false
+		frame.z_index = icon.z_index + 1
+		tech_panel.add_child(frame)
+		tech_icon_frames.append(frame)
+	_position_tech_icon_frames()
+
+func _position_tech_icon_frames() -> void:
+	var icons = [tech_icon1, tech_icon2, tech_icon3]
+	for i in range(min(icons.size(), tech_icon_frames.size())):
+		var icon = icons[i]
+		var frame = tech_icon_frames[i]
+		if icon == null or frame == null:
+			continue
+		frame.position = icon.position + (icon.size - TECH_ICON_FRAME_SIZE) * 0.5
 
 func _ensure_tech_backdrop() -> void:
 	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
@@ -1024,10 +1321,26 @@ func _ensure_tech_backdrop() -> void:
 	$HUD.add_child(_tech_backdrop)
 	$HUD.move_child(_tech_backdrop, 0)
 
-func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
+func _refresh_modal_backdrop() -> void:
 	_ensure_tech_backdrop()
-	if _tech_backdrop != null:
-		_tech_backdrop.visible = true
+	if _tech_backdrop == null:
+		return
+	var visible = _modal_backdrop_for_tech or _modal_backdrop_for_chest
+	_tech_backdrop.visible = visible
+	if not visible:
+		return
+	if _modal_backdrop_for_chest and not _modal_backdrop_for_tech:
+		_tech_backdrop.color = Color(0.0, 0.0, 0.0, 0.97)
+	else:
+		_tech_backdrop.color = Color(0.0, 0.0, 0.0, 0.88)
+
+func set_chest_blackout(active: bool) -> void:
+	_modal_backdrop_for_chest = active
+	_refresh_modal_backdrop()
+
+func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
+	_modal_backdrop_for_tech = true
+	_refresh_modal_backdrop()
 	tech_panel.visible = true
 	tech_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
 	tech_panel.scale = Vector2.ONE
@@ -1041,32 +1354,61 @@ func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, me
 	_apply_rarity_style(tech_option2, tech_icon2, options, 1)
 	_apply_rarity_style(tech_option3, tech_icon3, options, 2)
 	_apply_tech_frames(options)
+	_apply_tech_icon_frames(options)
 	if tech_title_label != null:
-		var title = "Tech Pick - Choose 1"
-		var locked_name = str(meta.get("locked_name", ""))
-		var forced_category = str(meta.get("forced_category", ""))
-		if locked_name != "":
-			title += " | Next lock: %s" % locked_name
-		if forced_category != "":
-			title += " | Forced: %s" % forced_category.capitalize()
-		tech_title_label.text = title
+		tech_title_label.text = "Choose an Upgrade"
 	if tech_hint_label != null:
-		var reroll_hint = "R reroll"
+		var reroll_hint = "R  Reroll"
 		if reroll_cost > 0:
 			if essence_amount >= reroll_cost:
-				reroll_hint = "R reroll (%d)" % reroll_cost
+				reroll_hint = "R  Reroll (%d essence)" % reroll_cost
 			else:
-				reroll_hint = "R reroll (%d needed)" % reroll_cost
-		tech_hint_label.text = "1-3 pick | A/S/D infuse | Z/X/C lock | Q/W/E force | %s" % reroll_hint
+				reroll_hint = "R  Reroll (need %d essence)" % reroll_cost
+		tech_hint_label.text = "1 / 2 / 3 (or stick + A)  Pick        %s" % reroll_hint
+	# Start with no gamepad highlight; main.gd sets it when a controller is active.
+	set_tech_highlight(-1)
+
+# Controller support: highlight one of the three tech options (0..2) so a gamepad
+# user can see which choice the cursor is on. -1 clears all highlights. The rarity
+# font color stays intact; we cue selection with brightness + scale on the label and
+# its icon. Mouse/keyboard users simply never move the cursor, so nothing changes.
+func set_tech_highlight(idx: int) -> void:
+	var labels := [tech_option1, tech_option2, tech_option3]
+	var icons := [tech_icon1, tech_icon2, tech_icon3]
+	# idx == -1 means "no gamepad cursor" (the default for mouse/keyboard players):
+	# keep ALL options at full brightness so every card stays easy to read. Only when
+	# a controller is actively highlighting one option do we dim the other two.
+	var no_highlight := (idx < 0)
+	for i in range(labels.size()):
+		var lbl: Label = labels[i]
+		if lbl == null or not is_instance_valid(lbl):
+			continue
+		var selected := (i == idx)
+		if no_highlight or selected:
+			lbl.modulate = Color(1.0, 1.0, 1.0, 1.0)
+		else:
+			lbl.modulate = Color(0.72, 0.72, 0.78, 1.0)
+		var ic: TextureRect = icons[i]
+		if ic != null and is_instance_valid(ic):
+			if no_highlight:
+				ic.modulate = Color(1.15, 1.15, 1.15, 1.0)
+			elif selected:
+				ic.modulate = Color(1.25, 1.25, 1.25, 1.0)
+			else:
+				ic.modulate = Color(0.75, 0.75, 0.8, 1.0)
 
 func hide_tech() -> void:
 	tech_panel.visible = false
-	if _tech_backdrop != null and is_instance_valid(_tech_backdrop):
-		_tech_backdrop.visible = false
+	_modal_backdrop_for_tech = false
+	set_tech_highlight(-1)
+	for frame in tech_icon_frames:
+		if frame != null and is_instance_valid(frame):
+			frame.visible = false
+	_refresh_modal_backdrop()
 	if tech_title_label != null:
-		tech_title_label.text = "Tech Pick - Choose 1"
+		tech_title_label.text = "Choose an Upgrade"
 	if tech_hint_label != null:
-		tech_hint_label.text = "Press 1, 2, or 3"
+		tech_hint_label.text = "1 / 2 / 3  Pick"
 
 func _build_tech_ledger() -> void:
 	if _tech_ledger_panel != null and is_instance_valid(_tech_ledger_panel):
@@ -1123,7 +1465,9 @@ func update_tech_ledger(levels: Dictionary, defs: Dictionary) -> void:
 		if lvl <= 0:
 			continue
 		entries.append({"id": id, "lvl": lvl})
-	entries.sort_custom(func(a, b): return int(a["lvl"]) > int(b["lvl"]))
+	entries.sort_custom(func(a, b):
+		return int(a["lvl"]) > int(b["lvl"])
+	)
 	var max_slots = 8
 	var shown = 0
 	for entry in entries:
@@ -1193,15 +1537,20 @@ func _build_tech_chip(icon_path: String, level: int, rarity: String) -> Control:
 
 func _format_option(number: int, options: Array, index: int) -> String:
 	if index >= options.size():
-		return "%d) --" % number
+		return "%d)  --" % number
 	var option: Dictionary = options[index]
 	var name = str(option.get("name", ""))
-	var category = str(option.get("category", ""))
-	var category_tag = "[%s] " % category.capitalize() if category != "" else ""
 	var level = int(option.get("level", 0))
-	var level_tag = " [Lv %d]" % level if level > 0 else ""
-	var infuse_tag = " *" if bool(option.get("infusable", false)) else ""
-	return "%d) %s%s%s%s\n   %s" % [number, category_tag, name, level_tag, infuse_tag, option.get("desc", "")]
+	var max_level = int(option.get("max_level", 1))
+	# Rank readout: show current/max only for multi-rank picks so single-rank
+	# upgrades stay clean. "MAX" when the next pick would cap it out.
+	var rank_tag = ""
+	if max_level > 1:
+		if level + 1 >= max_level:
+			rank_tag = "  (MAX)"
+		else:
+			rank_tag = "  Lv %d/%d" % [level + 1, max_level]
+	return "%d)  %s%s\n%s" % [number, name, rank_tag, option.get("desc", "")]
 
 func _set_icon(icon: TextureRect, options: Array, index: int) -> void:
 	if icon == null:
@@ -1227,6 +1576,13 @@ func _apply_rarity_style(label: Label, icon: TextureRect, options: Array, index:
 	var rarity = str(option.get("rarity", "common"))
 	var color: Color = rarity_colors.get(rarity, Color.WHITE)
 	label.add_theme_color_override("font_color", color)
+	# Heavy black outline + drop shadow so the (now bright) rarity text reads clearly
+	# over the busy battlefield behind the modal, regardless of what's underneath.
+	label.add_theme_constant_override("outline_size", 4)
+	label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 1.0))
+	label.add_theme_constant_override("shadow_offset_x", 2)
+	label.add_theme_constant_override("shadow_offset_y", 2)
+	label.add_theme_color_override("font_shadow_color", Color(0.0, 0.0, 0.0, 0.85))
 	if icon != null:
 		icon.modulate = Color(1.1, 1.1, 1.1, 1.0)
 
@@ -1246,6 +1602,31 @@ func _apply_tech_frames(options: Array) -> void:
 				frame.texture = load(tex_path)
 			else:
 				frame.texture = null
+
+func _apply_tech_icon_frames(options: Array) -> void:
+	var rarity_alias = {
+		"legendary": "legendary",
+		"mythic": "legendary",
+		"diamond": "legendary"
+	}
+	for i in range(tech_icon_frames.size()):
+		var frame = tech_icon_frames[i]
+		if frame == null:
+			continue
+		if i >= options.size():
+			frame.texture = null
+			frame.visible = false
+			continue
+		var rarity = str(options[i].get("rarity", "common"))
+		if rarity_alias.has(rarity):
+			rarity = str(rarity_alias[rarity])
+		var tex_path = str(RARITY_FRAME_TEXTURES.get(rarity, RARITY_FRAME_TEXTURES["common"]))
+		if tex_path != "" and ResourceLoader.exists(tex_path):
+			frame.texture = load(tex_path)
+			frame.visible = true
+		else:
+			frame.texture = null
+			frame.visible = false
 
 # =========================================================
 # FONT + LAYOUT POLISH
@@ -1292,13 +1673,13 @@ func _apply_ui_fonts() -> void:
 	_apply_font(tech_title, 14)
 	_apply_font(tech_hint, 9)
 
-func _style_label(label: Label, pos: Vector2, size: Vector2, wrap: bool = true) -> void:
+func _style_label(label: Label, pos: Vector2, size: Vector2, wrap: bool = true, clip: bool = true) -> void:
 	if label == null:
 		return
 	label.position = pos
 	label.size = size
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART if wrap else TextServer.AUTOWRAP_OFF
-	label.clip_text = true
+	label.clip_text = clip
 	label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 
@@ -1323,9 +1704,11 @@ func _style_tech_panel() -> void:
 	var tech_hint: Label = $HUD/TechPanel/Hint
 
 	_style_label(tech_title, Vector2(20, 12), Vector2(440, 20), false)
-	_style_label(tech_option1, Vector2(112, 62), Vector2(300, 54), true)
-	_style_label(tech_option2, Vector2(112, 150), Vector2(300, 54), true)
-	_style_label(tech_option3, Vector2(112, 238), Vector2(300, 54), true)
+	# Option labels: wide + tall enough for a two-line "name / description"
+	# layout, and clipping disabled so wrapped descriptions are never cut off.
+	_style_label(tech_option1, Vector2(100, 60), Vector2(360, 68), true, false)
+	_style_label(tech_option2, Vector2(100, 148), Vector2(360, 68), true, false)
+	_style_label(tech_option3, Vector2(100, 236), Vector2(360, 68), true, false)
 	_style_label(tech_hint, Vector2(20, 294), Vector2(440, 24), false)
 	for lbl in [tech_title, tech_hint, tech_option1, tech_option2, tech_option3]:
 		if lbl == null:
@@ -1348,6 +1731,7 @@ func _style_tech_panel() -> void:
 		tech_icon2.position = Vector2(44, 154)
 	if tech_icon3 != null:
 		tech_icon3.position = Vector2(44, 242)
+	_position_tech_icon_frames()
 
 func _style_start_panel() -> void:
 	if start_panel == null:
@@ -1436,6 +1820,8 @@ func show_upgrade_popup(upgrade_id: String, rarity: String = "common") -> void:
 		"common": Color(0.4, 0.9, 0.4),
 		"rare": Color(0.3, 0.6, 1.0),
 		"epic": Color(0.8, 0.3, 1.0),
+		"legendary": Color(1.0, 0.82, 0.28),
+		"mythic": Color(1.0, 0.48, 0.35),
 		"diamond": Color(0.2, 1.0, 1.0)
 	}
 	var color = rarity_colors.get(rarity, Color.WHITE)
@@ -1444,25 +1830,57 @@ func show_upgrade_popup(upgrade_id: String, rarity: String = "common") -> void:
 		return
 	_upgrade_popup.visible = true
 
-	var label: Label = null
+	var row: HBoxContainer = null
 	if _upgrade_popup_labels.has(upgrade_id):
-		label = _upgrade_popup_labels[upgrade_id]
-		if label == null or not is_instance_valid(label):
+		row = _upgrade_popup_labels[upgrade_id]
+		if row == null or not is_instance_valid(row):
 			_upgrade_popup_labels.erase(upgrade_id)
-			label = null
-	if label == null:
-		label = Label.new()
-		label.name = "Upgrade_%s" % upgrade_id
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		_upgrade_popup_labels[upgrade_id] = label
-		_upgrade_popup_vbox.add_child(label)
+			row = null
+	if row == null:
+		row = HBoxContainer.new()
+		row.name = "Upgrade_%s" % upgrade_id
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 8)
+		row.custom_minimum_size = Vector2(268, 26)
 
+		var badge = TextureRect.new()
+		badge.name = "Badge"
+		badge.custom_minimum_size = Vector2(20, 20)
+		badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		badge.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		row.add_child(badge)
+
+		var label = Label.new()
+		label.name = "Text"
+		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if _ui_font != null:
+			label.add_theme_font_override("font", _ui_font)
+		label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.95))
+		label.add_theme_constant_override("outline_size", 1)
+		row.add_child(label)
+
+		_upgrade_popup_labels[upgrade_id] = row
+		_upgrade_popup_vbox.add_child(row)
+
+	var badge_rect = row.get_node_or_null("Badge") as TextureRect
+	if badge_rect != null:
+		var badge_path = str(RARITY_FRAME_TEXTURES.get(rarity, RARITY_FRAME_TEXTURES["common"]))
+		if badge_path != "" and ResourceLoader.exists(badge_path):
+			badge_rect.texture = load(badge_path)
+		else:
+			badge_rect.texture = null
+
+	var label = row.get_node_or_null("Text") as Label
+	if label == null:
+		return
 	label.add_theme_color_override("font_color", color)
 	var display_name = upgrade_id.replace("_", " ").capitalize()
-	if rarity == "diamond":
-		label.text = "💎 %s!" % display_name
+	if rarity == "diamond" or rarity == "legendary" or rarity == "mythic":
+		label.text = "%s %s" % [rarity.to_upper(), display_name]
 		label.add_theme_font_size_override("font_size", 20)
 	else:
-		label.text = "+%s" % display_name
+		label.text = "+ %s" % display_name
 		label.add_theme_font_size_override("font_size", 16)
-	label.set_meta("expires_at", Time.get_ticks_msec() + 2500)
+	row.set_meta("expires_at", Time.get_ticks_msec() + 2500)

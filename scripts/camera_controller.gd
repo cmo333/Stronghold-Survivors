@@ -25,6 +25,10 @@ var _chromatic_intensity: float = 0.0
 var _target_vignette_alpha: float = 0.0
 var _current_vignette_alpha: float = 0.0
 
+# Zoom punch (brief in/out kick on heavy hits)
+var _zoom_punch: float = 0.0
+var _zoom_punch_recover: float = 8.0
+
 var _player: Node2D = null
 var _game: Node = null
 
@@ -113,6 +117,7 @@ func _process(delta: float) -> void:
 	# Only update shake and screen effects - no camera movement
 	_update_shake(delta)
 	_update_screen_effects(delta)
+	_update_zoom_punch(delta)
 
 func _update_camera(_delta: float) -> void:
 	# Disabled - camera stays locked to player via parent node
@@ -156,6 +161,20 @@ func _update_screen_effects(delta: float) -> void:
 	
 	if _vignette != null and _vignette.material != null:
 		_vignette.material.set_shader_parameter("intensity", _current_vignette_alpha)
+
+func _update_zoom_punch(delta: float) -> void:
+	if _zoom_punch <= 0.0001:
+		if _zoom_punch != 0.0:
+			_zoom_punch = 0.0
+			zoom = _base_zoom
+		return
+	# Decay the punch back to zero; zoom out slightly (smaller zoom = wider view)
+	_zoom_punch = lerpf(_zoom_punch, 0.0, clampf(delta * _zoom_punch_recover, 0.0, 1.0))
+	zoom = _base_zoom * (1.0 - _zoom_punch)
+
+func kick_zoom(amount: float = 0.06) -> void:
+	# Brief outward zoom kick to punctuate a heavy hit. Clamped so it never disorients.
+	_zoom_punch = max(_zoom_punch, clampf(amount, 0.0, 0.12))
 
 func shake(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE_DURATION) -> void:
 	_shake_strength = max(_shake_strength, strength)
