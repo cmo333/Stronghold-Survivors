@@ -1,5 +1,9 @@
 .DS_Store
 .godot/
-.import/
-*.import
 .mono/
+
+# NOTE: *.import files must be committed in Godot 4.
+# They carry the stable uid:// that .tscn/.tres files reference. If they are
+# ignored, every clone regenerates fresh random UIDs, the uid:// references
+# baked into scenes no longer resolve, and Godot logs an "invalid UID" warning
+# for each one on every load. (The .import/ folder was a Godot 3 concept.)
