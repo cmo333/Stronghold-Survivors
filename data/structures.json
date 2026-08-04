@@ -357,19 +357,19 @@
     "tiers": [
       {
         "cost": 30,
-        "health": 120,
+        "health": 1400,
         "income": 4,
         "interval": 2.0
       },
       {
         "cost": 50,
-        "health": 180,
+        "health": 2100,
         "income": 6,
         "interval": 1.8
       },
       {
         "cost": 80,
-        "health": 250,
+        "health": 3000,
         "income": 10,
         "interval": 1.5
       }

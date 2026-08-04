@@ -138,7 +138,7 @@ func _physics_process(delta: float) -> void:
 		return
 	var dist = global_position.distance_to(target.global_position)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
-	if dist <= attack_range:
+	if dist <= _effective_attack_range(target):
 		if _attack_cooldown <= 0.0 and _has_attack_los(target):
 			if target.has_method("take_damage"):
 				target.take_damage(attack_damage)
@@ -265,6 +265,19 @@ func _find_target() -> Node2D:
 	if best_dist <= aggro_range * aggro_range:
 		return best
 	return player
+
+func _effective_attack_range(target: Node2D) -> float:
+	"""Attack range measured to a target's *surface*, not its origin.
+
+	Buildings are solid colliders, so an enemy pathing into a 2x2 structure
+	physically stops ~footprint_radius away from its centre. Comparing raw
+	distance-to-centre against attack_range meant large buildings could never be
+	reached: enemies would crowd the extractor forever without ever swinging."""
+	if target == null or not is_instance_valid(target):
+		return attack_range
+	if target.is_in_group("buildings") and target.has_method("get_footprint_radius"):
+		return attack_range + float(target.get_footprint_radius())
+	return attack_range
 
 func _has_attack_los(target: Node2D) -> bool:
 	"""True if no blocking building sits between this enemy and the target.
