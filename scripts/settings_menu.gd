@@ -73,29 +73,63 @@ func _connect_signals() -> void:
 		cancel_button.pressed.connect(close)
 	
 	# Audio sliders
-	master_slider.value_changed.connect(func(v): _on_volume_changed("master", v))
-	sfx_slider.value_changed.connect(func(v): _on_volume_changed("sfx", v))
-	music_slider.value_changed.connect(func(v): _on_volume_changed("music", v))
-	ui_slider.value_changed.connect(func(v): _on_volume_changed("ui", v))
+	master_slider.value_changed.connect(func(v):
+		_on_volume_changed("master", v)
+	)
+	sfx_slider.value_changed.connect(func(v):
+		_on_volume_changed("sfx", v)
+	)
+	music_slider.value_changed.connect(func(v):
+		_on_volume_changed("music", v)
+	)
+	ui_slider.value_changed.connect(func(v):
+		_on_volume_changed("ui", v)
+	)
 	
 	# Graphics toggles
-	fullscreen_check.toggled.connect(func(v): _pending_changes["graphics:fullscreen"] = v)
-	vsync_check.toggled.connect(func(v): _pending_changes["graphics:vsync"] = v)
-	quality_dropdown.item_selected.connect(func(i): _pending_changes["graphics:quality"] = quality_dropdown.get_item_text(i).to_lower())
+	fullscreen_check.toggled.connect(func(v):
+		_pending_changes["graphics:fullscreen"] = v
+	)
+	vsync_check.toggled.connect(func(v):
+		_pending_changes["graphics:vsync"] = v
+	)
+	quality_dropdown.item_selected.connect(func(i):
+		_pending_changes["graphics:quality"] = quality_dropdown.get_item_text(i).to_lower()
+	)
 	
 	# Gameplay settings
-	screenshake_slider.value_changed.connect(func(v): _on_screenshake_changed(v))
-	damage_numbers_check.toggled.connect(func(v): _pending_changes["gameplay:damage_numbers"] = v)
-	tower_range_check.toggled.connect(func(v): _pending_changes["gameplay:show_tower_range"] = v)
-	auto_collect_check.toggled.connect(func(v): _pending_changes["gameplay:auto_collect_gold"] = v)
-	wave_preview_check.toggled.connect(func(v): _pending_changes["gameplay:wave_preview"] = v)
+	screenshake_slider.value_changed.connect(func(v):
+		_on_screenshake_changed(v)
+	)
+	damage_numbers_check.toggled.connect(func(v):
+		_pending_changes["gameplay:damage_numbers"] = v
+	)
+	tower_range_check.toggled.connect(func(v):
+		_pending_changes["gameplay:show_tower_range"] = v
+	)
+	auto_collect_check.toggled.connect(func(v):
+		_pending_changes["gameplay:auto_collect_gold"] = v
+	)
+	wave_preview_check.toggled.connect(func(v):
+		_pending_changes["gameplay:wave_preview"] = v
+	)
 	
 	# Accessibility settings
-	colorblind_dropdown.item_selected.connect(func(i): _on_colorblind_changed(i))
-	font_slider.value_changed.connect(func(v): _on_font_size_changed(v))
-	flash_slider.value_changed.connect(func(v): _on_flash_reduction_changed(v))
-	reduced_motion_check.toggled.connect(func(v): _pending_changes["accessibility:reduced_motion"] = v)
-	high_contrast_check.toggled.connect(func(v): _pending_changes["accessibility:high_contrast"] = v)
+	colorblind_dropdown.item_selected.connect(func(i):
+		_on_colorblind_changed(i)
+	)
+	font_slider.value_changed.connect(func(v):
+		_on_font_size_changed(v)
+	)
+	flash_slider.value_changed.connect(func(v):
+		_on_flash_reduction_changed(v)
+	)
+	reduced_motion_check.toggled.connect(func(v):
+		_pending_changes["accessibility:reduced_motion"] = v
+	)
+	high_contrast_check.toggled.connect(func(v):
+		_pending_changes["accessibility:high_contrast"] = v
+	)
 
 func show_menu(popup_mode: bool = false) -> void:
 	_is_popup = popup_mode

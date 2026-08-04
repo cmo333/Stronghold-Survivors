@@ -28,8 +28,12 @@ var sfx_categories = {
 	"impact": [],
 	"ui": [],
 	"ambient": [],
-	"special": []
+	"special": [],
+	"pickup": []
 }
+
+# Throttle bookkeeping: sound key -> last played ticks (msec)
+var _last_played_ms: Dictionary = {}
 
 # Currently playing sounds for priority management
 var _active_sfx: Array[Dictionary] = []
@@ -144,7 +148,8 @@ func _cache_sounds() -> void:
 	_cache_sound("cannon_boom", "res://assets/audio/sfx/cannon_boom.wav", "weapon")
 	_cache_sound("lightning_crack", "res://assets/audio/sfx/lightning_crack.wav", "weapon")
 	_cache_sound("arrow_shoot", "res://assets/audio/sfx/arrow_shoot.wav", "weapon")
-	
+	_cache_sound("mortar_fire", "res://assets/audio/sfx/mortar_fire.wav", "weapon")
+
 	# Impact sounds
 	_cache_sound("enemy_hit_01", "res://assets/audio/sfx/enemy_hit_01.wav", "impact")
 	_cache_sound("enemy_hit_02", "res://assets/audio/sfx/enemy_hit_02.wav", "impact")
@@ -155,7 +160,15 @@ func _cache_sounds() -> void:
 	_cache_sound("enemy_death_03", "res://assets/audio/sfx/enemy_death_03.wav", "impact")
 	_cache_sound("building_hit", "res://assets/audio/sfx/building_hit.wav", "impact")
 	_cache_sound("shield_hit", "res://assets/audio/sfx/shield_hit.wav", "impact")
-	
+	_cache_sound("heavy_hit", "res://assets/audio/sfx/heavy_hit.wav", "impact")
+	_cache_sound("shield_break", "res://assets/audio/sfx/shield_break.wav", "impact")
+	_cache_sound("shield_restore", "res://assets/audio/sfx/shield_restore.wav", "impact")
+	_cache_sound("poison_hit", "res://assets/audio/sfx/poison_hit.wav", "impact")
+	_cache_sound("explosion", "res://assets/audio/sfx/explosion.wav", "impact")
+	_cache_sound("explosion_large", "res://assets/audio/sfx/explosion_large.wav", "impact")
+	_cache_sound("nova_charge", "res://assets/audio/sfx/nova_charge.wav", "impact")
+	_cache_sound("nova_explosion", "res://assets/audio/sfx/nova_explosion.wav", "impact")
+
 	# UI sounds
 	_cache_sound("click", "res://assets/audio/ui/click.wav", "ui")
 	_cache_sound("hover", "res://assets/audio/ui/hover.wav", "ui")
@@ -163,6 +176,8 @@ func _cache_sounds() -> void:
 	_cache_sound("error", "res://assets/audio/ui/error.wav", "ui")
 	_cache_sound("wave_start", "res://assets/audio/ui/wave_start.wav", "ui")
 	_cache_sound("level_up", "res://assets/audio/ui/level_up.wav", "ui")
+	_cache_sound("build_place", "res://assets/audio/ui/build_place.wav", "ui")
+	_cache_sound("build_sell", "res://assets/audio/ui/build_sell.wav", "ui")
 	
 	# Ambient sounds
 	_cache_sound("generator_hum", "res://assets/audio/ambient/generator_hum.wav", "ambient")
@@ -178,6 +193,17 @@ func _cache_sounds() -> void:
 	_cache_sound("game_over", "res://assets/audio/special/game_over.wav", "special")
 	_cache_sound("victory", "res://assets/audio/special/victory.wav", "special")
 	_cache_sound("berserk_activate", "res://assets/audio/special/berserk_activate.wav", "special")
+	_cache_sound("teleport", "res://assets/audio/special/teleport.wav", "special")
+	_cache_sound("teleport_arrive", "res://assets/audio/special/teleport_arrive.wav", "special")
+	_cache_sound("summon", "res://assets/audio/special/summon.wav", "special")
+	_cache_sound("summon_army", "res://assets/audio/special/summon_army.wav", "special")
+	_cache_sound("boss_warning", "res://assets/audio/special/boss_warning.wav", "special")
+	_cache_sound("boss_phase", "res://assets/audio/special/boss_phase.wav", "special")
+	_cache_sound("coin_pickup_01", "res://assets/audio/special/coin_pickup_01.wav", "pickup")
+	_cache_sound("coin_pickup_02", "res://assets/audio/special/coin_pickup_02.wav", "pickup")
+	_cache_sound("coin_pickup_03", "res://assets/audio/special/coin_pickup_03.wav", "pickup")
+	_cache_sound("essence_pickup", "res://assets/audio/special/essence_pickup.wav", "pickup")
+	_cache_sound("heal_pickup", "res://assets/audio/special/heal_pickup.wav", "pickup")
 
 func _cache_sound(name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
@@ -227,11 +253,13 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 	
 	player.stream = stream
 	player.volume_db = volume_db
-	
+	# Slight random pitch variation keeps rapid repeats from sounding robotic
+	player.pitch_scale = randf_range(0.94, 1.06)
+
 	if position != Vector2.ZERO:
 		player.global_position = position
 		player.attenuation = 1.5
-	
+
 	player.play()
 	
 	# Track active SFX
@@ -240,6 +268,31 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 		"priority": priority,
 		"time": Time.get_ticks_msec()
 	})
+
+func play_one_shot_throttled(sound_name: String, position: Vector2 = Vector2.ZERO, min_interval_ms: int = 60, priority: int = DEFAULT_PRIORITY) -> void:
+	"""Play a sound only if at least min_interval_ms passed since it last played.
+	Use for high-frequency events (pickups, rapid tower fire) to avoid earbleed."""
+	if not audio_enabled:
+		return
+	var now = Time.get_ticks_msec()
+	if _last_played_ms.has(sound_name) and now - int(_last_played_ms[sound_name]) < min_interval_ms:
+		return
+	_last_played_ms[sound_name] = now
+	play_one_shot(sound_name, position, priority)
+
+func play_pickup_sound(kind: String, position: Vector2 = Vector2.ZERO) -> void:
+	"""Collection blips for gold/essence/heal pickups. Throttled per kind so
+	magnet-vacuuming a pile stays pleasant."""
+	if not audio_enabled:
+		return
+	match kind:
+		"heal":
+			play_one_shot_throttled("heal_pickup", position, 120)
+		"essence":
+			play_one_shot_throttled("essence_pickup", position, 70)
+		_:
+			var variant = ["coin_pickup_01", "coin_pickup_02", "coin_pickup_03"][randi() % 3]
+			play_one_shot_throttled(variant, position, 55)
 
 func play_random_from_category(category: String, position: Vector2 = Vector2.ZERO, priority: int = DEFAULT_PRIORITY) -> void:
 	"""Play a random sound from a category"""
@@ -262,13 +315,18 @@ func play_weapon_sound(weapon_type: String, position: Vector2) -> void:
 		return
 	match weapon_type:
 		"gun":
-			play_random_from_category("weapon", position, DEFAULT_PRIORITY)
+			var variant = ["gun_fire_01", "gun_fire_02", "gun_fire_03"][randi() % 3]
+			play_one_shot(variant, position, DEFAULT_PRIORITY)
 		"cannon":
 			play_one_shot("cannon_boom", position, HIGH_PRIORITY)
-		"lightning":
-			play_one_shot("lightning_crack", position, HIGH_PRIORITY)
+		"lightning", "tesla":
+			play_one_shot_throttled("lightning_crack", position, 90, HIGH_PRIORITY)
 		"arrow":
-			play_one_shot("arrow_shoot", position, DEFAULT_PRIORITY)
+			play_one_shot_throttled("arrow_shoot", position, 60, DEFAULT_PRIORITY)
+		"mortar":
+			play_one_shot("mortar_fire", position, HIGH_PRIORITY)
+		_:
+			play_one_shot_throttled("arrow_shoot", position, 60, DEFAULT_PRIORITY)
 
 func play_impact_sound(is_crit: bool = false, is_death: bool = false, position: Vector2 = Vector2.ZERO) -> void:
 	"""Play impact sound based on hit type"""
@@ -289,7 +347,9 @@ func play_ui_sound(sound_name: String) -> void:
 		var player = AudioStreamPlayer.new()
 		player.bus = "UI"
 		player.stream = _sound_cache[sound_name]
-		player.finished.connect(func(): player.queue_free())
+		player.finished.connect(func():
+			player.queue_free()
+		)
 		add_child(player)
 		player.play()
 
@@ -302,12 +362,19 @@ func play_music(music_name: String, crossfade_duration: float = 2.0) -> void:
 	if not audio_enabled:
 		return
 	var music_path = "res://assets/audio/music/%s.ogg" % music_name
+	if not ResourceLoader.exists(music_path):
+		push_warning("Music not found: %s" % music_path)
+		return
 	var stream = load(music_path)
 	if stream == null:
 		push_warning("Music not found: %s" % music_path)
 		return
-	
+	_make_stream_loop(stream)
+
 	if _is_crossfading:
+		return
+	# Already playing this exact track — nothing to do
+	if _current_music_player.playing and _current_music_player.stream == stream:
 		return
 	
 	var next_player = _music_player_a if _current_music_player == _music_player_b else _music_player_b
@@ -351,31 +418,49 @@ func stop_music(fade_duration: float = 1.0) -> void:
 		_current_music_player.volume_db = 0.0
 	)
 
-func play_ambient(ambient_name: String, fade_in: float = 3.0) -> void:
-	"""Start ambient sound loop"""
+func play_ambient(ambient_name: String, fade_in: float = 3.0, volume_db: float = -10.0) -> void:
+	"""Start ambient sound loop (wav or ogg, looped, on SFX bus)"""
 	if not audio_enabled:
 		return
-	var ambient_path = "res://assets/audio/ambient/%s.ogg" % ambient_name
-	var stream = load(ambient_path)
+	var stream: AudioStream = null
+	for ext in ["ogg", "wav"]:
+		var ambient_path = "res://assets/audio/ambient/%s.%s" % [ambient_name, ext]
+		if ResourceLoader.exists(ambient_path):
+			stream = load(ambient_path)
+			break
 	if stream == null:
 		return
-	
+	_make_stream_loop(stream)
+
 	# Use a dedicated ambient player
 	var ambient_player = get_node_or_null("AmbientPlayer")
 	if ambient_player == null:
 		ambient_player = AudioStreamPlayer.new()
 		ambient_player.name = "AmbientPlayer"
-		ambient_player.bus = "Ambient"
+		ambient_player.bus = "SFX"
 		add_child(ambient_player)
-	
+
 	ambient_player.stream = stream
 	ambient_player.volume_db = -80.0
 	ambient_player.play()
-	
+
 	if not is_inside_tree():
 		return
 	var tween = create_tween()
-	tween.tween_property(ambient_player, "volume_db", 0.0, fade_in)
+	tween.tween_property(ambient_player, "volume_db", volume_db, fade_in)
+
+func _make_stream_loop(stream: AudioStream) -> void:
+	"""Enable looping on a runtime-loaded stream (ogg or wav)."""
+	if stream is AudioStreamOggVorbis:
+		stream.loop = true
+	elif stream is AudioStreamWAV:
+		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		stream.loop_begin = 0
+		# loop_end of 0 means "no loop region"; data is 16-bit mono => 2 bytes/frame
+		if stream.loop_end <= 0:
+			stream.loop_end = stream.data.size() / 2
+	elif stream is AudioStreamMP3:
+		stream.loop = true
 
 # ============================================
 # VOLUME CONTROLS

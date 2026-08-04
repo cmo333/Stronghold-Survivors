@@ -7,8 +7,56 @@ const DUST_COLOR = Color(0.9, 0.85, 0.75, 0.3)
 const FIREFLY_COLOR = Color(0.6, 1.0, 0.4, 0.7)
 const EMBER_COLOR = Color(1.0, 0.5, 0.2, 0.6)
 
+const BIOME_CHECK_INTERVAL = 3.0
+
+# When set, the emitter tracks this node so ambience surrounds the player
+# everywhere instead of only near the world origin.
+var _follow: Node2D = null
+var _game: Node = null
+var _current_mode: String = ""
+var _biome_accum: float = 0.0
+
+func setup_follow(follow: Node2D, game: Node) -> void:
+    _follow = follow
+    _game = game
+
+func _process(delta: float) -> void:
+    if _follow != null and is_instance_valid(_follow):
+        global_position = _follow.global_position
+    if _game == null:
+        return
+    _biome_accum += delta
+    if _biome_accum < BIOME_CHECK_INTERVAL:
+        return
+    _biome_accum = 0.0
+    _refresh_biome_mode()
+
+func _refresh_biome_mode() -> void:
+    var ground = _game.get_node_or_null("World/Ground")
+    if ground == null or not ground.has_method("get_biome_at"):
+        return
+    var probe = _follow.global_position if (_follow != null and is_instance_valid(_follow)) else global_position
+    var biome: String = ground.get_biome_at(probe)
+    var mode := "dust"
+    match biome:
+        "grass":
+            mode = "fireflies"
+        "wasteland", "stone":
+            mode = "embers"
+    if mode == _current_mode:
+        return
+    _current_mode = mode
+    match mode:
+        "fireflies":
+            setup_fireflies()
+        "embers":
+            setup_embers()
+        _:
+            setup_dust()
+
 func setup_dust() -> void:
     # Dust motes floating in light
+    _current_mode = "dust"
     amount = 30
     lifetime = 8.0
     
@@ -27,6 +75,7 @@ func setup_dust() -> void:
 
 func setup_fireflies() -> void:
     # Fireflies in grass zones
+    _current_mode = "fireflies"
     amount = 15
     lifetime = 6.0
     
@@ -45,6 +94,7 @@ func setup_fireflies() -> void:
 
 func setup_embers() -> void:
     # Embers in wasteland zones
+    _current_mode = "embers"
     amount = 40
     lifetime = 4.0
     

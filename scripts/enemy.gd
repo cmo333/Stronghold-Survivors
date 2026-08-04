@@ -68,6 +68,7 @@ const HEALTH_BAR_OFFSET_Y = -22.0
 @onready var body: CanvasItem = $Body
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 var _base_color: Color = Color.WHITE
+var _hit_flash_tween: Tween = null
 
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
@@ -265,6 +266,8 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 					hit_kind = "crit"
 				_game.spawn_fx(hit_kind, hit_pos)
 			_last_hit_fx_ms = now_ms
+			if not will_die:
+				_play_hit_flash(is_crit)
 
 	if show_damage_number and FeedbackConfig.ENABLE_DAMAGE_NUMBERS:
 		var elapsed_num = float(now_ms - _last_damage_number_ms) / 1000.0
@@ -282,6 +285,18 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	
 	if health <= 0.0 and not _is_dying:
 		_start_death_sequence()
+
+func _play_hit_flash(is_crit: bool = false) -> void:
+	# Over-bright self_modulate blows the sprite out to white for a frame or two.
+	# Uses self_modulate so it never fights the status-tint code on modulate.
+	if body == null or not is_inside_tree() or _is_dying:
+		return
+	if _hit_flash_tween != null and _hit_flash_tween.is_valid():
+		_hit_flash_tween.kill()
+	var strength = 5.0 if is_crit else 3.2
+	body.self_modulate = Color(strength, strength, strength)
+	_hit_flash_tween = create_tween()
+	_hit_flash_tween.tween_property(body, "self_modulate", Color.WHITE, 0.10).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 func _start_death_sequence() -> void:
 	_is_dying = true
@@ -334,9 +349,12 @@ func _start_death_sequence() -> void:
 		# Fade out overlapping with scale
 		tween.parallel().tween_property(body, "modulate:a", 0.0, FeedbackConfig.DEATH_FADE_DURATION)
 
-	# Elite/siege screen flash
-	if (is_elite or is_siege) and _game != null and _game.has_method("flash_screen"):
-		_game.flash_screen(Color(1.0, 0.9, 0.3, 0.15), 0.15)
+	# Elite/siege screen flash + brief kill slow-mo
+	if (is_elite or is_siege) and _game != null:
+		if _game.has_method("flash_screen"):
+			_game.flash_screen(Color(1.0, 0.9, 0.3, 0.15), 0.15)
+		if _game.has_method("trigger_kill_slow"):
+			_game.trigger_kill_slow()
 
 	# Corpse fade delay then cleanup
 	tween.tween_interval(FeedbackConfig.DEATH_CORPSE_FADE_DELAY)
@@ -394,7 +412,9 @@ func apply_slow(source_id: int, factor: float, duration: float = 0.0) -> void:
 	_update_status_visuals()
 	if duration > 0.0:
 		var timer = get_tree().create_timer(duration)
-		timer.timeout.connect(func(): remove_slow(source_id))
+		timer.timeout.connect(func():
+			remove_slow(source_id)
+		)
 
 func remove_slow(source_id: int) -> void:
 	_slow_sources.erase(source_id)

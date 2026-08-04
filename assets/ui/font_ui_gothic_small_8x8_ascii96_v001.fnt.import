@@ -1,0 +1,17 @@
+[remap]
+
+importer="font_data_bmfont"
+type="FontFile"
+uid="uid://bmin2aibd415t"
+path="res://.godot/imported/font_ui_gothic_small_8x8_ascii96_v001.fnt-d3f0e4e71eee41ad8ae266a53e640db1.fontdata"
+
+[deps]
+
+source_file="res://assets/ui/font_ui_gothic_small_8x8_ascii96_v001.fnt"
+dest_files=["res://.godot/imported/font_ui_gothic_small_8x8_ascii96_v001.fnt-d3f0e4e71eee41ad8ae266a53e640db1.fontdata"]
+
+[params]
+
+fallbacks=[]
+compress=true
+scaling_mode=2

@@ -122,7 +122,8 @@ func _update_shake(delta: float) -> void:
 	if _shake_timer > 0.0:
 		_shake_timer -= delta
 		var t = _shake_timer / FeedbackConfig.SCREEN_SHAKE_DURATION if FeedbackConfig.SCREEN_SHAKE_DURATION > 0 else 0.0
-		var intensity = _shake_strength * t
+		# Squared falloff: hits hard on impact, settles quickly
+		var intensity = _shake_strength * t * t
 		_shake_offset = Vector2(
 			randf_range(-1.0, 1.0),
 			randf_range(-1.0, 1.0)
@@ -130,6 +131,8 @@ func _update_shake(delta: float) -> void:
 	else:
 		_shake_offset = Vector2.ZERO
 		_shake_strength = 0.0
+	# Apply to the camera — offset is free since position tracks the player
+	offset = _shake_offset
 
 func _update_screen_effects(delta: float) -> void:
 	# Update chromatic aberration
@@ -164,6 +167,3 @@ func shake(strength: float, duration: float = FeedbackConfig.SCREEN_SHAKE_DURATI
 func trigger_damage_flash() -> void:
 	_chromatic_timer = FeedbackConfig.CHROMATIC_ABERRATION_DURATION
 
-func trigger_hitstop() -> void:
-	# This will be called from main.gd which has access to Engine.time_scale
-	pass

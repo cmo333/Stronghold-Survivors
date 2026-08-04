@@ -613,7 +613,10 @@ func _spawn_upgrade_swirl(target_level: int = 2) -> void:
 	
 	# Auto-remove after effect completes
 	var timer = get_tree().create_timer(1.5)
-	timer.timeout.connect(func(): if is_instance_valid(swirl): swirl.queue_free())
+	timer.timeout.connect(func():
+		if is_instance_valid(swirl):
+			swirl.queue_free()
+	)
 
 func _spawn_upgrade_flash(color: Color = Color(1.0, 1.0, 1.0, 1.0)) -> void:
 	"""Bright flash when upgrade completes"""

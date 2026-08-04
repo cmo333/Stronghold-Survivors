@@ -12,12 +12,13 @@ config_version=5
 
 config/name="Stronghold Survivors"
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.2")
+config/features=PackedStringArray("4.7")
 config/icon="res://icon.svg"
 
 [autoload]
 
 AudioManager="*res://scripts/audio_manager.gd"
+SettingsManager="*res://scripts/settings_manager.gd"
 
 [display]
 

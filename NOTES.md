@@ -10,6 +10,8 @@
 - Build system: grid snap, placement validation, selection, upgrades.
 - Structures: Arrow, Cannon, Tesla, Mine, Ice, Acid, Wall, Gate, Resource Generator, Stronghold Core, Barracks, Armory, Tech Lab, Shrine.
 - Building effects: Barracks fires bolts, Armory boosts player damage, Tech Lab boosts tower fire rate, Shrine heals nearby units.
+- Audio: full procedural SFX + music set (tools/audio/generate_audio.py), menu/battle music, pickup/build/boss sounds, persistent volume settings.
+- Presentation: multi-variant procedural ground tiles, ambient world tint, biome-aware particles that follow the player, working screen shake + hit flashes.
 
 ## Design Lessons (Applied)
 - Readability ramps, never floods.
