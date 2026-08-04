@@ -184,7 +184,7 @@ func _cache_sounds() -> void:
 	_cache_sound("victory", "res://assets/audio/special/victory.wav", "special")
 	_cache_sound("berserk_activate", "res://assets/audio/special/berserk_activate.wav", "special")
 
-func _cache_sound(name: String, path: String, category: String) -> void:
+func _cache_sound(sound_name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
 	if not ResourceLoader.exists(path):
 		# File doesn't exist yet — skip silently to avoid flooding the editor
@@ -192,9 +192,9 @@ func _cache_sound(name: String, path: String, category: String) -> void:
 		return
 	var stream = load(path)
 	if stream != null:
-		_sound_cache[name] = stream
+		_sound_cache[sound_name] = stream
 		if sfx_categories.has(category):
-			sfx_categories[category].append(name)
+			sfx_categories[category].append(sound_name)
 
 # ============================================
 # PUBLIC API

@@ -124,13 +124,13 @@ func _apply_setting(category: String, key: String, value: Variant) -> void:
 	if category == "audio":
 		_apply_audio_setting(key, value)
 		return
-		if category == "graphics":
-			if key == "fullscreen":
-				_apply_fullscreen(bool(value))
-			elif key == "vsync":
-				_apply_vsync(bool(value))
-			elif key == "render_fps_cap":
-				_apply_render_fps_cap(int(value))
+	if category == "graphics":
+		if key == "fullscreen":
+			_apply_fullscreen(bool(value))
+		elif key == "vsync":
+			_apply_vsync(bool(value))
+		elif key == "render_fps_cap":
+			_apply_render_fps_cap(int(value))
 
 func _apply_audio_setting(key: String, value: Variant) -> void:
 	if AudioManager == null:

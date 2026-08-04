@@ -5520,6 +5520,9 @@ func on_enemy_killed(is_elite: bool = false, is_siege: bool = false) -> void:
 			or _current_streak == 50 or _current_streak == 100:
 		_celebrate_streak_milestone(_current_streak)
 
+func _celebrate_streak_milestone(streak: int) -> void:
+	"""Escalating flash/shake/slow-mo punch for streak milestones."""
+	var color := Color(1.0, 1.0, 0.5, 0.11)
 	var shake := 4.0
 	var slow := 0.85
 	if streak >= 100:
