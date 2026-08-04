@@ -197,7 +197,27 @@ func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = INF
 	var is_generator = false
-	
+
+	# Extraction mode: the extractor is the objective, so it outranks everything.
+	# Enemies only peel off to swing at the player or allies that are close
+	# enough to be in the way — otherwise they beeline for the objective.
+	if _game.has_method("has_extractor") and _game.has_extractor():
+		var ext := _game.extractor as Node2D
+		if ext != null and is_instance_valid(ext):
+			var ext_dist = global_position.distance_squared_to(ext.global_position)
+			var interrupt_range = attack_range * 1.6
+			# Something is close enough to be blocking the path — deal with it.
+			if player != null and is_instance_valid(player) \
+					and global_position.distance_squared_to(player.global_position) <= interrupt_range * interrupt_range:
+				return player
+			for ally in get_tree().get_nodes_in_group("allies"):
+				if ally == null or not is_instance_valid(ally):
+					continue
+				if global_position.distance_squared_to(ally.global_position) <= interrupt_range * interrupt_range:
+					return ally
+			var _unused = ext_dist
+			return ext
+
 	# First check: player
 	if player != null and is_instance_valid(player):
 		best = player

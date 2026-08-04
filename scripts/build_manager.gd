@@ -944,6 +944,11 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	if def.is_empty():
 		result["reason"] = "Invalid build"
 		return result
+	# The extractor is a one-per-run objective, not a normal build.
+	if current_id == "resource_generator" and game != null \
+			and game.has_method("has_extractor") and game.has_extractor():
+		result["reason"] = "Extractor already deployed"
+		return result
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
 	result["cost"] = cost

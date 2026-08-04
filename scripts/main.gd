@@ -351,6 +351,46 @@ var _final_boss_spawned = false
 var _final_boss_active = false
 var _run_won = false
 
+# ============================================
+# EXTRACTION MODE
+# The run is a defend-the-objective mission:
+#   SCOUT    0:00-2:00  light pressure, find a defensible spot for the extractor
+#   SIEGE    on placement  difficulty ramps from the moment it lands; enemies
+#                          converge on the extractor and the bar fills
+#   OVERRUN  after the bar fills  endless escalation past what is survivable
+# Difficulty is keyed to time-since-placement, not run time, so placing early
+# costs you pressure instead of buying free safety by stalling.
+# ============================================
+enum ExtractionPhase { SCOUT, SIEGE, OVERRUN }
+
+const EXTRACTION_PLACEMENT_WINDOW := 120.0   # 2:00 to choose a spot
+const EXTRACTION_DURATION := 480.0           # 8:00 of holding to fill the bar
+const EXTRACTION_OVERRUN_PEAK := 1200.0      # 20:00 run time = near-invincible
+const EXTRACTOR_STRUCTURE_ID := "resource_generator"
+
+var extraction_phase: int = ExtractionPhase.SCOUT
+var extractor: Node = null                 # the one placed extractor
+var extractor_placed_at: float = -1.0      # run time when it landed
+var extraction_progress: float = 0.0       # 0..1
+var _extraction_auto_placed := false
+var _extraction_warned_30s := false
+var _extraction_warned_10s := false
+
+func extraction_time_remaining() -> float:
+	"""Seconds left in the placement window (SCOUT phase only)."""
+	if extraction_phase != ExtractionPhase.SCOUT:
+		return 0.0
+	return maxf(0.0, EXTRACTION_PLACEMENT_WINDOW - elapsed)
+
+func siege_elapsed() -> float:
+	"""Seconds since the extractor was placed; 0 during SCOUT."""
+	if extractor_placed_at < 0.0:
+		return 0.0
+	return maxf(0.0, elapsed - extractor_placed_at)
+
+func has_extractor() -> bool:
+	return extractor != null and is_instance_valid(extractor)
+
 # Run modifier multipliers (applied at run start from MetaProgression.pending_modifier).
 var run_threat_mult = 1.0
 var run_player_damage_taken_mult = 1.0
@@ -2097,6 +2137,7 @@ func _process(delta: float) -> void:
 	_update_income_decay_telegraph()
 	_update_runtime_performance(delta)
 	_update_dynamic_caps()
+	_update_extraction(delta)
 	# Update cached enemy list once per frame (used by all towers)
 	_refresh_cached_enemies()
 	_update_flow_field(delta)
@@ -2733,8 +2774,22 @@ func _get_horde_count_multiplier(time_sec: float) -> float:
 	var target = clampf(1.0 + float(minutes) * HORDE_MINUTE_MULT_STEP, 1.0, HORDE_MULT_MAX)
 	if time_sec < EARLY_GAME_HORDE_RAMP_TIME:
 		var t = clampf(time_sec / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
-		return lerpf(1.0, target, t)
-	return target
+		target = lerpf(1.0, target, t)
+	return target * _extraction_count_multiplier()
+
+func _extraction_count_multiplier() -> float:
+	"""Raw body count per phase. Separate from threat (which scales enemy
+	strength) so the siege reads as an actual horde, not just tankier singles."""
+	match extraction_phase:
+		ExtractionPhase.SCOUT:
+			return 0.5
+		ExtractionPhase.SIEGE:
+			# Doubles across the extraction, so the last minute is a wall.
+			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
+			return 1.35 + t * 1.15
+		ExtractionPhase.OVERRUN:
+			return 3.0
+	return 1.0
 
 func _scale_horde_enemy_count(base_count: int, time_sec: float) -> int:
 	var scaled = int(round(float(base_count) * _get_horde_count_multiplier(time_sec)))
@@ -2831,11 +2886,55 @@ func _get_threat_multiplier(time_sec: float) -> float:
 	else:
 		var t = clamp((time_sec - 600.0) / 900.0, 0.0, 1.0)
 		base = (1.0 + t * 1.8) * run_threat_mult
+	base *= _extraction_threat_multiplier(time_sec)
+	base *= _player_power_threat_multiplier()
 	# FFA: fold the per-player difficulty scale into the threat multiplier so it
 	# flows through every difficulty read (spawn_enemy, bosses, minions, splits).
 	if is_ffa():
 		base *= _ffa_difficulty_mult()
 	return base
+
+func _extraction_threat_multiplier(time_sec: float) -> float:
+	"""Difficulty is driven by the extraction phase, not raw run time.
+
+	SCOUT is deliberately quiet so the placement decision is about reading the
+	map, not fighting. The moment the extractor lands the siege ramps hard, and
+	once the bar fills OVERRUN escalates without limit toward the 20:00 mark."""
+	match extraction_phase:
+		ExtractionPhase.SCOUT:
+			return 0.55
+		ExtractionPhase.SIEGE:
+			# 1.0x at placement climbing to ~3.2x by the time the bar fills.
+			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
+			return 1.0 + t * 2.2
+		ExtractionPhase.OVERRUN:
+			# Past the win the gloves come off: by EXTRACTION_OVERRUN_PEAK run
+			# time enemies are effectively unkillable. Survive as long as you can.
+			var o := clampf(time_sec / EXTRACTION_OVERRUN_PEAK, 0.0, 1.0)
+			return 3.2 + pow(o, 2.0) * 9.0
+	return 1.0
+
+func _player_power_threat_multiplier() -> float:
+	"""Scale enemies against how strong the player actually got, not just how
+	long they survived.
+
+	Chest upgrades stack multiplicatively and uncapped, so a purely time-based
+	curve always falls behind a lucky run. Tying a slice of the threat budget to
+	measured player power keeps a hot streak exciting without trivialising the
+	siege. Deliberately sub-linear so good play still feels rewarded."""
+	if player == null or not is_instance_valid(player):
+		return 1.0
+	var power := 1.0
+	if player.has_method("get_power_score"):
+		power = maxf(1.0, float(player.get_power_score()))
+	else:
+		# Fall back to raw damage output relative to the starting baseline.
+		var dmg := float(player.get("damage")) if "damage" in player else 0.0
+		var base_dmg := float(player.get("base_damage")) if "base_damage" in player else 0.0
+		if base_dmg > 0.0 and dmg > 0.0:
+			power = maxf(1.0, dmg / base_dmg)
+	# power 1x -> 1.0, 4x -> ~1.6, 16x -> ~2.4. Grows, but never runaway.
+	return clampf(1.0 + log(power) / log(4.0) * 0.3, 1.0, 3.0)
 
 func _update_dynamic_caps() -> void:
 	var extra = 0
@@ -3588,12 +3687,18 @@ func _update_flow_field(delta: float) -> void:
 	if player == null:
 		return
 	_flow_timer = max(0.0, _flow_timer - delta)
-	var player_cell = _world_to_flow_cell(player.global_position)
-	if player_cell != _flow_player_cell:
+	# Once the extractor is down it becomes the pathing goal, so the horde
+	# converges on the objective and has to chew through whatever maze the
+	# player built around it.
+	var goal_pos := player.global_position
+	if has_extractor():
+		goal_pos = (extractor as Node2D).global_position
+	var goal_cell = _world_to_flow_cell(goal_pos)
+	if goal_cell != _flow_player_cell:
 		_flow_dirty = true
 	if not _flow_dirty or _flow_timer > 0.0:
 		return
-	_rebuild_flow_field(player_cell)
+	_rebuild_flow_field(goal_cell)
 
 func _rebuild_flow_field(player_cell: Vector2i) -> void:
 	_flow_timer = _flow_rebuild_interval_runtime
@@ -5989,6 +6094,123 @@ func spawn_soul_fragment(position: Vector2) -> Node2D:
 	return null  # We don't track individual particles
 
 # Generator management functions
+func _update_extraction(delta: float) -> void:
+	"""Drive the SCOUT -> SIEGE -> OVERRUN state machine."""
+	match extraction_phase:
+		ExtractionPhase.SCOUT:
+			_update_scout_phase()
+		ExtractionPhase.SIEGE:
+			_update_siege_phase(delta)
+		ExtractionPhase.OVERRUN:
+			pass
+	if ui != null and ui.has_method("update_objective"):
+		ui.update_objective(extraction_phase, extraction_time_remaining(), extraction_progress)
+
+func _update_scout_phase() -> void:
+	var remaining := extraction_time_remaining()
+	# Escalating callouts so the deadline never sneaks up on the player.
+	if remaining <= 30.0 and not _extraction_warned_30s:
+		_extraction_warned_30s = true
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("30s TO DEPLOY", Color(1.0, 0.75, 0.2), 34, 2.0)
+	if remaining <= 10.0 and not _extraction_warned_10s:
+		_extraction_warned_10s = true
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("DEPLOYING SOON", Color(1.0, 0.4, 0.2), 34, 2.0)
+	if remaining <= 0.0:
+		_auto_place_extractor()
+
+func _auto_place_extractor() -> void:
+	"""Placement window expired: drop the extractor at the player rather than
+	ending the run on a UI timer."""
+	if has_extractor() or _extraction_auto_placed:
+		return
+	_extraction_auto_placed = true
+	var pos := player.global_position if player != null else Vector2.ZERO
+	var placed := _spawn_extractor_at(pos)
+	if placed == null:
+		# Could not place (blocked); retry next frame from the player's new spot.
+		_extraction_auto_placed = false
+		return
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("AUTO-DEPLOYED", Color(1.0, 0.6, 0.2), 38, 2.2)
+
+func _spawn_extractor_at(pos: Vector2) -> Node:
+	"""Instantiate the extractor directly (used by the auto-place fallback)."""
+	var def: Dictionary = StructureDB.get_def(EXTRACTOR_STRUCTURE_ID)
+	if def.is_empty():
+		return null
+	var scene_path := str(def.get("scene", ""))
+	if scene_path == "" or not ResourceLoader.exists(scene_path):
+		return null
+	var scene: PackedScene = load(scene_path)
+	if scene == null:
+		return null
+	var building: Node2D = scene.instantiate()
+	building.global_position = pos
+	buildings_root.add_child(building)
+	if building.has_method("configure"):
+		building.configure(EXTRACTOR_STRUCTURE_ID, def, 0)
+	mark_flow_field_dirty()
+	return building
+
+func on_extractor_placed(node: Node) -> void:
+	"""Called by resource_generator.gd when the one extractor lands. Starts the
+	siege: difficulty ramps from this moment and enemies converge here."""
+	if has_extractor():
+		return
+	extractor = node
+	extractor_placed_at = elapsed
+	extraction_phase = ExtractionPhase.SIEGE
+	extraction_progress = 0.0
+	mark_flow_field_dirty()
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("EXTRACTION BEGINS", Color(0.4, 1.0, 0.6), 44, 2.6)
+	AudioManager.play_ui_sound("wave_start")
+	if has_method("shake_camera"):
+		shake_camera(9.0, 0.4)
+
+func _update_siege_phase(delta: float) -> void:
+	if not has_extractor():
+		return
+	extraction_progress = clampf(extraction_progress + delta / EXTRACTION_DURATION, 0.0, 1.0)
+	if extraction_progress >= 1.0:
+		_on_extraction_complete()
+
+func _on_extraction_complete() -> void:
+	extraction_phase = ExtractionPhase.OVERRUN
+	if not _run_won:
+		_trigger_victory()
+
+func on_extractor_destroyed() -> void:
+	"""The one thing you were protecting is gone: the run ends immediately.
+
+	Mirrors the player-death sequence (announce, fade, stats screen) rather than
+	killing the player, so the defeat reads as 'you lost the objective'."""
+	if game_over or _run_won:
+		return
+	extractor = null
+	set_build_focus(false, "")
+	_force_close_menus()
+	game_over = true
+	Engine.time_scale = 1.0
+	_set_pause_allowed(false)
+
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("EXTRACTOR LOST", Color(1.0, 0.2, 0.2), 48, 3.0)
+	shake_camera(18.0, 0.9)
+	flash_screen(Color(1.0, 0.1, 0.1, 0.35), 0.5)
+	AudioManager.play_one_shot("game_over", global_position, AudioManager.CRITICAL_PRIORITY)
+	AudioManager.stop_music(2.0)
+	_fade_to_black()
+
+	if not is_inside_tree():
+		return
+	await get_tree().create_timer(2.0).timeout
+	if not is_inside_tree():
+		return
+	_show_game_over_screen()
+
 func register_generator(generator: Node) -> void:
 	if generator == null or not is_instance_valid(generator):
 		return

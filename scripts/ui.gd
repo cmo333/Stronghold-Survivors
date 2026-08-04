@@ -125,6 +125,9 @@ var _vignette_active: bool = false
 
 # Kill streak display
 var _streak_label: Label = null
+var _objective_root: VBoxContainer = null
+var _objective_label: Label = null
+var _objective_bar: ProgressBar = null
 var _streak_fade_tween: Tween = null
 var _last_streak_shown: int = 0
 
@@ -145,6 +148,7 @@ func _ready() -> void:
 	_build_vignette()
 	_build_build_focus_ui()
 	_build_streak_label()
+	_build_objective_ui()
 
 func _setup_upgrade_popup_timer() -> void:
 	if _upgrade_popup_timer != null:
@@ -1192,6 +1196,74 @@ func _start_vignette_pulse() -> void:
 # =========================================================
 # KILL STREAK DISPLAY
 # =========================================================
+
+func _build_objective_ui() -> void:
+	"""Top-centre objective readout: the placement countdown during SCOUT, then
+	the extraction progress bar for the rest of the run. One slot, two states,
+	so the player always knows what the run is asking of them."""
+	_objective_root = VBoxContainer.new()
+	_objective_root.name = "ObjectiveHUD"
+	_objective_root.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_objective_root.offset_left = -190.0
+	_objective_root.offset_right = 190.0
+	_objective_root.offset_top = 8.0
+	_objective_root.offset_bottom = 74.0
+	_objective_root.add_theme_constant_override("separation", 3)
+	_objective_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	$HUD.add_child(_objective_root)
+
+	_objective_label = Label.new()
+	_objective_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_objective_label.add_theme_font_size_override("font_size", 16)
+	_objective_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(_objective_label, 16)
+	_objective_root.add_child(_objective_label)
+
+	_objective_bar = ProgressBar.new()
+	_objective_bar.custom_minimum_size = Vector2(360, 14)
+	_objective_bar.min_value = 0.0
+	_objective_bar.max_value = 1.0
+	_objective_bar.value = 0.0
+	_objective_bar.show_percentage = false
+	_objective_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.05, 0.05, 0.07, 0.85)
+	bg.border_color = Color(0.62, 0.52, 0.36, 0.95)
+	bg.set_border_width_all(2)
+	_objective_bar.add_theme_stylebox_override("background", bg)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(0.35, 0.95, 0.6, 0.95)
+	_objective_bar.add_theme_stylebox_override("fill", fill)
+	_objective_root.add_child(_objective_bar)
+
+func update_objective(phase: int, seconds_left: float, progress: float) -> void:
+	"""phase mirrors main.gd's ExtractionPhase: 0 SCOUT, 1 SIEGE, 2 OVERRUN."""
+	if _objective_label == null or _objective_bar == null:
+		return
+	match phase:
+		0:
+			var secs := int(ceil(maxf(seconds_left, 0.0)))
+			_objective_label.text = "DEPLOY EXTRACTOR  %d:%02d" % [secs / 60, secs % 60]
+			# Calm gold, turning red as the window closes.
+			var urgency := clampf(1.0 - seconds_left / 120.0, 0.0, 1.0)
+			_objective_label.modulate = Color(1.0, 0.9 - urgency * 0.65, 0.35 - urgency * 0.25, 1.0)
+			_objective_bar.value = 1.0 - clampf(seconds_left / 120.0, 0.0, 1.0)
+			_set_objective_fill(Color(0.95, 0.75, 0.25, 0.95))
+		1:
+			_objective_label.text = "EXTRACTING  %d%%" % int(round(progress * 100.0))
+			_objective_label.modulate = Color(0.55, 1.0, 0.7, 1.0)
+			_objective_bar.value = progress
+			_set_objective_fill(Color(0.35, 0.95, 0.6, 0.95))
+		_:
+			_objective_label.text = "OVERRUN — SURVIVE"
+			_objective_label.modulate = Color(1.0, 0.35, 0.3, 1.0)
+			_objective_bar.value = 1.0
+			_set_objective_fill(Color(1.0, 0.3, 0.25, 0.95))
+
+func _set_objective_fill(color: Color) -> void:
+	var fill := _objective_bar.get_theme_stylebox("fill")
+	if fill is StyleBoxFlat:
+		(fill as StyleBoxFlat).bg_color = color
 
 func _build_streak_label() -> void:
 	_streak_label = Label.new()

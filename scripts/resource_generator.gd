@@ -40,6 +40,10 @@ func _ready() -> void:
 	if _game != null and _game.has_method("register_generator"):
 		_game.register_generator(self)
 
+	# Extraction mode: this is the run objective, not just an income building.
+	if _game != null and _game.has_method("on_extractor_placed"):
+		_game.on_extractor_placed(self)
+
 	# Check zone membership after scene tree is ready
 	call_deferred("_check_zone_membership")
 
@@ -166,6 +170,11 @@ func _destroy() -> void:
 	# Notify game
 	if _game != null and _game.has_method("on_generator_destroyed"):
 		_game.on_generator_destroyed(self)
+
+	# Losing the extractor ends the run — it is the whole objective.
+	if _game != null and _game.has_method("on_extractor_destroyed") \
+			and _game.has_method("has_extractor") and _game.extractor == self:
+		_game.on_extractor_destroyed()
 
 	# Track generator lost
 	if _game != null and _game.has_method("track_generator_lost"):
