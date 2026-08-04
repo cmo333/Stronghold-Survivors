@@ -77,13 +77,22 @@ def match_paren(masked, open_idx):
     return -1
 
 
-def find_single_line_lambda(line):
+def find_single_line_lambda(line, depth_at_line_start=0):
     """Return (indent, head, body, tail) if `line` holds a single-line lambda,
     else None.
 
       head = everything up to and including the lambda's ':'
       body = the statement that must move to its own line
-      tail = the remainder (closing parens of the enclosing call, etc.)
+      tail = the remainder (rest of the enclosing argument list, etc.)
+
+    `depth_at_line_start` is the unclosed-paren depth carried in from earlier
+    lines, so a lambda on a continuation line is still known to sit inside a
+    call. Without it, `func(): a(), b)` looks top-level and the body would
+    swallow the remaining arguments.
+
+    A single-line lambda body is one statement. It ends at the first ',' or
+    ')' encountered at the lambda's own nesting level -- a comma there returns
+    to the enclosing argument list, it does not belong to the body.
     """
     masked = strip_strings_and_comments(line)
     for m in LAMBDA_RE.finditer(masked):
@@ -96,14 +105,12 @@ def find_single_line_lambda(line):
         if not cm:
             continue
         colon_abs = close_idx + 1 + cm.end()
-        body_region = masked[colon_abs:]
-        if not body_region.strip():
+        if not masked[colon_abs:].strip():
             continue  # already multi-line
 
-        # Depth of enclosing calls open before the lambda begins.
-        enclosing = masked[:m.start()].count("(") - masked[:m.start()].count(")")
+        prefix = masked[:m.start()]
+        enclosing = depth_at_line_start + prefix.count("(") - prefix.count(")")
 
-        # Walk the body; the lambda ends where the enclosing call closes.
         depth = 0
         end_abs = len(line)
         for i in range(colon_abs, len(masked)):
@@ -115,6 +122,9 @@ def find_single_line_lambda(line):
                     end_abs = i
                     break
                 depth -= 1
+            elif ch == "," and depth == 0 and enclosing > 0:
+                end_abs = i
+                break
 
         body = line[colon_abs:end_abs].strip()
         tail = line[end_abs:].rstrip()
@@ -125,11 +135,18 @@ def find_single_line_lambda(line):
     return None
 
 
-def convert_line(line, indent_unit):
-    found = find_single_line_lambda(line)
+def convert_line(line, indent_unit, depth_at_line_start=0, stmt_indent=None):
+    """`stmt_indent` is the indentation of the line the enclosing statement
+    started on. The trailing fragment (', next_arg)' or ')') must align to it,
+    not to the lambda's own line -- otherwise GDScript raises
+    'Unindent doesn't match the previous indentation level' whenever the
+    lambda sits on a continuation line."""
+    found = find_single_line_lambda(line, depth_at_line_start)
     if not found:
         return None
     indent, head, body, tail = found
+    if stmt_indent is None:
+        stmt_indent = indent
     inner = indent + indent_unit
     # `if cond: stmt` needs its own nested block once expanded.
     im = re.match(r'((?:if|elif|else|for|while)\b[^:]*:)\s*(\S.*)', body)
@@ -137,10 +154,11 @@ def convert_line(line, indent_unit):
         lines = [head, inner + im.group(1), inner + indent_unit + im.group(2)]
     else:
         lines = [head, inner + body]
-    # `tail` already holds the enclosing call's ')' when there is one. A bare
-    # `var f = func(): body()` has no enclosing call and needs no closer.
+    # `tail` already holds the enclosing call's ')' (and any following
+    # arguments) when there is one. A bare `var f = func(): body()` has no
+    # enclosing call and needs no closer.
     if tail.strip():
-        lines.append(indent + tail.strip())
+        lines.append(stmt_indent + tail.strip())
     return lines
 
 
@@ -149,16 +167,24 @@ def process(path, fix, indent_unit):
         original = fh.read()
     lines = original.split("\n")
     out, hits = [], []
+    depth = 0
+    stmt_indent = ""
     for idx, line in enumerate(lines, 1):
-        if "func" not in line:
-            out.append(line)
-            continue
-        converted = convert_line(line, indent_unit)
+        # At depth 0 a new statement begins here; remember its indentation so
+        # continuation lines know what to align their trailing fragment to.
+        if depth == 0 and line.strip():
+            stmt_indent = re.match(r'[\t ]*', line).group(0)
+        converted = convert_line(line, indent_unit, depth, stmt_indent) if "func" in line else None
         if converted:
             hits.append((idx, line.strip()))
             out.extend(converted if fix else [line])
         else:
             out.append(line)
+        # Track unclosed parens so a lambda on a continuation line still knows
+        # it sits inside a call. Rewriting preserves paren balance, so this is
+        # computed from the original line either way.
+        masked = strip_strings_and_comments(line)
+        depth = max(0, depth + masked.count("(") - masked.count(")"))
     if fix and hits:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(out))
