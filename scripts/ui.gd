@@ -1066,7 +1066,9 @@ func update_tech_ledger(levels: Dictionary, defs: Dictionary) -> void:
 		if lvl <= 0:
 			continue
 		entries.append({"id": id, "lvl": lvl})
-	entries.sort_custom(func(a, b): return int(a["lvl"]) > int(b["lvl"]))
+	entries.sort_custom(func(a, b):
+		return int(a["lvl"]) > int(b["lvl"])
+	)
 	var max_slots = 8
 	var shown = 0
 	for entry in entries:

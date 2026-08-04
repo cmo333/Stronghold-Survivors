@@ -412,7 +412,9 @@ func apply_slow(source_id: int, factor: float, duration: float = 0.0) -> void:
 	_update_status_visuals()
 	if duration > 0.0:
 		var timer = get_tree().create_timer(duration)
-		timer.timeout.connect(func(): remove_slow(source_id))
+		timer.timeout.connect(func():
+			remove_slow(source_id)
+		)
 
 func remove_slow(source_id: int) -> void:
 	_slow_sources.erase(source_id)

@@ -497,7 +497,9 @@ func _fire_arc_conduit(target: Node2D) -> void:
 				best = e
 		# If no other target, bounce back to any random one
 		if best == null and in_range.size() > 1:
-			var candidates = in_range.filter(func(e): return e != null and is_instance_valid(e) and e != current_target)
+			var candidates = in_range.filter(func(e):
+				return e != null and is_instance_valid(e) and e != current_target
+			)
 			if not candidates.is_empty():
 				best = candidates[randi() % candidates.size()]
 		# If still no target but original is alive, bounce back to it
@@ -516,7 +518,9 @@ func _fire_arc_conduit(target: Node2D) -> void:
 		return
 	var arc_tween = create_tween()
 	arc_tween.tween_property(_line, "modulate:a", 0.0, 0.12)
-	arc_tween.tween_callback(func(): _line.visible = false)
+	arc_tween.tween_callback(func():
+		_line.visible = false
+	)
 	arc_tween.tween_property(_line, "modulate:a", 0.9, 0.0)
 
 func _generate_arc(from: Vector2, to: Vector2, segments: int) -> Array[Vector2]:
