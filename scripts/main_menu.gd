@@ -182,30 +182,48 @@ func _build_background() -> void:
 # ---- Header ----
 
 func _build_header() -> void:
-	# Brand mark sits above the title: AVARICE presents AGE OF AETHER.
+	# AVARICE is the headline, AGE OF AETHER the subtitle beneath it. Rendered
+	# glow-behind-crisp like the main title so it reads as one lockup rather
+	# than a small credit line floating above the logo.
+	var brand_glow := Label.new()
+	brand_glow.text = "AVARICE"
+	_apply_font(brand_glow, 62, COLOR_TITLE_SHADOW)
+	brand_glow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	brand_glow.anchor_left = 0.5
+	brand_glow.anchor_right = 0.5
+	brand_glow.offset_left = -480.0
+	brand_glow.offset_right = 480.0
+	brand_glow.offset_top = 22.0
+	brand_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	brand_glow.add_theme_constant_override("outline_size", 18)
+	brand_glow.add_theme_color_override("font_outline_color", COLOR_TITLE_SHADOW)
+	add_child(brand_glow)
+
 	var brand := Label.new()
-	brand.text = "A V A R I C E"
-	_apply_font(brand, 15, Color(0.72, 0.62, 0.42))
+	brand.text = "AVARICE"
+	_apply_font(brand, 62, COLOR_TITLE)
 	brand.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	brand.anchor_left = 0.5
 	brand.anchor_right = 0.5
-	brand.offset_left = -460.0
-	brand.offset_right = 460.0
-	brand.offset_top = 16.0
+	brand.offset_left = -480.0
+	brand.offset_right = 480.0
+	brand.offset_top = 20.0
 	brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	brand.add_theme_constant_override("outline_size", 8)
+	brand.add_theme_color_override("font_outline_color", Color(0.12, 0.02, 0.04, 1.0))
 	add_child(brand)
 
 	# Title glow (rendered behind, animated) + crisp title on top.
 	_title_glow = Label.new()
-	_title_glow.text = "AGE OF\nAETHER"
-	_apply_font(_title_glow, 44, COLOR_TITLE_SHADOW)
+	_title_glow.text = "AGE OF AETHER"
+	_apply_font(_title_glow, 30, COLOR_TITLE_SHADOW)
 	_title_glow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title_glow.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_title_glow.anchor_left = 0.5
 	_title_glow.anchor_right = 0.5
 	_title_glow.offset_left = -460.0
 	_title_glow.offset_right = 460.0
-	_title_glow.offset_top = 46.0
+	_title_glow.offset_top = 104.0
 	_title_glow.pivot_offset = Vector2(460, 60)
 	_title_glow.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_title_glow.add_theme_constant_override("outline_size", 14)
@@ -213,15 +231,15 @@ func _build_header() -> void:
 	add_child(_title_glow)
 
 	_title_label = Label.new()
-	_title_label.text = "AGE OF\nAETHER"
-	_apply_font(_title_label, 44, COLOR_TITLE)
+	_title_label.text = "AGE OF AETHER"
+	_apply_font(_title_label, 30, COLOR_TITLE)
 	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title_label.autowrap_mode = TextServer.AUTOWRAP_OFF
 	_title_label.anchor_left = 0.5
 	_title_label.anchor_right = 0.5
 	_title_label.offset_left = -460.0
 	_title_label.offset_right = 460.0
-	_title_label.offset_top = 44.0
+	_title_label.offset_top = 102.0
 	_title_label.pivot_offset = Vector2(460, 60)
 	_title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_title_label.add_theme_constant_override("outline_size", 6)

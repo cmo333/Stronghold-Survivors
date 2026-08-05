@@ -177,9 +177,30 @@ func _btn_box(tex: Texture2D) -> StyleBoxTexture:
 	sb.content_margin_bottom = 10
 	return sb
 
+func _build_interaction_active() -> bool:
+	"""True when the build system has something Escape should dismiss first."""
+	var game = get_tree().get_first_node_in_group("game")
+	if game == null:
+		return false
+	var bm = game.get("build_manager")
+	if bm == null or not is_instance_valid(bm):
+		return false
+	if bool(bm.get("build_mode")):
+		return true
+	var sel = bm.get("selected_building")
+	return sel != null and is_instance_valid(sel)
+
 func _input(event: InputEvent) -> void:
 	if not event.is_action_pressed("pause"):
 		return
+	# Escape now pauses, but it is also the build-mode cancel key. build_manager
+	# polls that action in _process, so it ignores set_input_as_handled() and
+	# both would fire off one press. While the player is mid-placement, let
+	# Escape mean "cancel this" — pausing is the fallback when nothing is
+	# waiting to be dismissed.
+	if not _is_paused and event is InputEventKey and event.physical_keycode == KEY_ESCAPE:
+		if _build_interaction_active():
+			return
 	if _is_paused:
 		if _can_pause:
 			unpause()

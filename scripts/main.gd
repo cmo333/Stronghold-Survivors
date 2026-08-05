@@ -2263,6 +2263,12 @@ func _cycle_zoom(direction: int) -> void:
 	# Smooth zoom transition
 	_zoom_tween = create_tween()
 	_zoom_tween.tween_property(camera, "zoom", target_zoom, 0.3).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	# Tell the camera this is the new rest position, otherwise any later zoom
+	# effect snaps the view back to the value captured at scene load.
+	_zoom_tween.tween_callback(func():
+		if camera != null and camera.has_method("set_base_zoom"):
+			camera.set_base_zoom(target_zoom)
+	)
 
 func _get_meta_progression() -> Node:
 	return get_node_or_null("/root/MetaProgression")
@@ -2370,8 +2376,9 @@ func _get_base_time_scale() -> float:
 		return CHEST_MODAL_TIME_SCALE
 	if is_menu_open():
 		return 1.0
-	if _build_focus_active:
-		return BUILD_FOCUS_TIME_SCALE
+	# Build focus used to slow time. Playtesting said it read as the game
+	# stuttering rather than as a helpful assist, so building now runs at full
+	# speed. (_build_focus_active still drives the build-mode UI highlight.)
 	return 1.0
 
 func _apply_base_time_scale() -> void:
@@ -2811,12 +2818,12 @@ func _extraction_count_multiplier() -> float:
 	strength) so the siege reads as an actual horde, not just tankier singles."""
 	match extraction_phase:
 		ExtractionPhase.SCOUT:
-			return 0.5
+			return 0.4
 		ExtractionPhase.SIEGE:
 			# Same back-loaded shape as threat: a manageable opening that builds
 			# into a wall by the final minutes.
 			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
-			return 1.1 + pow(t, 1.6) * 1.4
+			return 0.85 + pow(t, 1.9) * 1.6
 		ExtractionPhase.OVERRUN:
 			return 3.0
 	return 1.0
@@ -2932,14 +2939,16 @@ func _extraction_threat_multiplier(time_sec: float) -> float:
 	once the bar fills OVERRUN escalates without limit toward the 20:00 mark."""
 	match extraction_phase:
 		ExtractionPhase.SCOUT:
-			return 0.55
+			return 0.4
 		ExtractionPhase.SIEGE:
 			# Back-loaded on purpose. A linear ramp made the first quarter of the
 			# extraction spike hard while the player was still building their
 			# maze; the exponent keeps the opening readable and saves the real
-			# pressure for the back half, ending at the same ~3.2x peak.
+			# pressure for the back half. Playtesting still found the early
+			# siege punishing, so it now opens below parity and takes longer to
+			# bite, while the finale stays at roughly the same peak.
 			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
-			return 1.0 + pow(t, 1.7) * 2.2
+			return 0.75 + pow(t, 2.0) * 2.35
 		ExtractionPhase.OVERRUN:
 			# Past the win the gloves come off: by EXTRACTION_OVERRUN_PEAK run
 			# time enemies are effectively unkillable. Survive as long as you can.
@@ -5819,7 +5828,10 @@ var _original_camera_position: Vector2 = Vector2.ZERO
 var _shake_base_offset: Vector2 = Vector2.ZERO
 
 # Camera zoom levels for gameplay toggle
-const ZOOM_LEVELS: Array[Vector2] = [Vector2(2.0, 2.0), Vector2(1.5, 1.5), Vector2(1.0, 1.0)]
+# The old first step (2.0) was so tight that the camera's follow/lookahead read
+# as the view drifting in and out on its own. Starting at 1.5 keeps enough of
+# the field visible that the framing feels stable.
+const ZOOM_LEVELS: Array[Vector2] = [Vector2(1.5, 1.5), Vector2(1.25, 1.25), Vector2(1.0, 1.0)]
 var _current_zoom_index: int = 0
 var _zoom_tween: Tween = null
 
@@ -6507,7 +6519,8 @@ func _ensure_input_map() -> void:
 	_ensure_action("interact", [KEY_F], [JOY_BUTTON_A])
 	_ensure_action("sell", [KEY_X], [JOY_BUTTON_BACK])
 	_ensure_action("cancel", [KEY_ESCAPE], [JOY_BUTTON_B])
-	_ensure_action("pause", [KEY_P], [JOY_BUTTON_START])
+	# Escape is what players reach for to pause; P stays as a second binding.
+	_ensure_action("pause", [KEY_ESCAPE, KEY_P], [JOY_BUTTON_START])
 	_ensure_action("ui_cancel", [KEY_ESCAPE], [JOY_BUTTON_B])
 	_ensure_action("zoom_in", [KEY_EQUAL], [], [[JOY_AXIS_TRIGGER_RIGHT, 1.0]], 0.5)
 	_ensure_action("zoom_out", [KEY_MINUS], [], [[JOY_AXIS_TRIGGER_LEFT, 1.0]], 0.5)
