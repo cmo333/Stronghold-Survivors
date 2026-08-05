@@ -19,27 +19,52 @@ const DAMAGE_NUMBER_CRIT_RISE = 32.0
 const DAMAGE_NUMBER_DOT_RISE = 12.0
 const DAMAGE_NUMBER_JITTER_X = 10.0
 const DAMAGE_NUMBER_JITTER_Y = 6.0
-const DAMAGE_NUMBER_SCALE_MIN = 0.95
-const DAMAGE_NUMBER_SCALE_MAX = 1.9
-const DAMAGE_NUMBER_CRIT_SCALE_BONUS = 0.55
-const DAMAGE_NUMBER_KILL_SCALE_BONUS = 0.35
-const DAMAGE_NUMBER_ELITE_KILL_SCALE_BONUS = 0.8
-const DAMAGE_NUMBER_SIZE_MULT = 1.65
+
+# Size is carried by the font size rather than by scaling a small glyph up, so
+# the text rasterises crisply instead of turning into a blurry smear.
+const DAMAGE_NUMBER_PX_MIN = 15.0          # weakest hit
+const DAMAGE_NUMBER_PX_MAX = 28.0          # full-health-bar hit
+const DAMAGE_NUMBER_PX_CRIT_BONUS = 9.0
+const DAMAGE_NUMBER_PX_KILL_BONUS = 5.0
+const DAMAGE_NUMBER_PX_ELITE_KILL_BONUS = 6.0
+const DAMAGE_NUMBER_PX_CLAMP_MIN = 14
+const DAMAGE_NUMBER_PX_CLAMP_MAX = 40      # hard cap: giant numbers were the worst offender
+const DAMAGE_NUMBER_PX_STEP = 2            # quantise so the font atlas stays small
+
+# Drop shadow (separate dilated label behind the number)
+const DAMAGE_NUMBER_SHADOW_COLOR = Color(0.02, 0.02, 0.05, 0.72)
+const DAMAGE_NUMBER_SHADOW_OUTLINE_RATIO = 0.11   # of font size
+const DAMAGE_NUMBER_SHADOW_OFFSET_RATIO = 0.15    # of font size
+const DAMAGE_NUMBER_OUTLINE_RATIO = 0.13          # main outline, of font size
+const DAMAGE_NUMBER_OUTLINE_MIN = 2
+const DAMAGE_NUMBER_OUTLINE_MAX = 5
+
+# Per-instance colour variation so two identical numbers never look identical.
+const DAMAGE_NUMBER_HUE_JITTER = 0.045     # +/- fraction of the hue wheel (~16 deg)
+const DAMAGE_NUMBER_SAT_JITTER = 0.09
+const DAMAGE_NUMBER_VAL_JITTER = 0.09
+const DAMAGE_NUMBER_NEUTRAL_TINT_MIN = 0.14  # tint applied to near-white numbers
+const DAMAGE_NUMBER_NEUTRAL_TINT_MAX = 0.34
+const DAMAGE_NUMBER_GRADIENT_TOP = 0.3     # lighten at the top of the glyph
+const DAMAGE_NUMBER_GRADIENT_BOTTOM = 0.22 # darken at the bottom
+
+# Anti-overlap: nudge a new number away from ones spawned moments ago nearby.
+# Separation is driven by how wide each number actually renders, so a 3-digit
+# crit clears more space than a 2-digit chip hit.
+const DAMAGE_NUMBER_DECLUMP_MIN_GAP = 26.0
+const DAMAGE_NUMBER_DECLUMP_PAD = 7.0
+const DAMAGE_NUMBER_DECLUMP_MAX_PUSH = 60.0
+const DAMAGE_NUMBER_DECLUMP_WINDOW_MS = 620
+const DAMAGE_NUMBER_DECLUMP_SAMPLES = 12
 const DAMAGE_NUMBER_POP_START = 0.6
 const DAMAGE_NUMBER_POP_TIME = 0.1
-const DAMAGE_NUMBER_POP_OVERSHOOT = 1.18
 const DAMAGE_NUMBER_CRIT_POP_START = 0.52
 const DAMAGE_NUMBER_CRIT_POP_TIME = 0.14
-const DAMAGE_NUMBER_CRIT_POP_OVERSHOOT = 1.28
 const DAMAGE_NUMBER_DOT_POP_START = 0.72
 const DAMAGE_NUMBER_DOT_POP_TIME = 0.08
-const DAMAGE_NUMBER_DOT_POP_OVERSHOOT = 1.1
-const DAMAGE_NUMBER_FONT_SIZE = 16
-const DAMAGE_NUMBER_CRIT_FONT_SIZE = 24
 const DAMAGE_NUMBER_ROTATION_MAX = 0.06
 
 const DAMAGE_NUMBER_FONT_PATH = "res://assets/ui/pixel_font.ttf"
-const DAMAGE_NUMBER_OUTLINE_SIZE = 2
 const DAMAGE_NUMBER_OUTLINE_COLOR = Color(0.043, 0.043, 0.043, 1.0)
 
 const DAMAGE_COLOR_NORMAL = Color(1.0, 1.0, 1.0)
@@ -54,6 +79,7 @@ const DAMAGE_COLOR_BLEED = Color(0.769, 0.0, 0.169)
 const DAMAGE_COLOR_HOLY = Color(1.0, 0.914, 0.651)
 const DAMAGE_COLOR_SHADOW = Color(0.416, 0.173, 1.0)
 const DAMAGE_COLOR_ARCANE = Color(0.271, 0.949, 1.0)
+const DAMAGE_COLOR_SHIELD = Color(0.616, 0.741, 0.949)
 
 # Time scale accents
 const KILL_SLOW_TIME_SCALE = 0.45
@@ -78,7 +104,8 @@ const DAMAGE_TYPE_COLORS = {
 	"bleed": DAMAGE_COLOR_BLEED,
 	"holy": DAMAGE_COLOR_HOLY,
 	"shadow": DAMAGE_COLOR_SHADOW,
-	"arcane": DAMAGE_COLOR_ARCANE
+	"arcane": DAMAGE_COLOR_ARCANE,
+	"shield": DAMAGE_COLOR_SHIELD
 }
 
 # Crit rules (visual-only)

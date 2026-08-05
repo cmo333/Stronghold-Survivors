@@ -1291,40 +1291,35 @@ const DAMAGE_BADGE_PATHS = {
 	"crit_small": "res://assets/ui_damage/crit_small.png",
 	"crit_large": "res://assets/ui_damage/crit_large.png"
 }
-const DAMAGE_PATTERN_PATHS = {
-	"normal": "res://assets/ui_damage/normal_small.png",
-	"dot": "res://assets/ui_damage/dot_small.png",
-	"crit": "res://assets/ui_damage/crit_small.png"
-}
 const DAMAGE_LABEL_SHADER_CODE = """
 shader_type canvas_item;
 
-uniform sampler2D pattern_tex : source_color;
-uniform vec4 primary_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);
-uniform vec4 secondary_color : source_color = vec4(0.6, 0.6, 0.6, 1.0);
-uniform float pattern_scale = 2.0;
-uniform float contrast = 1.12;
-uniform float seed = 0.0;
-uniform float shade_jitter = 0.0;
+uniform vec4 top_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);
+uniform vec4 bottom_color : source_color = vec4(0.6, 0.6, 0.6, 1.0);
 
 void fragment() {
 	vec4 src = COLOR;
-	// Sample in LOCAL UV space (not SCREEN_UV) so each number renders its own
-	// self-contained gradient. This stops overlapping numbers from painting the
-	// same screen-space fill and merging into one unreadable color blob.
-	vec2 uv = fract((UV + vec2(seed * 0.017, seed * 0.029)) * pattern_scale);
-	vec3 pat = texture(pattern_tex, uv).rgb;
-	float lum = dot(pat, vec3(0.299, 0.587, 0.114));
-	lum = clamp((lum - 0.5) * contrast + 0.5, 0.0, 1.0);
-	vec3 fill = mix(secondary_color.rgb, primary_color.rgb, lum);
-	// Per-number brightness nudge so adjacent same-type numbers look distinct.
-	fill = clamp(fill * (1.0 + shade_jitter), 0.0, 1.0);
-	COLOR = vec4(fill, src.a);
+	// A Label draws its outline and its glyph in the same pass, distinguished only
+	// by the incoming vertex colour: near-black for the outline, white for the
+	// glyph. Recolouring every fragment (the old behaviour) painted the fill over
+	// the outline too, so numbers lost their dark border and neighbours melted
+	// into one blurry blob. Split on luminance and only touch the glyph.
+	float lum = dot(src.rgb, vec3(0.299, 0.587, 0.114));
+	float glyph = smoothstep(0.35, 0.62, lum);
+	// Vertical gradient in local UV space: bright at the top, darker at the base.
+	// Local (not screen) space keeps every number self-contained.
+	vec3 fill = mix(top_color.rgb, bottom_color.rgb, clamp(UV.y, 0.0, 1.0));
+	COLOR = vec4(mix(src.rgb, fill, glyph), src.a);
 }
 """
 var _damage_badge_cache: Dictionary = {}
-var _damage_pattern_cache: Dictionary = {}
 var _damage_label_shader: Shader = null
+# Ring buffer of recent damage-number spawn spots, used to spread out numbers
+# that would otherwise land on top of each other during a swarm.
+var _damage_spot_pos: PackedVector2Array = PackedVector2Array()
+var _damage_spot_radius: PackedFloat32Array = PackedFloat32Array()
+var _damage_spot_ms: PackedInt32Array = PackedInt32Array()
+var _damage_spot_head: int = 0
 
 func _validate_fx_defs() -> void:
 	var invalid_kinds: Array[String] = []
@@ -4323,23 +4318,27 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	if not _consume_damage_number_budget():
 		return
 
+	var health_ratio = 0.0
+	if target_max > 0.0:
+		health_ratio = clamp(amount / target_max, 0.0, 1.0)
+	var font_px = _damage_number_font_px(health_ratio, is_crit, is_kill, is_elite)
+
 	var label = Label.new()
 	label.text = str(int(round(amount)))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.z_index = 30
-	var text_color = _apply_damage_label_style(label, is_crit, is_kill, is_elite, damage_type)
+	var text_color = _apply_damage_label_style(label, font_px, is_crit, is_kill, is_elite, damage_type)
 	label.size = label.get_minimum_size()
 	label.position = -label.size * 0.5
 	var badge_key = _damage_badge_key(is_crit, is_kill, is_elite, damage_type)
-	var pattern_key = _damage_pattern_key(is_crit, is_kill, is_elite, damage_type)
-	_apply_damage_label_texture_style(label, pattern_key, text_color)
+	_apply_damage_label_texture_style(label, text_color)
 
 	var container = Node2D.new()
 	var jitter = Vector2(
 		randf_range(-FeedbackConfig.DAMAGE_NUMBER_JITTER_X, FeedbackConfig.DAMAGE_NUMBER_JITTER_X),
 		randf_range(-FeedbackConfig.DAMAGE_NUMBER_JITTER_Y, FeedbackConfig.DAMAGE_NUMBER_JITTER_Y)
 	)
-	container.position = position + jitter
+	container.position = _declump_damage_position(position + jitter, _damage_spot_radius_for(label))
 	container.z_index = 30
 	fx_root.add_child(container)
 	_add_damage_badge(container, label, badge_key)
@@ -4347,21 +4346,13 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 	# Skipped under heavy load to respect the FX budget.
 	var shadow: Label = null
 	if _adaptive_perf_scale >= 0.72:
-		shadow = _make_damage_shadow(label)
+		shadow = _make_damage_shadow(label, font_px)
 		if shadow != null:
 			container.add_child(shadow)
 	container.add_child(label)
 
-	var health_ratio = 0.0
-	if target_max > 0.0:
-		health_ratio = clamp(amount / target_max, 0.0, 1.0)
-	var base_scale = lerp(FeedbackConfig.DAMAGE_NUMBER_SCALE_MIN, FeedbackConfig.DAMAGE_NUMBER_SCALE_MAX, health_ratio)
-	if is_elite and is_kill:
-		base_scale += FeedbackConfig.DAMAGE_NUMBER_ELITE_KILL_SCALE_BONUS
-	if is_crit:
-		base_scale += FeedbackConfig.DAMAGE_NUMBER_CRIT_SCALE_BONUS
-	if is_kill:
-		base_scale += FeedbackConfig.DAMAGE_NUMBER_KILL_SCALE_BONUS
+	# Size now lives in the font size, so the container only carries the pop.
+	var base_scale = 1.0
 
 	var rise = FeedbackConfig.DAMAGE_NUMBER_RISE
 	var lifetime = FeedbackConfig.DAMAGE_NUMBER_LIFETIME
@@ -4391,7 +4382,21 @@ func spawn_damage_number(amount: float, position: Vector2, target_max: float = 0
 		tween.parallel().tween_property(container, "rotation", 0.0, lifetime).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	tween.tween_callback(container.queue_free)
 
-func _make_damage_shadow(main_label: Label) -> Label:
+func _damage_number_font_px(health_ratio: float, is_crit: bool, is_kill: bool, is_elite: bool) -> int:
+	var px = lerp(FeedbackConfig.DAMAGE_NUMBER_PX_MIN, FeedbackConfig.DAMAGE_NUMBER_PX_MAX, health_ratio)
+	if is_crit:
+		px += FeedbackConfig.DAMAGE_NUMBER_PX_CRIT_BONUS
+	if is_kill:
+		px += FeedbackConfig.DAMAGE_NUMBER_PX_KILL_BONUS
+	if is_elite and is_kill:
+		px += FeedbackConfig.DAMAGE_NUMBER_PX_ELITE_KILL_BONUS
+	# Quantise so a handful of font sizes cover every hit instead of hundreds of
+	# one-off rasterisations bloating the font atlas.
+	var step = float(FeedbackConfig.DAMAGE_NUMBER_PX_STEP)
+	px = round(px / step) * step
+	return int(clamp(px, FeedbackConfig.DAMAGE_NUMBER_PX_CLAMP_MIN, FeedbackConfig.DAMAGE_NUMBER_PX_CLAMP_MAX))
+
+func _make_damage_shadow(main_label: Label, font_px: int) -> Label:
 	if main_label == null:
 		return null
 	var shadow := Label.new()
@@ -4400,12 +4405,87 @@ func _make_damage_shadow(main_label: Label) -> Label:
 	shadow.z_index = 29
 	if _damage_font != null:
 		shadow.add_theme_font_override("font", _damage_font)
-	shadow.add_theme_font_size_override("font_size", main_label.get_theme_font_size("font_size"))
-	shadow.add_theme_color_override("font_color", Color(0.02, 0.02, 0.04, 0.55))
-	shadow.add_theme_constant_override("outline_size", 0)
+	shadow.add_theme_font_size_override("font_size", font_px)
+	shadow.add_theme_color_override("font_color", FeedbackConfig.DAMAGE_NUMBER_SHADOW_COLOR)
+	shadow.add_theme_color_override("font_outline_color", FeedbackConfig.DAMAGE_NUMBER_SHADOW_COLOR)
+	# The shadow carries its own outline so it reads as a dilated dark backing
+	# rather than a thin duplicate hiding behind the glyph.
+	shadow.add_theme_constant_override("outline_size", maxi(2, int(round(float(font_px) * FeedbackConfig.DAMAGE_NUMBER_SHADOW_OUTLINE_RATIO))))
+	shadow.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	shadow.size = main_label.size
-	shadow.position = main_label.position + Vector2(2, 2)
+	var drop = maxf(2.0, float(font_px) * FeedbackConfig.DAMAGE_NUMBER_SHADOW_OFFSET_RATIO)
+	shadow.position = main_label.position + Vector2(drop * 0.45, drop)
 	return shadow
+
+func _declump_damage_position(base: Vector2, own_radius: float) -> Vector2:
+	# Push a new number off any number spawned in the last fraction of a second
+	# nearby, so swarm damage reads as separate values instead of one smear.
+	var count = _damage_spot_pos.size()
+	if count == 0:
+		_seed_damage_spots()
+		count = _damage_spot_pos.size()
+	var now_ms = Time.get_ticks_msec()
+	var pos = base
+	# Two relaxation passes: a single pass can push a number off one neighbour and
+	# straight onto another it had already cleared.
+	for _pass in range(2):
+		var moved = false
+		for i in range(count):
+			if now_ms - _damage_spot_ms[i] > FeedbackConfig.DAMAGE_NUMBER_DECLUMP_WINDOW_MS:
+				continue
+			var gap = maxf(own_radius + _damage_spot_radius[i], FeedbackConfig.DAMAGE_NUMBER_DECLUMP_MIN_GAP)
+			var offset = pos - _damage_spot_pos[i]
+			var dist_sq = offset.length_squared()
+			if dist_sq >= gap * gap:
+				continue
+			var dir = offset.normalized() if dist_sq > 0.01 else Vector2.from_angle(randf() * TAU)
+			pos += dir * (gap - sqrt(dist_sq))
+			moved = true
+		if not moved:
+			break
+	# Cap the push so a number never drifts away from the enemy that took the hit.
+	var total = pos - base
+	if total.length() > FeedbackConfig.DAMAGE_NUMBER_DECLUMP_MAX_PUSH:
+		pos = base + total.normalized() * FeedbackConfig.DAMAGE_NUMBER_DECLUMP_MAX_PUSH
+	_damage_spot_pos[_damage_spot_head] = pos
+	_damage_spot_radius[_damage_spot_head] = own_radius
+	_damage_spot_ms[_damage_spot_head] = now_ms
+	_damage_spot_head = (_damage_spot_head + 1) % count
+	return pos
+
+func _damage_spot_radius_for(label: Label) -> float:
+	if label == null:
+		return FeedbackConfig.DAMAGE_NUMBER_DECLUMP_MIN_GAP * 0.5
+	return maxf(label.size.x, label.size.y) * 0.5 + FeedbackConfig.DAMAGE_NUMBER_DECLUMP_PAD
+
+func _seed_damage_spots() -> void:
+	var samples = FeedbackConfig.DAMAGE_NUMBER_DECLUMP_SAMPLES
+	_damage_spot_pos.resize(samples)
+	_damage_spot_radius.resize(samples)
+	_damage_spot_ms.resize(samples)
+	_damage_spot_head = 0
+	for i in range(samples):
+		_damage_spot_pos[i] = Vector2.ZERO
+		_damage_spot_radius[i] = 0.0
+		# Far enough in the past that a fresh buffer never repels the first spawns.
+		_damage_spot_ms[i] = -FeedbackConfig.DAMAGE_NUMBER_DECLUMP_WINDOW_MS * 4
+
+func _vary_damage_color(base: Color) -> Color:
+	# Two hits for the same amount should never render the same colour - the
+	# variation is what lets the eye separate stacked numbers.
+	var h = base.h
+	var s = base.s
+	var v = base.v
+	if s < 0.12:
+		# Near-white (normal damage): give it a faint random tint instead of a
+		# hue shift, which does nothing on an unsaturated colour.
+		h = randf()
+		s = randf_range(FeedbackConfig.DAMAGE_NUMBER_NEUTRAL_TINT_MIN, FeedbackConfig.DAMAGE_NUMBER_NEUTRAL_TINT_MAX)
+	else:
+		h = fposmod(h + randf_range(-FeedbackConfig.DAMAGE_NUMBER_HUE_JITTER, FeedbackConfig.DAMAGE_NUMBER_HUE_JITTER), 1.0)
+		s = clampf(s + randf_range(-FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER, FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER), 0.0, 1.0)
+	v = clampf(v + randf_range(-FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER, FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER), 0.35, 1.0)
+	return Color.from_hsv(h, s, v, base.a)
 
 func _load_damage_font() -> void:
 	var path = FeedbackConfig.DAMAGE_NUMBER_FONT_PATH
@@ -4429,12 +4509,7 @@ func _prepare_damage_badges() -> void:
 		var tex = _load_damage_badge(path)
 		if tex != null:
 			_damage_badge_cache[key] = tex
-	_damage_pattern_cache.clear()
-	for key in DAMAGE_PATTERN_PATHS.keys():
-		var pattern_path = str(DAMAGE_PATTERN_PATHS[key])
-		var pattern_tex = _load_damage_pattern(pattern_path)
-		if pattern_tex != null:
-			_damage_pattern_cache[key] = pattern_tex
+	_seed_damage_spots()
 	if _damage_label_shader == null:
 		_damage_label_shader = Shader.new()
 		_damage_label_shader.code = DAMAGE_LABEL_SHADER_CODE
@@ -4465,36 +4540,6 @@ func _load_damage_badge(path: String) -> Texture2D:
 			img.set_pixel(x, y, c)
 	return ImageTexture.create_from_image(img)
 
-func _load_damage_pattern(path: String) -> Texture2D:
-	if path == "" or not ResourceLoader.exists(path):
-		return null
-	var raw = load(path)
-	if not (raw is Texture2D):
-		return null
-	var src = raw as Texture2D
-	var img = src.get_image()
-	if img == null:
-		return src
-	img.convert(Image.FORMAT_RGBA8)
-	# Blur out literal "888" glyphs into a reusable color texture.
-	img.resize(24, 24, Image.INTERPOLATE_BILINEAR)
-	img.resize(96, 96, Image.INTERPOLATE_BILINEAR)
-	var w = img.get_width()
-	var h = img.get_height()
-	for y in range(h):
-		for x in range(w):
-			var c = img.get_pixel(x, y)
-			var lum = c.r * 0.299 + c.g * 0.587 + c.b * 0.114
-			var sat = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b))
-			if sat < 0.08:
-				var neutral = clampf(lum * 0.9 + 0.05, 0.0, 1.0)
-				c.r = neutral
-				c.g = neutral
-				c.b = neutral
-			c.a = 1.0
-			img.set_pixel(x, y, c)
-	return ImageTexture.create_from_image(img)
-
 func _damage_badge_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> String:
 	var large = is_crit or is_kill or (is_elite and is_kill)
 	if is_crit:
@@ -4504,41 +4549,17 @@ func _damage_badge_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type
 		return "dot_large" if large else "dot_small"
 	return "normal_large" if large else "normal_small"
 
-func _damage_pattern_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> String:
-	if is_crit or (is_elite and is_kill):
-		return "crit"
-	var lower_type = damage_type.to_lower()
-	if lower_type in ["dot", "poison", "acid", "bleed"]:
-		return "dot"
-	return "normal"
-
-func _apply_damage_label_texture_style(label: Label, pattern_key: String, base_color: Color) -> void:
-	if label == null:
-		return
-	if _damage_label_shader == null:
-		return
-	var raw_pattern = _damage_pattern_cache.get(pattern_key, null)
-	if not (raw_pattern is Texture2D):
+func _apply_damage_label_texture_style(label: Label, base_color: Color) -> void:
+	if label == null or _damage_label_shader == null:
 		return
 	var mat := ShaderMaterial.new()
 	mat.shader = _damage_label_shader
-	mat.set_shader_parameter("pattern_tex", raw_pattern)
-	mat.set_shader_parameter("primary_color", base_color.lightened(0.28))
-	mat.set_shader_parameter("secondary_color", base_color.darkened(0.38))
-	var pattern_scale = 2.0
-	var pattern_contrast = 1.12
-	if pattern_key == "crit":
-		pattern_scale = 2.4
-		pattern_contrast = 1.2
-	elif pattern_key == "dot":
-		pattern_scale = 1.8
-		pattern_contrast = 1.08
-	mat.set_shader_parameter("pattern_scale", pattern_scale)
-	mat.set_shader_parameter("contrast", pattern_contrast)
-	mat.set_shader_parameter("seed", randf() * 31.0)
-	mat.set_shader_parameter("shade_jitter", randf_range(-0.12, 0.12))
+	mat.set_shader_parameter("top_color", base_color.lightened(FeedbackConfig.DAMAGE_NUMBER_GRADIENT_TOP))
+	mat.set_shader_parameter("bottom_color", base_color.darkened(FeedbackConfig.DAMAGE_NUMBER_GRADIENT_BOTTOM))
 	label.material = mat
 	label.self_modulate = Color.WHITE
+	# The shader keys off the incoming vertex colour to tell glyph from outline,
+	# so the glyph must be drawn white and the outline near-black.
 	label.add_theme_color_override("font_color", Color.WHITE)
 
 func _add_damage_badge(container: Node2D, label: Label, key: String) -> void:
@@ -4560,14 +4581,18 @@ func _add_damage_badge(container: Node2D, label: Label, key: String) -> void:
 	sprite.z_index = 29
 	container.add_child(sprite)
 
-func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> Color:
+func _apply_damage_label_style(label: Label, font_px: int, is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> Color:
 	if label == null:
 		return Color.WHITE
 	if _damage_font != null:
 		label.add_theme_font_override("font", _damage_font)
-	label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_FONT_SIZE)
+	label.add_theme_font_size_override("font_size", font_px)
 	label.add_theme_color_override("font_outline_color", FeedbackConfig.DAMAGE_NUMBER_OUTLINE_COLOR)
-	label.add_theme_constant_override("outline_size", FeedbackConfig.DAMAGE_NUMBER_OUTLINE_SIZE)
+	# Scale the outline with the glyph: a fixed 2px border vanishes on a 40px
+	# number, which is exactly where separation matters most.
+	var outline = int(round(float(font_px) * FeedbackConfig.DAMAGE_NUMBER_OUTLINE_RATIO))
+	outline = clampi(outline, FeedbackConfig.DAMAGE_NUMBER_OUTLINE_MIN, FeedbackConfig.DAMAGE_NUMBER_OUTLINE_MAX)
+	label.add_theme_constant_override("outline_size", outline)
 	label.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 
 	var color = FeedbackConfig.DAMAGE_TYPE_COLORS.get(damage_type, FeedbackConfig.DAMAGE_COLOR_NORMAL)
@@ -4575,10 +4600,9 @@ func _apply_damage_label_style(label: Label, is_crit: bool, is_kill: bool, is_el
 		color = FeedbackConfig.DAMAGE_COLOR_KILL
 	if is_crit:
 		color = FeedbackConfig.DAMAGE_COLOR_CRIT
-		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
 	if is_elite and is_kill:
 		color = FeedbackConfig.DAMAGE_COLOR_ELITE_KILL
-		label.add_theme_font_size_override("font_size", FeedbackConfig.DAMAGE_NUMBER_CRIT_FONT_SIZE)
+	color = _vary_damage_color(color)
 	label.add_theme_color_override("font_color", color)
 	return color
 
