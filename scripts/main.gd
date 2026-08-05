@@ -370,7 +370,7 @@ var _run_won = false
 enum ExtractionPhase { SCOUT, SIEGE, OVERRUN }
 
 const EXTRACTION_PLACEMENT_WINDOW := 120.0   # 2:00 to choose a spot
-const EXTRACTION_DURATION := 480.0           # 8:00 of holding to fill the bar
+const EXTRACTION_DURATION := 600.0           # 10:00 of holding to fill the bar
 const EXTRACTION_OVERRUN_PEAK := 1200.0      # 20:00 run time = near-invincible
 const EXTRACTOR_STRUCTURE_ID := "resource_generator"
 
@@ -1766,7 +1766,7 @@ func _ready() -> void:
 			ui.show_start(false)
 	elif ui != null and ui.has_method("show_start"):
 		if ui.has_method("set_start_text"):
-			ui.set_start_text("AGE OF AETHER", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
+			ui.set_start_text("AVARICE: AGE OF AETHER", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
 		if ui.has_method("set_start_options"):
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
@@ -2326,6 +2326,10 @@ func _start_game() -> void:
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("SURVIVE", Color(1.0, 1.0, 1.0), 48, 2.4)
 	_refresh_build_palette()
+	# Teach the objective up front — the run is unwinnable if the player never
+	# works out that the extractor is on build slot 4.
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("PRESS 4 TO PLACE YOUR EXTRACTOR", Color(1.0, 0.9, 0.4), 30, 4.0)
 	# Audio: Wave/Game start sound
 	AudioManager.play_ui_sound("wave_start")
 
@@ -2809,9 +2813,10 @@ func _extraction_count_multiplier() -> float:
 		ExtractionPhase.SCOUT:
 			return 0.5
 		ExtractionPhase.SIEGE:
-			# Doubles across the extraction, so the last minute is a wall.
+			# Same back-loaded shape as threat: a manageable opening that builds
+			# into a wall by the final minutes.
 			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
-			return 1.35 + t * 1.15
+			return 1.1 + pow(t, 1.6) * 1.4
 		ExtractionPhase.OVERRUN:
 			return 3.0
 	return 1.0
@@ -2929,9 +2934,12 @@ func _extraction_threat_multiplier(time_sec: float) -> float:
 		ExtractionPhase.SCOUT:
 			return 0.55
 		ExtractionPhase.SIEGE:
-			# 1.0x at placement climbing to ~3.2x by the time the bar fills.
+			# Back-loaded on purpose. A linear ramp made the first quarter of the
+			# extraction spike hard while the player was still building their
+			# maze; the exponent keeps the opening readable and saves the real
+			# pressure for the back half, ending at the same ~3.2x peak.
 			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
-			return 1.0 + t * 2.2
+			return 1.0 + pow(t, 1.7) * 2.2
 		ExtractionPhase.OVERRUN:
 			# Past the win the gloves come off: by EXTRACTION_OVERRUN_PEAK run
 			# time enemies are effectively unkillable. Survive as long as you can.

@@ -1243,7 +1243,9 @@ func update_objective(phase: int, seconds_left: float, progress: float) -> void:
 	match phase:
 		0:
 			var secs := int(ceil(maxf(seconds_left, 0.0)))
-			_objective_label.text = "DEPLOY EXTRACTOR  %d:%02d" % [secs / 60, secs % 60]
+			# Spell out the key. Without this the objective is unactionable:
+			# players saw a countdown with no idea what to press.
+			_objective_label.text = "PRESS 4 TO PLACE EXTRACTOR  —  %d:%02d" % [secs / 60, secs % 60]
 			# Calm gold, turning red as the window closes.
 			var urgency := clampf(1.0 - seconds_left / 120.0, 0.0, 1.0)
 			_objective_label.modulate = Color(1.0, 0.9 - urgency * 0.65, 0.35 - urgency * 0.25, 1.0)

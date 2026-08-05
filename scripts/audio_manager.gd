@@ -5,7 +5,19 @@ extends Node
 # Handles SFX, Music, UI sounds with spatial audio
 # ============================================
 
-const MAX_SFX_CHANNELS = 32
+# 32 simultaneous voices turns a big horde into a wall of noise. Combat sounds
+# are also rate-limited and the whole mix ducks as more voices pile on, so a
+# 200-enemy wave stays readable instead of painful.
+const MAX_SFX_CHANNELS = 16
+
+# At most this many combat impacts/deaths may start within the window. Past
+# that the hits still land, they just stop each demanding their own voice.
+const COMBAT_SOUND_BUDGET := 4
+const COMBAT_BUDGET_WINDOW_MS := 130
+# Voices beyond this start attenuating so 12 overlapping sounds are not 12x
+# as loud as one. -3dB per doubling, floored so nothing vanishes entirely.
+const CROWD_DUCK_START := 4
+const CROWD_DUCK_FLOOR_DB := -11.0
 const DEFAULT_PRIORITY = 0
 const HIGH_PRIORITY = 10
 const CRITICAL_PRIORITY = 20
@@ -18,7 +30,9 @@ var ui_bus: int = 3
 
 # Volume settings (0.0 to 1.0)
 var master_volume: float = 1.0
-var sfx_volume: float = 0.8
+var sfx_volume: float = 0.62
+var _combat_window_start: int = 0
+var _combat_window_count: int = 0
 var music_volume: float = 0.6
 var ui_volume: float = 0.9
 
@@ -240,12 +254,18 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 		return
 	
 	player.stream = stream
+	# Critical sounds (boss cues, death, jackpot) stay at full level; everything
+	# else ducks as the mix gets crowded.
+	if priority < CRITICAL_PRIORITY:
+		volume_db += _crowd_duck_db()
 	player.volume_db = volume_db
-	
+	# Slight pitch variation stops rapid repeats sounding like a machine gun.
+	player.pitch_scale = randf_range(0.95, 1.05)
+
 	if position != Vector2.ZERO:
 		player.global_position = position
 		player.attenuation = 1.5
-	
+
 	player.play()
 	
 	# Track active SFX
@@ -285,15 +305,43 @@ func play_weapon_sound(weapon_type: String, position: Vector2) -> void:
 			play_one_shot("arrow_shoot", position, DEFAULT_PRIORITY)
 
 func play_impact_sound(is_crit: bool = false, is_death: bool = false, position: Vector2 = Vector2.ZERO) -> void:
-	"""Play impact sound based on hit type"""
+	"""Play impact sound based on hit type.
+
+	Combat audio is the main source of overwhelm: with a large horde every hit
+	and every death wants a voice. Crits still always play (they are meaningful
+	feedback); ordinary hits and deaths draw from a small shared budget."""
 	if not audio_enabled:
 		return
-	if is_death:
-		play_random_from_category("impact", position, DEFAULT_PRIORITY)
-	elif is_crit:
+	if is_crit:
 		play_one_shot("crit_hit", position, HIGH_PRIORITY)
-	else:
-		play_random_from_category("impact", position, DEFAULT_PRIORITY)
+		return
+	if not _claim_combat_budget():
+		return
+	play_random_from_category("impact", position, DEFAULT_PRIORITY)
+
+func _claim_combat_budget() -> bool:
+	"""True if a combat sound may start now. Sliding window, cheap to run."""
+	var now := Time.get_ticks_msec()
+	if now - _combat_window_start > COMBAT_BUDGET_WINDOW_MS:
+		_combat_window_start = now
+		_combat_window_count = 0
+	if _combat_window_count >= COMBAT_SOUND_BUDGET:
+		return false
+	_combat_window_count += 1
+	return true
+
+func _crowd_duck_db() -> float:
+	"""Attenuate as concurrent voices pile up so overlapping sounds compress
+	instead of summing into clipping-loud mush."""
+	var active := 0
+	for p in _sfx_pool:
+		if p.playing:
+			active += 1
+	if active <= CROWD_DUCK_START:
+		return 0.0
+	var over := float(active - CROWD_DUCK_START)
+	# -3dB per doubling of excess voices, floored.
+	return maxf(CROWD_DUCK_FLOOR_DB, -3.0 * (log(1.0 + over) / log(2.0)))
 
 func play_ui_sound(sound_name: String) -> void:
 	"""Play UI sound (non-spatial)"""

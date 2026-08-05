@@ -182,6 +182,19 @@ func _build_background() -> void:
 # ---- Header ----
 
 func _build_header() -> void:
+	# Brand mark sits above the title: AVARICE presents AGE OF AETHER.
+	var brand := Label.new()
+	brand.text = "A V A R I C E"
+	_apply_font(brand, 15, Color(0.72, 0.62, 0.42))
+	brand.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	brand.anchor_left = 0.5
+	brand.anchor_right = 0.5
+	brand.offset_left = -460.0
+	brand.offset_right = 460.0
+	brand.offset_top = 16.0
+	brand.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(brand)
+
 	# Title glow (rendered behind, animated) + crisp title on top.
 	_title_glow = Label.new()
 	_title_glow.text = "AGE OF\nAETHER"

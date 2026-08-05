@@ -4,11 +4,13 @@ signal settings_changed(category: String, key: String, value: Variant)
 signal settings_loaded
 
 const SAVE_PATH := "user://settings.json"
+# Bump when a default changes in a way existing saves should adopt.
+const SETTINGS_VERSION := 2
 
 const DEFAULT_SETTINGS := {
 	"audio": {
 		"master_volume": 1.0,
-		"sfx_volume": 0.8,
+		"sfx_volume": 0.62,
 		"music_volume": 0.6,
 		"ui_volume": 0.9
 	},
@@ -16,7 +18,7 @@ const DEFAULT_SETTINGS := {
 		"fullscreen": false,
 		"vsync": true,
 		"quality": "high",
-		"render_fps_cap": 30
+		"render_fps_cap": 60
 	},
 	"gameplay": {
 		"screenshake_intensity": 1.0,
@@ -104,6 +106,27 @@ func _load_from_disk() -> void:
 		return
 	if json.data is Dictionary:
 		_settings = _merge_defaults(json.data, DEFAULT_SETTINGS)
+		_migrate_settings()
+
+func _migrate_settings() -> void:
+	"""Move existing saves onto newer defaults.
+
+	Saved values win over defaults, so anyone who already played would keep the
+	old ones forever. Each migration only rewrites a value the player never
+	deliberately changed (i.e. it still equals the previous default), so real
+	preferences are preserved."""
+	var version := int(_settings.get("version", 1))
+	if version >= SETTINGS_VERSION:
+		return
+	if version < 2:
+		# 30fps read as lag regardless of enemy count; 0.8 SFX was overwhelming
+		# in big fights even after combat rate-limiting went in.
+		if is_equal_approx(float(get_setting("graphics", "render_fps_cap", 60)), 30.0):
+			_settings["graphics"]["render_fps_cap"] = 60
+		if is_equal_approx(float(get_setting("audio", "sfx_volume", 0.62)), 0.8):
+			_settings["audio"]["sfx_volume"] = 0.62
+	_settings["version"] = SETTINGS_VERSION
+	_save_to_disk()
 
 func _save_to_disk() -> void:
 	var file = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -191,7 +214,7 @@ func get_volume(bus: String) -> float:
 		"master":
 			return get_master_volume()
 		"sfx":
-			return float(get_setting("audio", "sfx_volume", 0.8))
+			return float(get_setting("audio", "sfx_volume", 0.62))
 		"music":
 			return float(get_setting("audio", "music_volume", 0.6))
 		"ui":
@@ -220,7 +243,7 @@ func get_quality() -> String:
 	return str(get_setting("graphics", "quality", "high"))
 
 func get_render_fps_cap() -> int:
-	return clampi(int(get_setting("graphics", "render_fps_cap", 30)), 30, 240)
+	return clampi(int(get_setting("graphics", "render_fps_cap", 60)), 30, 240)
 
 func set_render_fps_cap(cap: int) -> void:
 	set_setting("graphics", "render_fps_cap", clampi(cap, 30, 240))
