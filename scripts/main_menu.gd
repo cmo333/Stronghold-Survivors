@@ -184,7 +184,7 @@ func _build_background() -> void:
 func _build_header() -> void:
 	# Title glow (rendered behind, animated) + crisp title on top.
 	_title_glow = Label.new()
-	_title_glow.text = "STRONGHOLD\nSURVIVORS"
+	_title_glow.text = "AGE OF\nAETHER"
 	_apply_font(_title_glow, 44, COLOR_TITLE_SHADOW)
 	_title_glow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title_glow.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -200,7 +200,7 @@ func _build_header() -> void:
 	add_child(_title_glow)
 
 	_title_label = Label.new()
-	_title_label.text = "STRONGHOLD\nSURVIVORS"
+	_title_label.text = "AGE OF\nAETHER"
 	_apply_font(_title_label, 44, COLOR_TITLE)
 	_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title_label.autowrap_mode = TextServer.AUTOWRAP_OFF

@@ -81,6 +81,28 @@ var _hit_flash_duration = 0.0
 var _hit_flash_strength = 0.0
 var _knockback: Vector2 = Vector2.ZERO
 
+# --- Horde performance caches ---
+# _find_target() used to run every frame for every enemy and scan the whole
+# "buildings" and "allies" groups each time. With a few hundred enemies that is
+# hundreds of array allocations and tens of thousands of iterations per frame.
+# Targets are now re-evaluated a few times a second off shared cached lists,
+# and the expensive 8-way steering probe is reused for a beat when blocked.
+var _cached_target: Node2D = null
+var _target_refresh_cooldown: float = 0.0
+var _steer_dir: Vector2 = Vector2.ZERO
+var _steer_pref_dir: Vector2 = Vector2.ZERO
+var _steer_cooldown: float = 0.0
+
+func _allies_list() -> Array:
+	if _game != null and _game.has_method("get_cached_allies"):
+		return _game.get_cached_allies()
+	return get_tree().get_nodes_in_group("allies")
+
+func _buildings_list() -> Array:
+	if _game != null and _game.has_method("get_cached_buildings"):
+		return _game.get_cached_buildings()
+	return get_tree().get_nodes_in_group("buildings")
+
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
 	var health_mult = 1.0
@@ -130,7 +152,7 @@ func _physics_process(delta: float) -> void:
 			velocity = Vector2.ZERO
 		_update_status_visuals()
 		return
-	var target = _find_target()
+	var target = _get_cached_target(delta)
 	if target == null or not is_instance_valid(target):
 		if knockback_step != Vector2.ZERO:
 			velocity = knockback_step
@@ -166,7 +188,17 @@ func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
 
 	var step = preferred_dir * speed * _slow_multiplier * max(delta, 0.016)
 	if not test_move(global_transform, step):
+		_steer_cooldown = 0.0
 		return preferred_dir
+
+	# Blocked. Probing 8 alternate headings costs 8 more physics queries, so with
+	# a few hundred enemies in a maze this dominates the frame. The chosen
+	# detour stays valid for a beat, so reuse it briefly instead of recomputing
+	# every frame; re-probe early if the goal direction swings sharply.
+	_steer_cooldown -= delta
+	if _steer_cooldown > 0.0 and _steer_dir != Vector2.ZERO \
+			and preferred_dir.dot(_steer_pref_dir) > 0.86:
+		return _steer_dir
 
 	var best_dir = preferred_dir
 	var best_dist = INF
@@ -182,7 +214,28 @@ func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
 		if dist < best_dist:
 			best_dist = dist
 			best_dir = candidate
+	_steer_dir = best_dir
+	_steer_pref_dir = preferred_dir
+	# Staggered so the horde doesn't all re-probe on the same frame.
+	_steer_cooldown = randf_range(0.10, 0.18)
 	return best_dir
+
+func _get_cached_target(delta: float) -> Node2D:
+	"""Target selection is expensive and does not need to run every frame.
+
+	Re-evaluating ~4x/second is imperceptible in play but cuts the cost by an
+	order of magnitude with a large horde. The cache is dropped immediately if
+	the current target dies so enemies never stall on a corpse."""
+	_target_refresh_cooldown -= delta
+	if _cached_target != null and not is_instance_valid(_cached_target):
+		_cached_target = null
+		_target_refresh_cooldown = 0.0
+	if _cached_target == null or _target_refresh_cooldown <= 0.0:
+		_cached_target = _find_target()
+		# Stagger refreshes across the horde so they don't all recompute on the
+		# same frame and cause a periodic hitch.
+		_target_refresh_cooldown = randf_range(0.18, 0.32)
+	return _cached_target
 
 func _find_target() -> Node2D:
 	if _game == null:
@@ -210,7 +263,7 @@ func _find_target() -> Node2D:
 			if player != null and is_instance_valid(player) \
 					and global_position.distance_squared_to(player.global_position) <= interrupt_range * interrupt_range:
 				return player
-			for ally in get_tree().get_nodes_in_group("allies"):
+			for ally in _allies_list():
 				if ally == null or not is_instance_valid(ally):
 					continue
 				if global_position.distance_squared_to(ally.global_position) <= interrupt_range * interrupt_range:
@@ -225,7 +278,7 @@ func _find_target() -> Node2D:
 		is_generator = false
 	
 	# Check allies (higher priority than generators, lower than player)
-	for ally in get_tree().get_nodes_in_group("allies"):
+	for ally in _allies_list():
 		if ally == null or not is_instance_valid(ally):
 			continue
 		var dist = global_position.distance_squared_to(ally.global_position)
@@ -236,7 +289,7 @@ func _find_target() -> Node2D:
 	
 	# Check generators (target if within aggro range)
 	# Generators have lower priority than player/allies but will be attacked if closest
-	for building in get_tree().get_nodes_in_group("buildings"):
+	for building in _buildings_list():
 		if building == null or not is_instance_valid(building):
 			continue
 		# Only target resource generators

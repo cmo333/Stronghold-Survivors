@@ -210,6 +210,12 @@ var _debug_toggle_cooldown: float = 0.0
 
 # Cached enemy list — updated once per frame, used by all towers
 var cached_enemies: Array = []
+# Buildings and allies change rarely but were being re-scanned by every enemy
+# every frame inside _find_target(). Cached here and refreshed on a slow timer.
+var cached_buildings: Array = []
+var cached_allies: Array = []
+var _target_cache_timer: float = 0.0
+const TARGET_CACHE_INTERVAL := 0.25
 
 # Stats tracking
 var _total_damage_dealt: float = 0.0
@@ -1760,7 +1766,7 @@ func _ready() -> void:
 			ui.show_start(false)
 	elif ui != null and ui.has_method("show_start"):
 		if ui.has_method("set_start_text"):
-			ui.set_start_text("Stronghold Survivors", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
+			ui.set_start_text("AGE OF AETHER", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
 		if ui.has_method("set_start_options"):
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
@@ -2140,6 +2146,7 @@ func _process(delta: float) -> void:
 	_update_extraction(delta)
 	# Update cached enemy list once per frame (used by all towers)
 	_refresh_cached_enemies()
+	_refresh_target_caches(delta)
 	_update_flow_field(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
@@ -2172,6 +2179,24 @@ func _refresh_cached_enemies() -> void:
 
 func get_cached_enemies() -> Array:
 	return cached_enemies
+
+func _refresh_target_caches(delta: float) -> void:
+	"""Refresh the building/ally lists a few times a second instead of letting
+	every enemy call get_nodes_in_group() every frame. With a few hundred
+	enemies that was hundreds of array allocations and tens of thousands of
+	iterations per frame - the main source of horde lag."""
+	_target_cache_timer -= delta
+	if _target_cache_timer > 0.0:
+		return
+	_target_cache_timer = TARGET_CACHE_INTERVAL
+	cached_buildings = get_tree().get_nodes_in_group("buildings")
+	cached_allies = get_tree().get_nodes_in_group("allies")
+
+func get_cached_buildings() -> Array:
+	return cached_buildings
+
+func get_cached_allies() -> Array:
+	return cached_allies
 
 func _update_debug_flow(delta: float) -> void:
 	if not debug_flow_enabled:
@@ -5524,7 +5549,33 @@ func _reset_game_state() -> void:
 	if allies_root != null:
 		for ally in allies_root.get_children():
 			ally.queue_free()
-	
+
+	# Clear buildings. Without this a replay inherited the previous run's whole
+	# base - towers, walls and the extractor all still standing.
+	if buildings_root != null:
+		for building in buildings_root.get_children():
+			building.queue_free()
+	active_generators.clear()
+	generators_destroyed = 0
+
+	# Reset extraction objective back to the placement phase.
+	extraction_phase = ExtractionPhase.SCOUT
+	extractor = null
+	extractor_placed_at = -1.0
+	extraction_progress = 0.0
+	_extraction_auto_placed = false
+	_extraction_warned_30s = false
+	_extraction_warned_10s = false
+	if ui != null and ui.has_method("update_objective"):
+		ui.update_objective(ExtractionPhase.SCOUT, EXTRACTION_PLACEMENT_WINDOW, 0.0)
+
+	# Boss cycle state
+	_active_boss = null
+	_final_boss_active = false
+
+	# Buildings just vanished, so any cached pathing is stale.
+	mark_flow_field_dirty()
+
 	# Reset stats
 	_reset_run_stats()
 	
