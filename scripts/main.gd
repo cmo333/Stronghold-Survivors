@@ -424,7 +424,9 @@ var keystone_chain_bonus = 0
 var _income_decay_notice_stage = 0
 
 # Contextual controls hint: full hint shows early / in build mode, then fades once.
-const CONTROLS_HINT_FADE_TIME = 90.0
+# Long enough to read once at the start of a run, short enough that it is not
+# part of the permanent HUD. Full reference lives in the pause menu.
+const CONTROLS_HINT_FADE_TIME = 25.0
 var _controls_hint_faded = false
 
 var spawn_radius_min = 500.0
@@ -5062,12 +5064,11 @@ func get_build_cost_mult() -> float:
 	return mult
 
 func _update_controls_hint() -> void:
-	# Keep the verbose hint up while building or during the opening minutes, then
-	# fade it away once so the HUD declutters for the mid/late game.
+	# Short orientation hint at the start of a run, then gone for good. It used
+	# to come back every time build mode was entered, which meant it sat across
+	# the screen for most of a run and competed with the objective banner. The
+	# full key list now lives in the pause menu.
 	if ui == null or not ui.has_method("set_controls_visible"):
-		return
-	var building = build_manager != null and "build_mode" in build_manager and build_manager.build_mode
-	if building:
 		return
 	if not _controls_hint_faded and elapsed >= CONTROLS_HINT_FADE_TIME:
 		# Don't fade while a modal panel is open (player may be reading).

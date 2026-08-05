@@ -73,6 +73,59 @@ func _ready() -> void:
 			settings_manager.settings_changed.connect(_on_settings_changed)
 		_refresh_quality_ui(str(settings_manager.get_setting("graphics", "quality", "high")))
 	_apply_stats_visibility()
+	_build_controls_reference()
+
+const CONTROLS_REFERENCE := [
+	["Move", "WASD / Arrows"],
+	["Build mode", "B"],
+	["Pick structure", "1 - 5"],
+	["Place / select", "Left click"],
+	["Cancel", "Right click"],
+	["Upgrade", "U"],
+	["Sell", "X"],
+	["Resource dump", "H"],
+	["Zoom", "+ / -"],
+	["Pause", "Esc / P"],
+]
+
+func _build_controls_reference() -> void:
+	"""Full key list lives here rather than as a permanent strip across the HUD.
+
+	The in-game hint was a long single line that stayed up the whole time build
+	mode was active — i.e. most of a run — and it competed with the objective
+	banner for attention. Players only need the reference occasionally, and
+	pause is where they go looking for it."""
+	var panel := get_node_or_null("Panel")
+	if panel == null or panel.get_node_or_null("ControlsContainer") != null:
+		return
+	var box := VBoxContainer.new()
+	box.name = "ControlsContainer"
+	box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	box.offset_left = -230.0
+	box.offset_right = -18.0
+	box.offset_top = 64.0
+	box.add_theme_constant_override("separation", 2)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(box)
+
+	var heading := Label.new()
+	heading.text = "CONTROLS"
+	_apply_font(heading, 12, Color(0.45, 0.95, 1.0))
+	box.add_child(heading)
+
+	for pair in CONTROLS_REFERENCE:
+		var row := HBoxContainer.new()
+		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var what := Label.new()
+		what.text = str(pair[0])
+		what.custom_minimum_size = Vector2(112, 0)
+		_apply_font(what, 9, Color(0.72, 0.70, 0.78))
+		row.add_child(what)
+		var key := Label.new()
+		key.text = str(pair[1])
+		_apply_font(key, 9, Color(0.95, 0.85, 0.45))
+		row.add_child(key)
+		box.add_child(row)
 
 # ---- Gothic-arcade theming -------------------------------------------------
 # Reskins the scene's existing nodes to match the main menu: pixel font, molten

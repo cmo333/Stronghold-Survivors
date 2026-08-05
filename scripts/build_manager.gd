@@ -907,9 +907,9 @@ func _set_build_mode(active: bool) -> void:
 	_invalidate_preview_cache()
 	_update_preview_state()
 	_sync_build_focus()
-	# Surface the full controls hint whenever the player is actively building.
-	if active and ui != null and ui.has_method("set_controls_visible"):
-		ui.set_controls_visible(true)
+	# Deliberately does NOT re-show the controls strip: it used to reappear on
+	# every build-mode toggle, which kept it on screen for most of a run. The
+	# key list is in the pause menu instead.
 
 func _clear_selection() -> void:
 	selected_building = null

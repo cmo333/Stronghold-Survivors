@@ -1,19 +1,20 @@
 extends Node2D
 class_name CoverageOverlay
 
-# Shows every tower's firing range while build mode is active.
+# Draws each building's collision footprint while build mode is active.
 #
-# Range rings previously appeared only for the one selected tower, so planning a
-# maze meant clicking towers one at a time to work out what was already covered.
-# Drawing all of them together makes coverage gaps obvious at a glance — the
-# dead zones are where nothing overlaps.
+# Mazing was guesswork: the sprite is not the same size as the blocker enemies
+# actually squeeze past, so gaps looked closed when they were not. Outlining the
+# true footprint turns the base into a readable grid to build against.
 #
-# Buildings change rarely, so the list is rebuilt on a slow timer rather than
-# every frame, and drawing a handful of arcs is negligible.
+# An earlier version also drew every tower's range as translucent circles. With
+# several towers those fills stacked into an opaque blue wash that obscured the
+# grid, so they were dropped — the selected-tower range ring still covers the
+# 'what does this cover' question on demand.
+#
+# Buildings change rarely, so the list is rebuilt on a slow timer.
 
 const REFRESH_INTERVAL := 0.4
-const COLOR_RING := Color(0.35, 0.9, 1.0, 0.28)
-const COLOR_FILL := Color(0.35, 0.9, 1.0, 0.05)
 const COLOR_FOOTPRINT := Color(1.0, 0.85, 0.35, 0.55)
 
 var _game: Node = null
@@ -53,27 +54,21 @@ func _rebuild() -> void:
 	for b in buildings:
 		if b == null or not is_instance_valid(b) or not (b is Node2D):
 			continue
-		var rng := 0.0
-		if b.has_method("get_range"):
-			rng = float(b.get_range())
 		var fp := 12.0
 		if b.has_method("get_footprint_radius"):
 			fp = float(b.get_footprint_radius())
-		_entries.append([(b as Node2D).global_position, rng, fp])
+		_entries.append([(b as Node2D).global_position, 0.0, fp])
 
 func _draw() -> void:
 	if not _active:
 		return
+	# Range circles were removed: with several towers their translucent fills
+	# stacked into an opaque blue wash that hid the very thing the player was
+	# trying to read. The footprint grid is what actually helps mazing — it
+	# shows the collision extent enemies squeeze past, which is not the same as
+	# the sprite.
 	for e in _entries:
 		var pos: Vector2 = e[0]
-		var rng: float = e[1]
 		var fp: float = e[2]
-		if rng > 1.0:
-			# Faint fill plus a crisper rim: overlapping fills read as stronger
-			# coverage, which is exactly the information the player wants.
-			draw_circle(pos, rng, COLOR_FILL)
-			draw_arc(pos, rng, 0.0, TAU, 48, COLOR_RING, 1.5, true)
-		# Solid footprint so wall gaps are unambiguous — the collision extent is
-		# what enemies actually squeeze through, not the sprite.
 		draw_rect(Rect2(pos - Vector2(fp, fp), Vector2(fp * 2.0, fp * 2.0)),
 			COLOR_FOOTPRINT, false, 1.5)
