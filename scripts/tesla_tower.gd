@@ -25,7 +25,17 @@ const DIRECTIONAL_BASE_FRAMES_T2 := {
 	"W": "res://assets/level1/towers_directional/tesla_t2_W.png",
 	"NW": "res://assets/level1/towers_directional/tesla_t2_NW.png"
 }
-const DIRECTIONAL_BODY_SCALE := 0.235
+# Matched to the arrow turret's rendered size (see cannon_tower.gd for the
+# derivation). Tesla content is ~283x383px, so 0.210 renders 59.4 x 80.4 —
+# the same silhouette height as the arrow instead of the previous 12% overshoot.
+# Per-tier scales chosen so this tower renders the same silhouette height as
+# the arrow turret (80.3 / 96.8 / 107.2 px at T1/T2/T3). A single base value
+# with a shared growth rate could not hold: each tower's source art is a
+# different size AND grows by a different amount between tiers, so they drifted
+# apart again on upgrade. Regenerate with tools/measure_tower_scales.py if the
+# art changes.
+const DIRECTIONAL_BODY_SCALE_BY_TIER := [0.2096, 0.2489, 0.2756]
+const DIRECTIONAL_BODY_SCALE := 0.2096
 const _DIR_ORDER := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
 const _DIR_ANGLES := {
 	"E": 0.0, "SE": PI * 0.25, "S": PI * 0.5, "SW": PI * 0.75,
@@ -145,7 +155,7 @@ func _enforce_directional_scale() -> void:
 	if not _use_directional_art() or body_sprite == null:
 		return
 	var tier := clampi(upgrade_level, 1, 3)
-	var s: float = DIRECTIONAL_BODY_SCALE * (1.0 + (tier - 1) * 0.1)
+	var s: float = float(DIRECTIONAL_BODY_SCALE_BY_TIER[clampi(tier - 1, 0, 2)])
 	body_sprite.scale = Vector2.ONE * s
 	_sync_body_anim_base_scale(true)
 

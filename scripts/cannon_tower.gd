@@ -27,7 +27,22 @@ const DIRECTIONAL_BASE_FRAMES_T2 := {
 	"NW": "res://assets/level1/towers_directional/cannon_t2_NW.png"
 }
 # Source cells are ~360-390px; this scale fills the build cell like arrow art.
-const DIRECTIONAL_BODY_SCALE := 0.235
+# Normalised so every tower reads at the same on-screen size as the arrow
+# turret. Source art differs wildly (arrow content is ~988x1147px, cannon
+# ~347x385), so a shared scale value would not have matched — these are derived
+# from the measured opaque bounds:
+#   arrow renders 988*0.070 = 69.2 wide, 1147*0.070 = 80.3 tall
+#   cannon at 0.199 renders 347*0.199 = 69.0 x 76.6, fitting that same box
+# Previously 0.235, which rendered 18% wider and 13% taller than the arrow and
+# made the cannon read as a much bigger building than it is.
+# Per-tier scales chosen so this tower renders the same silhouette height as
+# the arrow turret (80.3 / 96.8 / 107.2 px at T1/T2/T3). A single base value
+# with a shared growth rate could not hold: each tower's source art is a
+# different size AND grows by a different amount between tiers, so they drifted
+# apart again on upgrade. Regenerate with tools/measure_tower_scales.py if the
+# art changes.
+const DIRECTIONAL_BODY_SCALE_BY_TIER := [0.2085, 0.2464, 0.2728]
+const DIRECTIONAL_BODY_SCALE := 0.2085
 const _DIR_ORDER := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
 const _DIR_ANGLES := {
 	"E": 0.0, "SE": PI * 0.25, "S": PI * 0.5, "SW": PI * 0.75,
@@ -144,7 +159,7 @@ func _enforce_directional_scale() -> void:
 	if not _use_directional_art() or body_sprite == null:
 		return
 	var tier := clampi(upgrade_level, 1, 3)
-	var s: float = DIRECTIONAL_BODY_SCALE * (1.0 + (tier - 1) * 0.1)
+	var s: float = float(DIRECTIONAL_BODY_SCALE_BY_TIER[clampi(tier - 1, 0, 2)])
 	body_sprite.scale = Vector2.ONE * s
 	_sync_body_anim_base_scale(true)
 
