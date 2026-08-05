@@ -1104,29 +1104,20 @@ func _build_build_focus_ui() -> void:
 	hud.add_child(_build_focus_label)
 
 func set_build_focus(active: bool, build_name: String = "", time_scale: float = 1.0) -> void:
-	if _build_focus_overlay == null or not is_instance_valid(_build_focus_overlay):
-		_build_build_focus_ui()
-	if _build_focus_overlay == null or _build_focus_label == null:
-		return
-	var display_name = build_name.strip_edges()
-	var changed = active != _build_focus_visible
-	if display_name != _build_focus_name:
-		changed = true
-	if absf(time_scale - _build_focus_scale) > 0.001:
-		changed = true
-	if not changed:
-		return
-	_build_focus_visible = active
-	_build_focus_name = display_name
+	"""Build-mode banner.
+
+	This used to read 'BUILD MODE | <TOWER> | TIME 78%' — the tail advertised
+	BUILD_FOCUS_TIME_SCALE. The actual slowdown was removed, but the banner kept
+	claiming time was at 78%, so the game still *looked* like it was slowing
+	down while building. It also overlapped the extractor objective banner at
+	the top of the screen. Retired entirely: the build palette and placement
+	preview already show the selected structure."""
+	_build_focus_visible = false
+	_build_focus_name = build_name.strip_edges()
 	_build_focus_scale = time_scale
-	if active:
-		var percent = int(round(clamp(time_scale, 0.0, 2.0) * 100.0))
-		var tower_name = display_name if display_name != "" else "Tower"
-		_build_focus_label.text = "BUILD MODE | %s | TIME %d%%" % [tower_name.to_upper(), percent]
-		_build_focus_overlay.visible = true
-		_build_focus_label.visible = true
-	else:
+	if _build_focus_overlay != null and is_instance_valid(_build_focus_overlay):
 		_build_focus_overlay.visible = false
+	if _build_focus_label != null and is_instance_valid(_build_focus_label):
 		_build_focus_label.visible = false
 
 # =========================================================
