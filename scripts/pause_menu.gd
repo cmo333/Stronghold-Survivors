@@ -98,13 +98,17 @@ func _build_controls_reference() -> void:
 	var panel := get_node_or_null("Panel")
 	if panel == null or panel.get_node_or_null("ControlsContainer") != null:
 		return
+	# Sits directly under Run Stats in the left column. It was previously
+	# top-right, where it collided with the Resume/Settings/Quality/Quit stack.
 	var box := VBoxContainer.new()
 	box.name = "ControlsContainer"
-	box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	box.offset_left = -230.0
-	box.offset_right = -18.0
-	box.offset_top = 64.0
-	box.add_theme_constant_override("separation", 2)
+	box.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	box.offset_left = 24.0
+	box.offset_right = 300.0
+	# Run Stats starts at y=90 and its ~9 rows run to roughly y=290, so this
+	# clears it. 11 control rows then finish near y=430 inside the 480 panel.
+	box.offset_top = 300.0
+	box.add_theme_constant_override("separation", 1)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(box)
 

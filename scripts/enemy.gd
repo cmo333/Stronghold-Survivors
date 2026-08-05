@@ -93,6 +93,32 @@ var _steer_dir: Vector2 = Vector2.ZERO
 var _steer_pref_dir: Vector2 = Vector2.ZERO
 var _steer_cooldown: float = 0.0
 
+var _cached_visible: bool = true
+var _visibility_check_timer: float = 0.0
+
+func _is_visible_to_camera() -> bool:
+	"""Cheap on-screen test, re-evaluated a few times a second and staggered
+	across the horde. Movement and damage always run — this only gates
+	decoration, so being a frame or two stale is harmless."""
+	_visibility_check_timer -= get_physics_process_delta_time()
+	if _visibility_check_timer > 0.0:
+		return _cached_visible
+	_visibility_check_timer = randf_range(0.1, 0.2)
+	if _game == null:
+		return _cached_visible
+	var cam = _game.get("camera")
+	if cam == null or not is_instance_valid(cam):
+		_cached_visible = true
+		return true
+	var zoom: Vector2 = cam.zoom
+	if zoom.x <= 0.001 or zoom.y <= 0.001:
+		_cached_visible = true
+		return true
+	var half: Vector2 = get_viewport_rect().size / zoom * 0.5
+	var d: Vector2 = global_position - cam.global_position
+	_cached_visible = absf(d.x) <= half.x + 120.0 and absf(d.y) <= half.y + 120.0
+	return _cached_visible
+
 func _allies_list() -> Array:
 	if _game != null and _game.has_method("get_cached_allies"):
 		return _game.get_cached_allies()
@@ -134,7 +160,9 @@ func _physics_process(delta: float) -> void:
 	_tick_hit_flash(delta)
 	_tick_aura_bonus(delta)
 	_tick_elite(delta)
-	_tick_elite_glow_particles(delta)
+	# Elite glow particles are decoration; a swarm off-screen does not need them.
+	if _is_visible_to_camera():
+		_tick_elite_glow_particles(delta)
 	# FFA clients: the host owns enemy AI/damage; we only render the replicated
 	# transform + visuals. Skip targeting, attacking, and movement integration.
 	if _game.has_method("is_sim_authority") and not _game.is_sim_authority():

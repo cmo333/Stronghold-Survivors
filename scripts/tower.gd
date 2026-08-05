@@ -176,6 +176,9 @@ var _fire_phase: int = 0
 var _fire_phase_timer: float = 0.0
 var _instance_motion_phase_offset: float = 0.0
 var _last_fire_dir: Vector2 = Vector2.RIGHT
+# Off-screen towers skip their visual update (see _is_visible_to_camera).
+var _cached_visible: bool = true
+var _visibility_check_timer: float = 0.0
 
 enum FirePhase {
 	IDLE = 0,
@@ -445,11 +448,46 @@ func _process(delta: float) -> void:
 		if to_target.length_squared() > 0.0001:
 			_last_fire_dir = to_target.normalized()
 	_advance_fire_state(delta, target)
+
+	# Targeting and firing always run — an off-screen tower still defends the
+	# maze. The body animation, presentation sync and motion smoothing exist
+	# purely to be looked at, so they are skipped when the tower is not on
+	# screen. A late-game base can hold 50+ towers with most of them outside the
+	# view, and that per-frame visual work was a large slice of the frame.
+	if not _is_visible_to_camera():
+		return
+
 	var has_target_context: bool = target != null or _fire_phase != FirePhase.IDLE
 	_set_anim_active(has_target_context, delta)
 	_update_body_anim_speed(has_target_context)
 	_update_body_motion(delta, has_target_context, perf_scale)
 	_sync_body_presentation_state()
+
+func _is_visible_to_camera() -> bool:
+	"""Cheap on-screen test, re-evaluated a few times a second.
+
+	Towers do not move, so this only changes when the camera does; polling it
+	every frame for every tower would defeat the point."""
+	_visibility_check_timer -= get_process_delta_time()
+	if _visibility_check_timer > 0.0:
+		return _cached_visible
+	_visibility_check_timer = randf_range(0.12, 0.2)
+	if _game == null:
+		_cached_visible = true
+		return true
+	var cam = _game.get("camera")
+	if cam == null or not is_instance_valid(cam):
+		_cached_visible = true
+		return true
+	var zoom: Vector2 = cam.zoom
+	if zoom.x <= 0.001 or zoom.y <= 0.001:
+		_cached_visible = true
+		return true
+	var half: Vector2 = get_viewport_rect().size / zoom * 0.5
+	var d: Vector2 = global_position - cam.global_position
+	# Generous margin so a tower is already animating before it scrolls in.
+	_cached_visible = absf(d.x) <= half.x + 160.0 and absf(d.y) <= half.y + 160.0
+	return _cached_visible
 
 func get_fire_windup_time() -> float:
 	return 0.055
