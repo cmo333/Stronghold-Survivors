@@ -184,6 +184,15 @@ func _cache_sounds() -> void:
 	_cache_sound("victory", "res://assets/audio/special/victory.wav", "special")
 	_cache_sound("berserk_activate", "res://assets/audio/special/berserk_activate.wav", "special")
 
+	# Chest jackpot kit (tools/audio/generate_chest_audio.py)
+	_cache_sound("chest_charge", "res://assets/audio/special/chest_charge.wav", "special")
+	_cache_sound("reveal_common", "res://assets/audio/special/reveal_common.wav", "special")
+	_cache_sound("reveal_rare", "res://assets/audio/special/reveal_rare.wav", "special")
+	_cache_sound("reveal_epic", "res://assets/audio/special/reveal_epic.wav", "special")
+	_cache_sound("reveal_diamond", "res://assets/audio/special/reveal_diamond.wav", "special")
+	_cache_sound("jackpot_fanfare", "res://assets/audio/special/jackpot_fanfare.wav", "special")
+	_cache_sound("coin_cascade", "res://assets/audio/special/coin_cascade.wav", "special")
+
 func _cache_sound(sound_name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
 	if not ResourceLoader.exists(path):

@@ -179,13 +179,137 @@ func _start_open() -> void:
 		_game.add_resources(bonus_gold, _opener_id)
 	if _game.has_method("show_chest_summary"):
 		_game.show_chest_summary(bonus_gold, _upgrades_to_grant.size())
-	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
+	await _play_jackpot_sequence()
 	_grant_all_upgrades_instant()
 	_opened = true
 	if is_inside_tree():
-		await get_tree().create_timer(0.4, true, false, true).timeout
+		await get_tree().create_timer(0.35, true, false, true).timeout
 	_release_modal()
 	queue_free()
+
+# ============================================
+# JACKPOT PRESENTATION
+# A chest is the biggest dopamine beat in the run, so it gets the slot-machine
+# treatment: tension that builds, one escalating reveal per item, and a payoff
+# scaled to the best thing that dropped.
+# ============================================
+
+const REVEAL_SOUNDS := {
+	"common": "reveal_common",
+	"rare": "reveal_rare",
+	"epic": "reveal_epic",
+	"diamond": "reveal_diamond",
+}
+const RARITY_RANK := {"common": 0, "rare": 1, "epic": 2, "diamond": 3}
+# Per-rarity punch: screen flash alpha, camera shake, and how long the beat holds.
+const RARITY_PUNCH := {
+	"common": {"flash": 0.10, "shake": 2.0, "hold": 0.28},
+	"rare": {"flash": 0.16, "shake": 4.5, "hold": 0.34},
+	"epic": {"flash": 0.24, "shake": 7.5, "hold": 0.44},
+	"diamond": {"flash": 0.40, "shake": 13.0, "hold": 0.75},
+}
+
+func _best_rarity() -> String:
+	var best := "common"
+	for u in _upgrades_to_grant:
+		var r := str(u.get("rarity", "common"))
+		if int(RARITY_RANK.get(r, 0)) > int(RARITY_RANK.get(best, 0)):
+			best = r
+	return best
+
+func _play_jackpot_sequence() -> void:
+	if not is_inside_tree():
+		return
+	var best := _best_rarity()
+
+	# 1. Anticipation. The riser's tremolo accelerates, so the pause before the
+	#    first reveal is doing real work — never cut this short.
+	AudioManager.play_one_shot("chest_charge", global_position, AudioManager.HIGH_PRIORITY)
+	_animate_charge_up()
+	await get_tree().create_timer(0.85, true, false, true).timeout
+	if not is_inside_tree():
+		return
+
+	# 2. Burst open + coin payout.
+	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
+	AudioManager.play_one_shot("coin_cascade", global_position, AudioManager.DEFAULT_PRIORITY)
+	_burst(Color(1.0, 0.9, 0.5), 26, 1.0)
+	if _game != null and _game.has_method("shake_camera"):
+		_game.shake_camera(5.0, 0.25)
+
+	# 3. One beat per item, escalating. Rarity drives sound, colour, flash,
+	#    shake and hold time together so a great drop is unmistakable.
+	for i in range(_upgrades_to_grant.size()):
+		if not is_inside_tree():
+			return
+		var upgrade: Dictionary = _upgrades_to_grant[i]
+		var rarity := str(upgrade.get("rarity", "common"))
+		var punch: Dictionary = RARITY_PUNCH.get(rarity, RARITY_PUNCH["common"])
+		var color: Color = RARITY_COLORS.get(rarity, Color.WHITE)
+
+		AudioManager.play_one_shot(str(REVEAL_SOUNDS.get(rarity, "reveal_common")),
+			global_position, AudioManager.HIGH_PRIORITY)
+		_burst(color, 10 + int(RARITY_RANK.get(rarity, 0)) * 10, 0.7 + float(RARITY_RANK.get(rarity, 0)) * 0.35)
+		if _game != null:
+			if _game.has_method("flash_screen"):
+				_game.flash_screen(Color(color.r, color.g, color.b, float(punch["flash"])), 0.22)
+			if _game.has_method("shake_camera"):
+				_game.shake_camera(float(punch["shake"]), 0.28)
+			if _game.has_method("show_floating_text"):
+				_game.show_floating_text(str(upgrade.get("name", "UPGRADE")),
+					global_position + Vector2(0, -46 - i * 22), color)
+		await get_tree().create_timer(float(punch["hold"]), true, false, true).timeout
+
+	# 4. Payoff. Only a genuinely rare drop earns the fanfare — firing it on
+	#    every chest would make it wallpaper.
+	if not is_inside_tree():
+		return
+	if int(RARITY_RANK.get(best, 0)) >= int(RARITY_RANK["epic"]):
+		AudioManager.play_one_shot("jackpot_fanfare", global_position, AudioManager.CRITICAL_PRIORITY)
+		var jc: Color = RARITY_COLORS.get(best, Color(1.0, 0.9, 0.4))
+		_burst(jc, 60, 2.0)
+		if _game != null:
+			if _game.has_method("flash_screen"):
+				_game.flash_screen(Color(jc.r, jc.g, jc.b, 0.3), 0.4)
+			if _game.has_method("shake_camera"):
+				_game.shake_camera(11.0, 0.5)
+			if _game.has_method("show_announcement") == false and _game.has_method("show_floating_text"):
+				_game.show_floating_text("JACKPOT!", global_position + Vector2(0, -110), jc)
+		if _game != null and _game.ui != null and _game.ui.has_method("show_announcement"):
+			var label := "DIAMOND!" if best == "diamond" else "JACKPOT!"
+			_game.ui.show_announcement(label, jc, 44, 1.6)
+		await get_tree().create_timer(0.5, true, false, true).timeout
+
+func _animate_charge_up() -> void:
+	"""Chest rattles and swells while the riser builds."""
+	if not is_inside_tree():
+		return
+	var spr := get_node_or_null("Body")
+	if spr == null:
+		return
+	var base_scale: Vector2 = spr.scale
+	var tw := create_tween()
+	tw.set_parallel(false)
+	# Accelerating shake: five shorter, bigger wobbles.
+	for i in range(5):
+		var amp := 2.0 + float(i) * 1.6
+		var dur := 0.16 - float(i) * 0.02
+		tw.tween_property(spr, "position:x", amp, dur * 0.5).as_relative().set_trans(Tween.TRANS_SINE)
+		tw.tween_property(spr, "position:x", -amp * 2.0, dur).as_relative().set_trans(Tween.TRANS_SINE)
+		tw.tween_property(spr, "position:x", amp, dur * 0.5).as_relative().set_trans(Tween.TRANS_SINE)
+	var tw2 := create_tween()
+	tw2.tween_property(spr, "scale", base_scale * 1.35, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw2.parallel().tween_property(spr, "modulate", Color(2.2, 2.0, 1.4), 0.8)
+
+func _burst(color: Color, count: int, scale_mult: float) -> void:
+	if _game == null or not _game.has_method("spawn_glow_particle"):
+		return
+	for i in range(count):
+		var dir := Vector2.RIGHT.rotated(randf() * TAU)
+		var vel := dir * randf_range(70.0, 260.0) * scale_mult
+		_game.spawn_glow_particle(global_position, color,
+			randf_range(7.0, 15.0) * scale_mult, randf_range(0.7, 1.3),
+			vel, 2.5, 0.7, 1.2, 5)
 
 # Fast path: grant all upgrades without animation (used when another chest is mid-animation)
 func _grant_all_upgrades_instant() -> void:
