@@ -69,6 +69,11 @@ const ENGINEER_VITALITY_HP_PER_LEVEL = 20.0
 const EARLY_GAME_HORDE_RAMP_TIME = 300.0
 const EARLY_GAME_ENEMY_HEALTH_GRACE_MIN = 0.60
 const BUILD_FOCUS_TIME_SCALE = 0.78
+# Master switch for gameplay slow-motion (kill slow, streak accents, crit
+# hitstop). _trigger_kill_slow fired every 10th kill, so during a real fight the
+# world was dipping into slow-mo almost continuously — players read it as the
+# game slowing down or lagging rather than as punctuation. Off by default.
+const ENABLE_TIME_DILATION := false
 const CHEST_MODAL_TIME_SCALE = 0.0
 const BUILD_COST_TIME_PRESSURE_START = 480.0
 const BUILD_COST_TIME_PRESSURE_END = 1500.0
@@ -137,8 +142,6 @@ var _settings_manager: Node = null
 # FX Manager
 var fx_manager: FXManager = null
 var minimap: Control = null
-# Build-mode flow-field visualiser (scripts/path_overlay.gd).
-var path_overlay: Node2D = null
 var _world_environment: WorldEnvironment = null
 
 # Game state
@@ -1773,7 +1776,6 @@ func _ready() -> void:
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
 	_setup_minimap()
-	_setup_path_overlay()
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
@@ -2149,6 +2151,7 @@ func _process(delta: float) -> void:
 	_update_extraction(delta)
 	# Update cached enemy list once per frame (used by all towers)
 	_refresh_cached_enemies()
+	_rebuild_enemy_grid()
 	_refresh_target_caches(delta)
 	_update_flow_field(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
@@ -2182,6 +2185,43 @@ func _refresh_cached_enemies() -> void:
 
 func get_cached_enemies() -> Array:
 	return cached_enemies
+
+# --- Enemy spatial grid -------------------------------------------------
+# Every tower used to distance-check every enemy on the map, including ones far
+# outside its range: cost scaled as towers x enemies. Bucketing enemies by cell
+# once per frame lets a tower look at only the handful nearby, which is the
+# single biggest win for late-run frame time.
+const ENEMY_GRID_CELL := 160.0
+var _enemy_grid: Dictionary = {}
+
+func _grid_cell(pos: Vector2) -> Vector2i:
+	return Vector2i(int(floor(pos.x / ENEMY_GRID_CELL)), int(floor(pos.y / ENEMY_GRID_CELL)))
+
+func _rebuild_enemy_grid() -> void:
+	_enemy_grid.clear()
+	for e in cached_enemies:
+		if e == null or not is_instance_valid(e):
+			continue
+		var c := _grid_cell(e.global_position)
+		if not _enemy_grid.has(c):
+			_enemy_grid[c] = []
+		_enemy_grid[c].append(e)
+
+func get_enemies_near(pos: Vector2, radius: float) -> Array:
+	"""Enemies in cells overlapping the radius. A superset of the true circle —
+	callers still distance-check, this just shrinks the candidate set."""
+	if _enemy_grid.is_empty():
+		return cached_enemies
+	var out: Array = []
+	var span := int(ceil(radius / ENEMY_GRID_CELL))
+	var base := _grid_cell(pos)
+	for dy in range(-span, span + 1):
+		for dx in range(-span, span + 1):
+			var c := base + Vector2i(dx, dy)
+			var bucket = _enemy_grid.get(c)
+			if bucket != null:
+				out.append_array(bucket)
+	return out
 
 func _refresh_target_caches(delta: float) -> void:
 	"""Refresh the building/ally lists a few times a second instead of letting
@@ -2342,20 +2382,6 @@ func _start_game() -> void:
 	# Audio: Wave/Game start sound
 	AudioManager.play_ui_sound("wave_start")
 
-func _setup_path_overlay() -> void:
-	"""Flow-field visualiser shown while building, so maze gaps are visible."""
-	if path_overlay != null and is_instance_valid(path_overlay):
-		return
-	var PathOverlayScript = load("res://scripts/path_overlay.gd")
-	if PathOverlayScript == null:
-		return
-	path_overlay = PathOverlayScript.new()
-	path_overlay.name = "PathOverlay"
-	$World.add_child(path_overlay)
-	if path_overlay.has_method("setup"):
-		path_overlay.setup(self)
-	path_overlay.set_active(false)
-
 func _setup_minimap() -> void:
 	if minimap != null and is_instance_valid(minimap):
 		return
@@ -2417,10 +2443,6 @@ func set_build_focus(active: bool, structure_id: String = "") -> void:
 	var changed = next_active != _build_focus_active or next_name != _build_focus_name
 	_build_focus_active = next_active
 	_build_focus_name = next_name
-	# Show the enemy flow field only while building — it is a planning tool, not
-	# something to stare at mid-fight.
-	if path_overlay != null and is_instance_valid(path_overlay):
-		path_overlay.set_active(next_active)
 	if changed:
 		_apply_base_time_scale()
 	else:
@@ -2434,6 +2456,8 @@ func _refresh_build_focus_ui() -> void:
 
 func _trigger_kill_slow() -> void:
 	# Global slow-mo is disabled in FFA (shared sim).
+	if not ENABLE_TIME_DILATION:
+		return
 	if is_ffa():
 		return
 	var base_scale = _get_base_time_scale()
@@ -2449,6 +2473,8 @@ func _trigger_kill_slow() -> void:
 
 func trigger_time_accent(slow_scale: float, duration: float) -> void:
 	"""Generic time dilation for gameplay accents (upgrades, critical hits, etc.)"""
+	if not ENABLE_TIME_DILATION:
+		return
 	if is_ffa():
 		return
 	var base_scale = _get_base_time_scale()
@@ -6386,6 +6412,8 @@ func on_zone_depleted(zone: Node) -> void:
 
 # Hitstop - freeze frame effect for critical hits
 func trigger_hitstop() -> void:
+	if not ENABLE_TIME_DILATION:
+		return
 	if is_ffa():
 		return
 	if _time_scale_tween != null:

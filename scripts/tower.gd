@@ -986,6 +986,9 @@ func _find_target() -> Node2D:
 	return best
 
 func _get_enemies() -> Array:
+	# Only consider enemies in nearby grid cells rather than the whole map.
+	if _game != null and _game.has_method("get_enemies_near"):
+		return _game.get_enemies_near(global_position, get_range())
 	if _game != null and _game.has_method("get_cached_enemies"):
 		return _game.get_cached_enemies()
 	return get_tree().get_nodes_in_group("enemies")

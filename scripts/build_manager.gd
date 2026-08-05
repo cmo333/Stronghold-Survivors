@@ -48,6 +48,22 @@ var _preview_cached_id: String = ""
 var _preview_cached_resources: int = -999999
 var _preview_cached_status: Dictionary = {}
 var _show_tower_range: bool = true
+# Shows every tower's range while building (scripts/coverage_overlay.gd).
+var _coverage_overlay: Node2D = null
+
+func _ensure_coverage_overlay() -> void:
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		return
+	if game == null:
+		return
+	var Script = load("res://scripts/coverage_overlay.gd")
+	if Script == null:
+		return
+	_coverage_overlay = Script.new()
+	_coverage_overlay.name = "CoverageOverlay"
+	game.get_node("World").add_child(_coverage_overlay)
+	if _coverage_overlay.has_method("setup"):
+		_coverage_overlay.setup(game)
 var _selection_pulse: float = 0.0
 var _selection_ring_base_scale: float = 1.18
 
@@ -769,6 +785,8 @@ func _update_range_ring() -> void:
 
 func set_show_tower_range(enabled: bool) -> void:
 	_show_tower_range = enabled
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		_coverage_overlay.set_active(enabled and build_mode)
 	if not enabled and range_ring != null:
 		range_ring.visible = false
 	if preview != null and preview.has_method("set_range_radius"):
@@ -883,6 +901,9 @@ func _is_unlocked(id: String) -> bool:
 
 func _set_build_mode(active: bool) -> void:
 	build_mode = active
+	_ensure_coverage_overlay()
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		_coverage_overlay.set_active(active and _show_tower_range)
 	_invalidate_preview_cache()
 	_update_preview_state()
 	_sync_build_focus()
