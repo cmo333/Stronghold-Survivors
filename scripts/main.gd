@@ -137,6 +137,8 @@ var _settings_manager: Node = null
 # FX Manager
 var fx_manager: FXManager = null
 var minimap: Control = null
+# Build-mode flow-field visualiser (scripts/path_overlay.gd).
+var path_overlay: Node2D = null
 var _world_environment: WorldEnvironment = null
 
 # Game state
@@ -1771,6 +1773,7 @@ func _ready() -> void:
 			ui.set_start_options(characters, selected_character)
 		ui.show_start(true)
 	_setup_minimap()
+	_setup_path_overlay()
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
@@ -2339,6 +2342,20 @@ func _start_game() -> void:
 	# Audio: Wave/Game start sound
 	AudioManager.play_ui_sound("wave_start")
 
+func _setup_path_overlay() -> void:
+	"""Flow-field visualiser shown while building, so maze gaps are visible."""
+	if path_overlay != null and is_instance_valid(path_overlay):
+		return
+	var PathOverlayScript = load("res://scripts/path_overlay.gd")
+	if PathOverlayScript == null:
+		return
+	path_overlay = PathOverlayScript.new()
+	path_overlay.name = "PathOverlay"
+	$World.add_child(path_overlay)
+	if path_overlay.has_method("setup"):
+		path_overlay.setup(self)
+	path_overlay.set_active(false)
+
 func _setup_minimap() -> void:
 	if minimap != null and is_instance_valid(minimap):
 		return
@@ -2400,6 +2417,10 @@ func set_build_focus(active: bool, structure_id: String = "") -> void:
 	var changed = next_active != _build_focus_active or next_name != _build_focus_name
 	_build_focus_active = next_active
 	_build_focus_name = next_name
+	# Show the enemy flow field only while building — it is a planning tool, not
+	# something to stare at mid-fight.
+	if path_overlay != null and is_instance_valid(path_overlay):
+		path_overlay.set_active(next_active)
 	if changed:
 		_apply_base_time_scale()
 	else:

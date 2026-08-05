@@ -1015,12 +1015,30 @@ func clear_run_modifiers() -> void:
 	_update_health_bar()
 
 func reset() -> void:
-	"""Reset player state for new game"""
+	"""Reset player state for new game.
+
+	The death animation drives rotation, scale, skew and modulate directly, so
+	every one of them has to be put back. Missing `rotation` in particular left
+	the character permanently lying on their side after a replay."""
 	_is_dying = false
 	_death_animation_time = 0.0
+	_death_phase = 0
 	scale = _original_scale if _original_scale != Vector2.ZERO else Vector2.ONE
+	rotation = 0.0
+	modulate = Color.WHITE
 	if sprite != null:
 		sprite.modulate = Color.WHITE
+		sprite.visible = true
+		if "skew" in sprite:
+			sprite.skew = 0.0
+		if "rotation" in sprite:
+			sprite.rotation = 0.0
+	_body_smooth_skew = 0.0
+	# Soul fragments from the death sequence outlive the run otherwise.
+	for p in _soul_particles:
+		if p != null and is_instance_valid(p):
+			p.queue_free()
+	_soul_particles.clear()
 	if _visibility_halo != null:
 		_visibility_halo.visible = true
 		_visibility_halo_time = 0.0
@@ -1030,6 +1048,8 @@ func reset() -> void:
 	_combat_density = 0.0
 	health = max_health
 	velocity = Vector2.ZERO
+	if _health_bar_bg != null:
+		_health_bar_bg.visible = true
 	_update_health_bar()
 
 # ============================================

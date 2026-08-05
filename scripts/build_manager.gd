@@ -1174,4 +1174,4 @@ func _apply_cost_mult(cost: int) -> int:
 	return max(0, final_cost)
 
 func _controls_text() -> String:
-	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build | H: resource dump | P: pause"
+	return "LMB: place/select | RMB: cancel | U: upgrade | X: sell | B: build | H: resource dump | Esc/P: pause"
