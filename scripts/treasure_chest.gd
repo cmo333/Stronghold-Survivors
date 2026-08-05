@@ -179,7 +179,14 @@ func _start_open() -> void:
 		_game.add_resources(bonus_gold, _opener_id)
 	if _game.has_method("show_chest_summary"):
 		_game.show_chest_summary(bonus_gold, _upgrades_to_grant.size())
-	await _play_jackpot_sequence()
+	# Visual takeover and audio run together; await the visual since it is the
+	# longer of the two and owns the screen.
+	var ui_node = _game.get("ui")
+	if ui_node != null and ui_node.has_method("play_chest_reveal"):
+		_play_jackpot_sequence()
+		await ui_node.play_chest_reveal(_upgrades_to_grant, _best_rarity())
+	else:
+		await _play_jackpot_sequence()
 	_grant_all_upgrades_instant()
 	_opened = true
 	if is_inside_tree():
@@ -218,6 +225,11 @@ func _best_rarity() -> String:
 	return best
 
 func _play_jackpot_sequence() -> void:
+	"""Audio + world FX, timed to the full-screen reveal in ui.gd.
+
+	The visual takeover runs in parallel (started by the caller) — this drives
+	the sound and camera so every audio beat lands on its matching visual beat.
+	"""
 	if not is_inside_tree():
 		return
 	var best := _best_rarity()
@@ -236,6 +248,9 @@ func _play_jackpot_sequence() -> void:
 	_burst(Color(1.0, 0.9, 0.5), 26, 1.0)
 	if _game != null and _game.has_method("shake_camera"):
 		_game.shake_camera(5.0, 0.25)
+	await get_tree().create_timer(0.28, true, false, true).timeout
+	if not is_inside_tree():
+		return
 
 	# 3. One beat per item, escalating. Rarity drives sound, colour, flash,
 	#    shake and hold time together so a great drop is unmistakable.
@@ -244,21 +259,17 @@ func _play_jackpot_sequence() -> void:
 			return
 		var upgrade: Dictionary = _upgrades_to_grant[i]
 		var rarity := str(upgrade.get("rarity", "common"))
+		var rank := int(RARITY_RANK.get(rarity, 0))
 		var punch: Dictionary = RARITY_PUNCH.get(rarity, RARITY_PUNCH["common"])
 		var color: Color = RARITY_COLORS.get(rarity, Color.WHITE)
 
 		AudioManager.play_one_shot(str(REVEAL_SOUNDS.get(rarity, "reveal_common")),
 			global_position, AudioManager.HIGH_PRIORITY)
-		_burst(color, 10 + int(RARITY_RANK.get(rarity, 0)) * 10, 0.7 + float(RARITY_RANK.get(rarity, 0)) * 0.35)
-		if _game != null:
-			if _game.has_method("flash_screen"):
-				_game.flash_screen(Color(color.r, color.g, color.b, float(punch["flash"])), 0.22)
-			if _game.has_method("shake_camera"):
-				_game.shake_camera(float(punch["shake"]), 0.28)
-			if _game.has_method("show_floating_text"):
-				_game.show_floating_text(str(upgrade.get("name", "UPGRADE")),
-					global_position + Vector2(0, -46 - i * 22), color)
-		await get_tree().create_timer(float(punch["hold"]), true, false, true).timeout
+		_burst(color, 10 + rank * 10, 0.7 + float(rank) * 0.35)
+		if _game != null and _game.has_method("shake_camera"):
+			_game.shake_camera(float(punch["shake"]), 0.28)
+		# Matches the card slam timing in ui.play_chest_reveal().
+		await get_tree().create_timer(0.3 + rank * 0.12, true, false, true).timeout
 
 	# 4. Payoff. Only a genuinely rare drop earns the fanfare — firing it on
 	#    every chest would make it wallpaper.
@@ -268,17 +279,9 @@ func _play_jackpot_sequence() -> void:
 		AudioManager.play_one_shot("jackpot_fanfare", global_position, AudioManager.CRITICAL_PRIORITY)
 		var jc: Color = RARITY_COLORS.get(best, Color(1.0, 0.9, 0.4))
 		_burst(jc, 60, 2.0)
-		if _game != null:
-			if _game.has_method("flash_screen"):
-				_game.flash_screen(Color(jc.r, jc.g, jc.b, 0.3), 0.4)
-			if _game.has_method("shake_camera"):
-				_game.shake_camera(11.0, 0.5)
-			if _game.has_method("show_announcement") == false and _game.has_method("show_floating_text"):
-				_game.show_floating_text("JACKPOT!", global_position + Vector2(0, -110), jc)
-		if _game != null and _game.ui != null and _game.ui.has_method("show_announcement"):
-			var label := "DIAMOND!" if best == "diamond" else "JACKPOT!"
-			_game.ui.show_announcement(label, jc, 44, 1.6)
-		await get_tree().create_timer(0.5, true, false, true).timeout
+		if _game != null and _game.has_method("shake_camera"):
+			_game.shake_camera(11.0, 0.5)
+		await get_tree().create_timer(0.75, true, false, true).timeout
 
 func _animate_charge_up() -> void:
 	"""Chest rattles and swells while the riser builds."""
