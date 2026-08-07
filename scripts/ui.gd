@@ -1431,6 +1431,231 @@ func set_chest_blackout(active: bool) -> void:
 	_modal_backdrop_for_chest = active
 	_refresh_modal_backdrop()
 
+# ============================================
+# CHEST REVEAL — full-screen jackpot takeover
+#
+# The world-space version read as "some particles happened near a crate". The
+# reward moment has to own the screen: dim everything, land the chest dead
+# centre, build tension, burst, then slam the prizes in one at a time.
+#
+# All tweens ignore time_scale because the chest modal freezes the game.
+# ============================================
+
+const CHEST_RARITY_COLORS := {
+	"common": Color(0.55, 0.95, 0.55),
+	"rare": Color(0.40, 0.70, 1.0),
+	"epic": Color(0.85, 0.40, 1.0),
+	"diamond": Color(0.35, 1.0, 1.0),
+}
+const CHEST_RARITY_RANK := {"common": 0, "rare": 1, "epic": 2, "diamond": 3}
+
+var _chest_reveal_root: Control = null
+var _chest_rays: TextureRect = null
+var _chest_sprite: TextureRect = null
+var _chest_banner: Label = null
+var _chest_flash: ColorRect = null
+static var _rays_texture: ImageTexture = null
+
+static func _get_rays_texture() -> ImageTexture:
+	"""Radial god-rays sprite, generated once. Alternating spokes fading out
+	toward the rim — the classic 'something great is happening' backdrop."""
+	if _rays_texture != null:
+		return _rays_texture
+	var size := 512
+	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var center := Vector2(size, size) * 0.5
+	var spokes := 16.0
+	for y in range(size):
+		for x in range(size):
+			var d := Vector2(x, y) - center
+			var dist := d.length() / (size * 0.5)
+			if dist > 1.0:
+				continue
+			# Wedge pattern: smooth spokes, softened near the hub.
+			var ang := atan2(d.y, d.x)
+			var wedge := 0.5 + 0.5 * cos(ang * spokes)
+			wedge = pow(wedge, 2.4)
+			var falloff := clampf(1.0 - dist, 0.0, 1.0)
+			falloff = pow(falloff, 1.4) * clampf(dist * 4.0, 0.0, 1.0)
+			var a := wedge * falloff
+			if a > 0.004:
+				img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
+	_rays_texture = ImageTexture.create_from_image(img)
+	return _rays_texture
+
+func _build_chest_reveal() -> void:
+	if _chest_reveal_root != null and is_instance_valid(_chest_reveal_root):
+		return
+	_chest_reveal_root = Control.new()
+	_chest_reveal_root.name = "ChestReveal"
+	_chest_reveal_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_chest_reveal_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chest_reveal_root.z_index = 200
+	_chest_reveal_root.visible = false
+	$HUD.add_child(_chest_reveal_root)
+
+	_chest_rays = TextureRect.new()
+	_chest_rays.texture = _get_rays_texture()
+	_chest_rays.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_chest_rays.set_anchors_preset(Control.PRESET_CENTER)
+	_chest_rays.custom_minimum_size = Vector2(760, 760)
+	_chest_rays.size = Vector2(760, 760)
+	_chest_rays.position = -_chest_rays.size * 0.5
+	_chest_rays.pivot_offset = _chest_rays.size * 0.5
+	_chest_rays.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chest_rays.modulate = Color(1.0, 0.9, 0.5, 0.0)
+	var ray_mat := CanvasItemMaterial.new()
+	ray_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_chest_rays.material = ray_mat
+	_chest_reveal_root.add_child(_chest_rays)
+
+	_chest_sprite = TextureRect.new()
+	var chest_tex_path := "res://assets/level1/level1_props/prop_graveyard_crates_32_v001.png"
+	if ResourceLoader.exists(chest_tex_path):
+		_chest_sprite.texture = load(chest_tex_path)
+	_chest_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_chest_sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_chest_sprite.set_anchors_preset(Control.PRESET_CENTER)
+	_chest_sprite.custom_minimum_size = Vector2(192, 192)
+	_chest_sprite.size = Vector2(192, 192)
+	_chest_sprite.position = Vector2(-96, -150)
+	_chest_sprite.pivot_offset = Vector2(96, 96)
+	_chest_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chest_reveal_root.add_child(_chest_sprite)
+
+	_chest_banner = Label.new()
+	_chest_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_chest_banner.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_chest_banner.offset_left = -400.0
+	_chest_banner.offset_right = 400.0
+	_chest_banner.offset_top = 54.0
+	_chest_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(_chest_banner, 44)
+	_chest_banner.add_theme_constant_override("outline_size", 8)
+	_chest_banner.add_theme_color_override("font_outline_color", Color(0.1, 0.02, 0.03))
+	_chest_banner.modulate.a = 0.0
+	_chest_reveal_root.add_child(_chest_banner)
+
+	_chest_flash = ColorRect.new()
+	_chest_flash.color = Color(1, 1, 1, 0)
+	_chest_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_chest_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chest_reveal_root.add_child(_chest_flash)
+
+func _rt(obj: Object, prop: String, to, dur: float, trans := Tween.TRANS_QUAD, ease_t := Tween.EASE_OUT) -> Tween:
+	"""Tween that keeps running while the chest modal has the game frozen."""
+	var tw := create_tween()
+	tw.set_ignore_time_scale(true)
+	tw.tween_property(obj, prop, to, dur).set_trans(trans).set_ease(ease_t)
+	return tw
+
+func play_chest_reveal(items: Array, best_rarity: String) -> void:
+	"""Full jackpot sequence. Awaited by treasure_chest.gd."""
+	_build_chest_reveal()
+	if _chest_reveal_root == null:
+		return
+	var tree := get_tree()
+	if tree == null:
+		return
+
+	# Reset state
+	_chest_reveal_root.visible = true
+	_chest_reveal_root.modulate.a = 1.0
+	_chest_banner.modulate.a = 0.0
+	_chest_flash.color = Color(1, 1, 1, 0)
+	_chest_rays.modulate = Color(1.0, 0.9, 0.5, 0.0)
+	_chest_rays.rotation = 0.0
+	_chest_sprite.scale = Vector2.ZERO
+	_chest_sprite.modulate = Color.WHITE
+	_chest_sprite.position = Vector2(-96, -150)
+
+	# 1. Chest slams in from nothing and overshoots — physical arrival.
+	_rt(_chest_sprite, "scale", Vector2(1.15, 1.15), 0.28, Tween.TRANS_BACK)
+	_rt(_chest_rays, "modulate", Color(1.0, 0.9, 0.5, 0.35), 0.5)
+	await tree.create_timer(0.3, true, false, true).timeout
+	if not is_inside_tree():
+		return
+
+	# 2. Anticipation: rattle harder and brighter as the riser builds.
+	var base_pos := _chest_sprite.position
+	for i in range(6):
+		var amp := 4.0 + float(i) * 3.0
+		var step := 0.09 - float(i) * 0.008
+		var t1 := create_tween()
+		t1.set_ignore_time_scale(true)
+		t1.tween_property(_chest_sprite, "position", base_pos + Vector2(amp, 0), step * 0.5)
+		t1.tween_property(_chest_sprite, "position", base_pos - Vector2(amp, 0), step)
+		t1.tween_property(_chest_sprite, "position", base_pos, step * 0.5)
+		var glow := 1.0 + float(i) * 0.32
+		_rt(_chest_sprite, "modulate", Color(glow, glow * 0.92, glow * 0.7), step * 2.0)
+		_rt(_chest_rays, "modulate", Color(1.0, 0.9, 0.5, 0.35 + float(i) * 0.09), step * 2.0)
+		_chest_rays.rotation += 0.12
+		await tree.create_timer(step * 2.0, true, false, true).timeout
+		if not is_inside_tree():
+			return
+
+	# 3. BURST. White flash, chest blows out, rays flare wide.
+	_chest_flash.color = Color(1, 1, 1, 0.85)
+	_rt(_chest_flash, "color", Color(1, 1, 1, 0.0), 0.45)
+	_rt(_chest_sprite, "scale", Vector2(2.6, 2.6), 0.35, Tween.TRANS_QUAD)
+	_rt(_chest_sprite, "modulate", Color(3.0, 2.6, 1.6, 0.0), 0.35)
+	_rt(_chest_rays, "modulate", Color(1.0, 0.95, 0.7, 0.75), 0.25)
+	await tree.create_timer(0.28, true, false, true).timeout
+	if not is_inside_tree():
+		return
+
+	# 4. One beat per prize, each louder than the last.
+	#
+	# These used to slam in a stack of named cards. That list was a holdover from
+	# an older build: the HUD banner already says what dropped, and the panel sat
+	# over the base restating it while the burst it was supposed to punctuate had
+	# already faded. The beat itself stays - rays kick round and the screen pulses
+	# once per item, on the same clock as the sounds and particles the chest fires
+	# in world space, so a five-item haul still reads as five things happening.
+	for i in range(items.size()):
+		var item: Dictionary = items[i]
+		var rank := int(CHEST_RARITY_RANK.get(str(item.get("rarity", "common")), 0))
+		var tint: Color = CHEST_RARITY_COLORS.get(str(item.get("rarity", "common")), Color.WHITE)
+		_chest_rays.rotation += 0.18 + rank * 0.1
+		_rt(_chest_rays, "modulate", Color(1.0, 0.95, 0.7, 0.55 + rank * 0.12), 0.12)
+		# Rarer prizes flash brighter, so the escalation is visible and not just
+		# audible.
+		_chest_flash.color = Color(tint.r, tint.g, tint.b, 0.10 + rank * 0.07)
+		_rt(_chest_flash, "color", Color(tint.r, tint.g, tint.b, 0.0), 0.28)
+		await tree.create_timer(0.3 + rank * 0.12, true, false, true).timeout
+		if not is_inside_tree():
+			return
+
+	# 5. Jackpot banner for a genuinely rare haul.
+	if int(CHEST_RARITY_RANK.get(best_rarity, 0)) >= 2:
+		var jc: Color = CHEST_RARITY_COLORS.get(best_rarity, Color(1.0, 0.9, 0.4))
+		_chest_banner.text = "DIAMOND!" if best_rarity == "diamond" else "JACKPOT!"
+		_chest_banner.add_theme_color_override("font_color", jc)
+		_chest_banner.scale = Vector2(2.2, 2.2)
+		_chest_banner.pivot_offset = Vector2(400, 26)
+		var bt := create_tween()
+		bt.set_ignore_time_scale(true)
+		bt.set_parallel(true)
+		bt.tween_property(_chest_banner, "modulate:a", 1.0, 0.18)
+		bt.tween_property(_chest_banner, "scale", Vector2.ONE, 0.42).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		_chest_flash.color = Color(jc.r, jc.g, jc.b, 0.45)
+		_rt(_chest_flash, "color", Color(jc.r, jc.g, jc.b, 0.0), 0.6)
+		await tree.create_timer(0.75, true, false, true).timeout
+		if not is_inside_tree():
+			return
+
+	# 6. Let the last beat land, then clear. Shorter than it was: the hold used
+	# to exist so the prize cards could be read, and there is nothing to read now.
+	await tree.create_timer(0.25, true, false, true).timeout
+	if not is_inside_tree():
+		return
+	_rt(_chest_reveal_root, "modulate:a", 0.0, 0.3)
+	await tree.create_timer(0.32, true, false, true).timeout
+	if not is_inside_tree():
+		return
+	_chest_reveal_root.visible = false
+
 func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
 	_modal_backdrop_for_tech = true
 	_refresh_modal_backdrop()

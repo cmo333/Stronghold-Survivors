@@ -48,11 +48,15 @@ const UPGRADE_COUNTS = [
 
 @export var auto_open_delay = 0.25
 
+# Static: only one chest can run modal resolution at a time.
+static var _chest_modal_in_progress: bool = false
+
 var _game: Node = null
 var _player_in_range = false
 var _opener_id: int = 0  # peer_id of the player opening (FFA score credit; 0 = local)
 var _opened = false
 var _opening = false
+var _owns_modal = false
 var _proximity_timer = 0.0
 var _upgrades_to_grant: Array = []
 
@@ -68,7 +72,24 @@ func _ready() -> void:
 	collision_mask = GameLayers.PLAYER
 	body_entered.connect(_on_body_entered)
 	body_exited.connect(_on_body_exited)
+	tree_exiting.connect(_on_tree_exiting)
 	_start_glow_pulse()
+
+# Safety net: if this chest is freed for any reason while it owns modal state, release it.
+func _on_tree_exiting() -> void:
+	_release_modal()
+
+func _release_modal() -> void:
+	if not _owns_modal:
+		return
+	_owns_modal = false
+	_chest_modal_in_progress = false
+	if _game != null and is_instance_valid(_game) and _game.has_method("end_chest_modal"):
+		_game.call_deferred("end_chest_modal")
+
+# Backward-compatible alias for older helper flow paths.
+func _restore_time_scale() -> void:
+	_release_modal()
 
 func _process(delta: float) -> void:
 	if _opened or _opening:
@@ -144,20 +165,34 @@ func _start_open() -> void:
 	if _game.has_method("on_treasure_opened"):
 		_game.on_treasure_opened(_opener_id)
 
-	# Rewards land immediately and the run never stops. The chest used to freeze
-	# the game and hand the screen to a full-screen card reveal; it interrupted
-	# the fight for several seconds to restate what the banner already says, so
-	# it is gone. The world-space payoff stays - it plays over live combat.
+	if _chest_modal_in_progress:
+		_grant_all_upgrades_instant()
+		_opened = true
+		queue_free()
+		return
+
+	_chest_modal_in_progress = true
+	_owns_modal = true
+	if _game.has_method("begin_chest_modal"):
+		_game.begin_chest_modal()
 	if _game.has_method("add_resources"):
 		_game.add_resources(bonus_gold, _opener_id)
 	if _game.has_method("show_chest_summary"):
 		_game.show_chest_summary(bonus_gold, _upgrades_to_grant.size())
+	# Visual takeover and audio run together; await the visual since it is the
+	# longer of the two and owns the screen.
+	var ui_node = _game.get("ui")
+	if ui_node != null and ui_node.has_method("play_chest_reveal"):
+		_play_jackpot_sequence()
+		await ui_node.play_chest_reveal(_upgrades_to_grant, _best_rarity())
+	else:
+		await _play_jackpot_sequence()
 	_grant_all_upgrades_instant()
 	_opened = true
-	# Burst, coins and the per-item beats run unawaited: the chest node has to
-	# survive them, so it frees itself when the sequence finishes rather than
-	# here.
-	_play_jackpot_sequence()
+	if is_inside_tree():
+		await get_tree().create_timer(0.35, true, false, true).timeout
+	_release_modal()
+	queue_free()
 
 # ============================================
 # JACKPOT PRESENTATION
@@ -190,25 +225,20 @@ func _best_rarity() -> String:
 	return best
 
 func _play_jackpot_sequence() -> void:
-	"""Audio + world FX for an opened chest, played over live combat.
+	"""Audio + world FX, timed to the full-screen reveal in ui.gd.
 
-	This used to be timed against a full-screen reveal that froze the run. With
-	that gone the beats have to earn their place while the player is still being
-	shot at, so the anticipation is short and every beat is world-space: sound,
-	particles at the chest, and camera shake.
-
-	Frees the chest when it finishes - the node has to outlive its own effects.
+	The visual takeover runs in parallel (started by the caller) — this drives
+	the sound and camera so every audio beat lands on its matching visual beat.
 	"""
 	if not is_inside_tree():
-		queue_free()
 		return
 	var best := _best_rarity()
 
-	# 1. Anticipation. Brief now: there is no modal holding the player still, so
-	#    a long riser is just a delay between opening the chest and the payoff.
+	# 1. Anticipation. The riser's tremolo accelerates, so the pause before the
+	#    first reveal is doing real work — never cut this short.
 	AudioManager.play_one_shot("chest_charge", global_position, AudioManager.HIGH_PRIORITY)
 	_animate_charge_up()
-	await get_tree().create_timer(0.25, true, false, true).timeout
+	await get_tree().create_timer(0.85, true, false, true).timeout
 	if not is_inside_tree():
 		return
 
@@ -238,7 +268,8 @@ func _play_jackpot_sequence() -> void:
 		_burst(color, 10 + rank * 10, 0.7 + float(rank) * 0.35)
 		if _game != null and _game.has_method("shake_camera"):
 			_game.shake_camera(float(punch["shake"]), 0.28)
-		await get_tree().create_timer(0.24 + rank * 0.1, true, false, true).timeout
+		# Matches the card slam timing in ui.play_chest_reveal().
+		await get_tree().create_timer(0.3 + rank * 0.12, true, false, true).timeout
 
 	# 4. Payoff. Only a genuinely rare drop earns the fanfare — firing it on
 	#    every chest would make it wallpaper.
@@ -251,9 +282,6 @@ func _play_jackpot_sequence() -> void:
 		if _game != null and _game.has_method("shake_camera"):
 			_game.shake_camera(11.0, 0.5)
 		await get_tree().create_timer(0.75, true, false, true).timeout
-
-	if is_inside_tree():
-		queue_free()
 
 func _animate_charge_up() -> void:
 	"""Chest rattles and swells while the riser builds."""
@@ -298,6 +326,167 @@ func _grant_all_upgrades_instant() -> void:
 			_game.apply_chest_upgrade(id, upgrade)
 
 # Vampire Survivors style dramatic opening sequence
+func _play_vs_opening_sequence() -> void:
+	if _game == null:
+		if is_inside_tree():
+			_game = get_tree().get_first_node_in_group("game")
+
+	# PHASE 1: Build anticipation - chest glows brighter
+	if glow != null and is_inside_tree():
+		var bright_tween = create_tween()
+		bright_tween.set_speed_scale(1.0 / max(Engine.time_scale, 0.01))
+		bright_tween.tween_property(glow, "modulate", Color(1.0, 0.9, 0.4, 0.9), 0.3)
+		bright_tween.parallel().tween_property(glow, "scale", Vector2.ONE * 1.4, 0.3)
+
+	# Big particle burst
+	if _game != null and _game.has_method("spawn_glow_particle"):
+		for i in range(20):
+			var angle = (TAU / 20.0) * i
+			var dir = Vector2.RIGHT.rotated(angle)
+			var vel = dir * randf_range(150.0, 300.0)
+			var color = Color(1.0, 0.85, 0.3).lerp(Color.WHITE, randf_range(0.2, 0.5))
+			_game.spawn_glow_particle(global_position, color, randf_range(12.0, 20.0), 1.2, vel, 3.0, 0.8, 1.3, 5)
+
+	# Wait for anticipation
+	if not is_inside_tree():
+		_grant_all_upgrades_instant()
+		_restore_time_scale()
+		return
+	await get_tree().create_timer(0.4 * max(Engine.time_scale, 0.01)).timeout
+	if not is_inside_tree():
+		# tree_exiting signal handles time_scale restore
+		return
+
+	# PHASE 2: Chest bursts open with screen shake
+	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
+
+	if body != null and is_inside_tree():
+		var open_tween = create_tween()
+		open_tween.set_speed_scale(1.0 / max(Engine.time_scale, 0.01))
+		open_tween.tween_property(body, "rotation", -0.6, 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		# Squash relative to the body's authored base scale so the pop scales with
+		# the chest size instead of snapping it back to ~1x.
+		open_tween.parallel().tween_property(body, "scale", body.scale * Vector2(1.1, 0.9), 0.1).set_trans(Tween.TRANS_ELASTIC)
+
+	if _game != null and _game.has_method("shake_camera"):
+		_game.shake_camera(8.0)
+	if _game != null and _game.has_method("flash_screen"):
+		_game.flash_screen(Color(1.0, 0.9, 0.4, 0.4), 0.2)
+
+	# Wait for open animation
+	if not is_inside_tree():
+		_grant_all_upgrades_instant()
+		_restore_time_scale()
+		return
+	await get_tree().create_timer(0.3 * max(Engine.time_scale, 0.01)).timeout
+	if not is_inside_tree():
+		return
+
+	# PHASE 3: Items fly out one by one (VS style)
+	await _reveal_items_vs_style()
+
+	# Always restore time scale and clean up
+	_restore_time_scale()
+	_opened = true
+	queue_free()
+
+func _reveal_items_vs_style() -> void:
+	if _game == null:
+		return
+
+	var item_count = _upgrades_to_grant.size()
+	var spread_angle = min(PI * 0.6, item_count * 0.3)
+	var start_angle = -spread_angle / 2.0
+
+	for i in range(item_count):
+		var upgrade = _upgrades_to_grant[i]
+		var rarity = upgrade.get("rarity", "common")
+		var color = RARITY_COLORS.get(rarity, Color.WHITE)
+
+		var angle = start_angle + (spread_angle / (item_count - 1 if item_count > 1 else 1)) * i
+		var fly_direction = Vector2.RIGHT.rotated(angle - PI/2)
+		var target_pos = global_position + fly_direction * 120.0
+
+		_spawn_floating_item(upgrade, target_pos, color, i)
+
+		# Pause between items for drama
+		if not is_inside_tree():
+			# Grant any remaining upgrades we haven't shown yet
+			for j in range(i + 1, item_count):
+				var remaining = _upgrades_to_grant[j]
+				var rid = remaining.get("id", "")
+				if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("apply_chest_upgrade"):
+					_game.call_deferred("apply_chest_upgrade", rid, remaining)
+			return
+		await get_tree().create_timer(0.5 * max(Engine.time_scale, 0.01)).timeout
+		if not is_inside_tree():
+			for j in range(i + 1, item_count):
+				var remaining = _upgrades_to_grant[j]
+				var rid = remaining.get("id", "")
+				if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("apply_chest_upgrade"):
+					_game.call_deferred("apply_chest_upgrade", rid, remaining)
+			return
+
+	# Final burst after all items
+	if _game != null and _game.has_method("spawn_glow_particle"):
+		for i in range(30):
+			var dir = Vector2.RIGHT.rotated(randf() * TAU)
+			var vel = dir * randf_range(50.0, 200.0)
+			var color = Color(1.0, 1.0, 0.5)
+			_game.spawn_glow_particle(global_position, color, randf_range(8.0, 16.0), 1.0, vel, 2.5, 0.7, 1.2, 5)
+
+func _spawn_floating_item(upgrade: Dictionary, target_pos: Vector2, color: Color, index: int) -> void:
+	var rarity = upgrade.get("rarity", "common")
+	var display_name = upgrade.get("name", "")
+	
+	# Create floating label (VS style item name)
+	if _game != null and is_instance_valid(_game) and _game.is_inside_tree() and _game.has_method("show_floating_text"):
+		# Main item text
+		var prefix = ""
+		if rarity == "diamond":
+			prefix = "💎 "
+		elif rarity == "epic":
+			prefix = "✦ "
+		
+		_game.call_deferred("show_floating_text", prefix + display_name, target_pos, color)
+		
+		# Apply the upgrade immediately (VS auto-collects)
+		var id = upgrade.get("id", "")
+		_game.call_deferred("apply_chest_upgrade", id, upgrade)
+	
+	# Rarity-specific effects
+	match rarity:
+		"diamond":
+			if _game != null and _game.has_method("shake_camera"):
+				_game.shake_camera(10.0)
+			if _game != null and _game.has_method("flash_screen"):
+				_game.flash_screen(Color(0.2, 1.0, 1.0, 0.5), 0.4)
+			# Diamond particle ring
+			if _game != null and _game.has_method("spawn_glow_particle"):
+				for j in range(16):
+					var angle = (TAU / 16.0) * j
+					var dir = Vector2.RIGHT.rotated(angle)
+					var vel = dir * 100.0
+					_game.spawn_glow_particle(target_pos, color, 15.0, 1.0, vel, 3.0, 0.8, 1.2, 5)
+		"epic":
+			if _game != null and _game.has_method("spawn_glow_particle"):
+				for j in range(10):
+					var dir = Vector2.RIGHT.rotated(randf() * TAU)
+					var vel = dir * randf_range(40.0, 100.0)
+					_game.spawn_glow_particle(target_pos, color, 10.0, 0.8, vel, 2.5, 0.7, 1.0, 5)
+		"rare":
+			if _game != null and _game.has_method("spawn_glow_particle"):
+				for j in range(6):
+					var dir = Vector2.RIGHT.rotated(randf() * TAU)
+					var vel = dir * randf_range(30.0, 70.0)
+					_game.spawn_glow_particle(target_pos, color, 7.0, 0.6, vel, 2.0, 0.6, 0.9, 5)
+		_:
+			if _game != null and _game.has_method("spawn_glow_particle"):
+				for j in range(4):
+					var dir = Vector2.RIGHT.rotated(randf() * TAU)
+					var vel = dir * randf_range(20.0, 50.0)
+					_game.spawn_glow_particle(target_pos, color, 5.0, 0.5, vel, 1.5, 0.5, 0.8, 5)
+
 func _roll_upgrades() -> Array:
 	var result = []
 	

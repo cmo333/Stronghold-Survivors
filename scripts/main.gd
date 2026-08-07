@@ -2773,11 +2773,25 @@ func is_menu_open() -> bool:
 		return true
 	return false
 
-# Chests no longer take the screen, so nothing enters this state any more. The
-# flag and its guards stay: they describe "a modal owns the screen and the run
-# is frozen", which the restart paths still clear and which the next screen-
-# owning moment can reuse without rediscovering every place that has to respect
-# it.
+func begin_chest_modal() -> void:
+	if game_over:
+		return
+	_chest_modal_depth += 1
+	chest_modal_open = true
+	_set_pause_allowed(false)
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(true)
+	_apply_base_time_scale()
+
+func end_chest_modal() -> void:
+	_chest_modal_depth = max(0, _chest_modal_depth - 1)
+	if _chest_modal_depth > 0:
+		return
+	chest_modal_open = false
+	if ui != null and ui.has_method("set_chest_blackout"):
+		ui.set_chest_blackout(false)
+	_set_pause_allowed(_can_pause_game())
+	_apply_base_time_scale()
 
 func is_damage_blocked() -> bool:
 	if game_over:
