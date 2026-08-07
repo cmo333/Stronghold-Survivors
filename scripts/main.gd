@@ -447,6 +447,12 @@ const FFA_MAX_ENEMY_MULT = 1.5
 const FFA_RATE_PER_PLAYER = 0.55
 const FFA_CAP_PER_PLAYER = 0.60
 const FFA_DIFFICULTY_PER_PLAYER = 0.14
+
+# Global balance knob. Effective pressure is roughly (enemy strength x body
+# count), so the tuning is split evenly across both axes - raising each by
+# sqrt(1.10) lands the product at exactly +10% rather than the +21% you'd get
+# applying the full multiplier to each. Set to 1.0 to disable.
+const DIFFICULTY_TUNING_MULT = 1.10
 var max_projectiles = 150
 var max_particles = 150  # Cap glow particles and FX to prevent memory issues
 var elite_health_mult = 2.2
@@ -2855,7 +2861,16 @@ func _get_horde_count_multiplier(time_sec: float) -> float:
 	if time_sec < EARLY_GAME_HORDE_RAMP_TIME:
 		var t = clampf(time_sec / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
 		target = lerpf(1.0, target, t)
-	return target * _extraction_count_multiplier()
+	return target * _extraction_count_multiplier() * difficulty_count_mult()
+
+func difficulty_count_mult() -> float:
+	"""Body-count half of the global balance knob. Also read by the wave manager
+	so timed events (bat swarm, plague wall) scale with the same dial."""
+	return sqrt(DIFFICULTY_TUNING_MULT)
+
+func difficulty_threat_mult() -> float:
+	"""Enemy-strength half of the global balance knob."""
+	return sqrt(DIFFICULTY_TUNING_MULT)
 
 func _extraction_count_multiplier() -> float:
 	"""Raw body count per phase. Separate from threat (which scales enemy
@@ -2969,6 +2984,7 @@ func _get_threat_multiplier(time_sec: float) -> float:
 		base = (1.0 + t * 1.8) * run_threat_mult
 	base *= _extraction_threat_multiplier(time_sec)
 	base *= _player_power_threat_multiplier()
+	base *= difficulty_threat_mult()
 	# FFA: fold the per-player difficulty scale into the threat multiplier so it
 	# flows through every difficulty read (spawn_enemy, bosses, minions, splits).
 	if is_ffa():

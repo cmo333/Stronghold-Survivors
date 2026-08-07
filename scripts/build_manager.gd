@@ -28,7 +28,12 @@ const PATH_CLEARANCE_DIRS = [
 	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
 ]
 const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
+# Half-width of the local box used to prove the extractor/generators are not
+# walled in. Large enough that any ring a player can actually afford fails to
+# escape it, small enough that the extra BFS stays cheap during build preview.
+const PATH_ESCAPE_BOX_RADIUS = 420.0
 
+var _last_path_block_reason := "Must leave path open!"
 var game: Node2D = null
 var buildings_root: Node2D = null
 var ui: CanvasLayer = null
@@ -986,7 +991,7 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	if blocks_path and result["clear"]:
 		result["path_clear"] = _check_path_validity(pos, result["footprint"])
 		if not result["path_clear"]:
-			result["reason"] = "Must leave path open!"
+			result["reason"] = _last_path_block_reason
 	
 	result["can_place"] = result["affordable"] and result["clear"] and result["path_clear"]
 	return result
@@ -1000,7 +1005,9 @@ func _get_effective_footprint_radius(def: Dictionary) -> float:
 	return radius
 
 func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
-	"""Check if placing a building would block paths to the player."""
+	"""Check if placing a building would block paths to the player or seal off the
+	extraction objective."""
+	_last_path_block_reason = "Must leave path open!"
 	if game == null or game.player == null:
 		return true
 
@@ -1037,31 +1044,12 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 	)
 
 	var total = grid_size * grid_size
-	var blocked = PackedByteArray()
-	blocked.resize(total)
-	for i in range(total):
-		blocked[i] = 0
-
-	# Mark blocked cells from existing buildings
-	for building in get_tree().get_nodes_in_group("buildings"):
-		if building == null or not is_instance_valid(building):
-			continue
-		var blocks_path = true
-		if "blocks_path" in building:
-			blocks_path = bool(building.blocks_path)
-		if not blocks_path:
-			continue
-		var radius = 12.0
-		if building.has_method("get_footprint_radius"):
-			radius = float(building.get_footprint_radius())
-		_mark_blocked_circle(blocked, origin, grid_size, cell_size, building.global_position, radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
-
-	# Mark blocked cells for proposed building
-	_mark_blocked_circle(blocked, origin, grid_size, cell_size, proposed_pos, proposed_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+	var blocked = _build_blocked_grid(origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius)
 
 	# Clearance field (distance from nearest obstacle cell)
-	var clearance = _compute_clearance_field(blocked, grid_size)
 	var required_cells = _get_required_clearance_cells(cell_size)
+	var clearance = _clearance_field_if_needed(blocked, grid_size, required_cells)
+	var needs_clearance: bool = required_cells > 1
 
 	# BFS from player
 	var dist = PackedInt32Array()
@@ -1072,7 +1060,7 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 	if start_cell.x < 0 or start_cell.y < 0 or start_cell.x >= grid_size or start_cell.y >= grid_size:
 		return true
 	var start_idx = start_cell.y * grid_size + start_cell.x
-	if blocked[start_idx] == 1 or clearance[start_idx] < required_cells:
+	if blocked[start_idx] == 1 or (needs_clearance and clearance[start_idx] < required_cells):
 		return false
 	dist[start_idx] = 0
 	var queue: Array = [start_idx]
@@ -1089,7 +1077,7 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
 				continue
 			var nidx = ny * grid_size + nx
-			if blocked[nidx] == 1 or clearance[nidx] < required_cells:
+			if blocked[nidx] == 1 or (needs_clearance and clearance[nidx] < required_cells):
 				continue
 			if dist[nidx] >= 0:
 				continue
@@ -1099,6 +1087,12 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 					continue
 			dist[nidx] = dist[idx] + 1
 			queue.append(nidx)
+
+	# The extractor and generators must stay attackable - sealing the objective
+	# behind walls would win the run without defending it.
+	if not _protected_targets_stay_reachable(dist, origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius):
+		_last_path_block_reason = "Can't wall in the extractor!"
+		return false
 
 	# Validate enough reachable spawn ring cells to keep spawning reliable.
 	var min_dist_sq = spawn_min * spawn_min
@@ -1123,6 +1117,155 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 		return false
 	var min_reachable_cells = max(PATH_MIN_REACHABLE_SPAWN_CELLS, int(ceil(float(total_spawn_cells) * PATH_MIN_REACHABLE_SPAWN_FRACTION)))
 	return reachable_spawn_cells >= min_reachable_cells
+
+func _build_blocked_grid(origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float) -> PackedByteArray:
+	var blocked = PackedByteArray()
+	blocked.resize(grid_size * grid_size)
+	for i in range(blocked.size()):
+		blocked[i] = 0
+	for building in get_tree().get_nodes_in_group("buildings"):
+		if building == null or not is_instance_valid(building):
+			continue
+		var blocks_path = true
+		if "blocks_path" in building:
+			blocks_path = bool(building.blocks_path)
+		if not blocks_path:
+			continue
+		var radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			radius = float(building.get_footprint_radius())
+		_mark_blocked_circle(blocked, origin, grid_size, cell_size, building.global_position, radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+	# The building being previewed is not in the scene yet, so mark it explicitly.
+	_mark_blocked_circle(blocked, origin, grid_size, cell_size, proposed_pos, proposed_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+	return blocked
+
+func _protected_targets() -> Array:
+	"""Buildings that enemies must always be able to reach.
+
+	Walling the extractor in would otherwise win the run for free: the horde
+	targets it, so a sealed extractor is an unattackable objective. Same rule the
+	player already lives under - you can't box yourself in either."""
+	var targets: Array = []
+	if game == null:
+		return targets
+	if "extractor" in game:
+		var ext = game.extractor
+		if ext != null and is_instance_valid(ext) and ext is Node2D:
+			targets.append(ext)
+	if "active_generators" in game:
+		for gen in game.active_generators:
+			if gen == null or not is_instance_valid(gen) or not (gen is Node2D):
+				continue
+			if gen in targets:
+				continue
+			targets.append(gen)
+	return targets
+
+func _target_footprint(target: Node2D) -> float:
+	if target.has_method("get_footprint_radius"):
+		return float(target.get_footprint_radius())
+	return 16.0
+
+func _approach_cells(target_pos: Vector2, target_radius: float, origin: Vector2, grid_size: int, cell_size: float) -> Array:
+	"""Cells in the ring just outside a target's footprint - where an attacker has
+	to stand. The footprint itself is marked blocked, so testing its own cell
+	would always report "unreachable"."""
+	var reach = target_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET + cell_size * 2.0
+	var min_cell = _world_to_path_cell(target_pos - Vector2(reach, reach), origin, cell_size)
+	var max_cell = _world_to_path_cell(target_pos + Vector2(reach, reach), origin, cell_size)
+	var cells: Array = []
+	for x in range(min_cell.x, max_cell.x + 1):
+		for y in range(min_cell.y, max_cell.y + 1):
+			if x < 0 or y < 0 or x >= grid_size or y >= grid_size:
+				continue
+			cells.append(y * grid_size + x)
+	return cells
+
+func _protected_targets_stay_reachable(dist: PackedInt32Array, origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float) -> bool:
+	for target in _protected_targets():
+		var target_pos: Vector2 = (target as Node2D).global_position
+		var target_radius := _target_footprint(target)
+		var cells := _approach_cells(target_pos, target_radius, origin, grid_size, cell_size)
+		if cells.is_empty():
+			# Target sits outside the player-centred grid entirely; fall back to a
+			# local check around it.
+			if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+				return false
+			continue
+		var connected := false
+		for idx in cells:
+			if dist[idx] >= 0:
+				connected = true
+				break
+		if connected:
+			continue
+		# Not connected to the player's region within this grid. That is either a
+		# genuine seal or a route that loops outside the grid, so confirm with a
+		# local escape test before rejecting the placement.
+		if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+			return false
+	return true
+
+func _target_escapes_locally(target_pos: Vector2, target_radius: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float, cell_size: float) -> bool:
+	"""Can something standing next to the target walk out of a generous box around
+	it? A ring big enough to fail this is a deliberate enclosure."""
+	var grid_radius = int(ceil((target_radius + PATH_ESCAPE_BOX_RADIUS) / cell_size))
+	var grid_size = grid_radius * 2 + 1
+	var target_cell = Vector2i(
+		int(floor(target_pos.x / cell_size)),
+		int(floor(target_pos.y / cell_size))
+	)
+	var origin = Vector2(
+		float(target_cell.x - grid_radius) * cell_size,
+		float(target_cell.y - grid_radius) * cell_size
+	)
+	var blocked = _build_blocked_grid(origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius)
+	var required_cells = _get_required_clearance_cells(cell_size)
+	var clearance = _clearance_field_if_needed(blocked, grid_size, required_cells)
+	var needs_clearance: bool = required_cells > 1
+
+	var total = grid_size * grid_size
+	var seen = PackedByteArray()
+	seen.resize(total)
+	for i in range(total):
+		seen[i] = 0
+	var queue: Array = []
+	for idx in _approach_cells(target_pos, target_radius, origin, grid_size, cell_size):
+		if blocked[idx] == 1 or seen[idx] == 1:
+			continue
+		if needs_clearance and clearance[idx] < required_cells:
+			continue
+		seen[idx] = 1
+		queue.append(idx)
+	if queue.is_empty():
+		# Nowhere to even stand next to it - fully walled.
+		return false
+	var head = 0
+	var dirs = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		if x == 0 or y == 0 or x == grid_size - 1 or y == grid_size - 1:
+			return true  # reached the edge of the box: open to the wider map
+		for dir in dirs:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			var nidx = ny * grid_size + nx
+			if seen[nidx] == 1 or blocked[nidx] == 1:
+				continue
+			if needs_clearance and clearance[nidx] < required_cells:
+				continue
+			if play_radius > 0.0:
+				var world = _path_cell_center(Vector2i(nx, ny), origin, cell_size)
+				if world.length() > play_radius:
+					# Outside the arena is not an escape route, but it is also not a
+					# wall the player built - treat the map edge as open.
+					return true
+			seen[nidx] = 1
+			queue.append(nidx)
+	return false
 
 func _world_to_path_cell(world_pos: Vector2, origin: Vector2, cell_size: float) -> Vector2i:
 	return Vector2i(
@@ -1150,6 +1293,19 @@ func _mark_blocked_circle(blocked: PackedByteArray, origin: Vector2, grid_size: 
 				continue
 			if abs(world.x - center.x) <= radius and abs(world.y - center.y) <= radius:
 				blocked[idx] = 1
+
+func _clearance_field_if_needed(blocked: PackedByteArray, grid_size: int, required_cells: int) -> PackedInt32Array:
+	"""The clearance field is a full multi-source BFS over every cell in the grid -
+	the single most expensive part of the placement check.
+
+	With the current agent radius (7) and cell size (16) `required_cells` works out
+	to 1, and a clearance of >= 1 is by definition "not a blocked cell" - so every
+	test against the field gives the same answer as testing `blocked` directly and
+	the whole pass is wasted work. Only build it if a genuinely wider corridor is
+	ever required."""
+	if required_cells <= 1:
+		return PackedInt32Array()
+	return _compute_clearance_field(blocked, grid_size)
 
 func _compute_clearance_field(blocked: PackedByteArray, grid_size: int) -> PackedInt32Array:
 	var total = grid_size * grid_size

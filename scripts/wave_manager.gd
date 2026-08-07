@@ -6,7 +6,14 @@ const ANNOUNCE_LEAD_TIME = 12.0
 const BAT_SWARM_INTERVAL = 180.0
 const PLANT_WALL_INTERVAL = 240.0
 
-const BAT_SWARM_COUNT = 60
+# Raised from 60 now that the budget bug below is fixed - the swarm used to
+# overshoot wildly, so the nominal count was never what actually landed. This
+# keeps the wall-of-bats moment while capping the real body count.
+const BAT_SWARM_COUNT = 72
+# Bats enter over a few frames instead of all at once. Instantiating the whole
+# swarm in one frame cost ~55ms - a visible stutter. They fly in from off-screen
+# and take seconds to converge, so spreading the spawn is invisible in play.
+const BAT_SWARM_SPAWN_PER_FRAME = 6
 const BAT_SWARM_SPEED_MULT = 1.7
 const BAT_SWARM_HEALTH_MULT = 0.5
 const BAT_SWARM_DAMAGE_MULT = 0.65
@@ -32,6 +39,7 @@ var _next_bat_swarm_time = BAT_SWARM_TIME
 var _next_plant_wall_time = PLANT_WALL_TIME
 var _bat_swarm_count = 0
 var _plant_wall_count = 0
+var _pending_bats: Array[Vector2] = []
 
 func setup(game_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
@@ -42,8 +50,20 @@ func setup(game_ref: Node2D, ui_ref: CanvasLayer) -> void:
 
 func update(_delta: float, time_sec: float) -> void:
 	game_time = time_sec
+	_drain_pending_bats()
 	_check_events()
 	_update_announcement()
+
+func _queue_bats(positions: Array[Vector2]) -> void:
+	_pending_bats.append_array(positions)
+
+func _drain_pending_bats() -> void:
+	if _pending_bats.is_empty():
+		return
+	var n = mini(BAT_SWARM_SPAWN_PER_FRAME, _pending_bats.size())
+	for i in range(n):
+		_spawn_bat(_pending_bats[i])
+	_pending_bats = _pending_bats.slice(n)
 
 # Centers each timed wave event targets. Solo: the single player. FFA: every
 # living player, so a bat swarm / plague wall descends on EACH person at once
@@ -116,21 +136,21 @@ func _spawn_bat_swarm() -> void:
 	var edge_distance = _get_edge_distance()
 	var spread = edge_distance
 	for center in centers:
-		var count = _get_event_spawn_budget(per_center)
+		# min(), not the raw budget. The budget is "how many MORE bodies the field
+		# can take" (cap + desired - current), so using it directly spawned the swarm
+		# up to the cap every time - on a lightly populated field that was 300+ bats
+		# instead of the intended count, which is what made the event lag.
+		var count = min(per_center, _get_event_spawn_budget(per_center))
 		if count <= 0:
 			continue
-		var spawned = 0
+		var positions: Array[Vector2] = []
 		for edge in range(4):
-			if spawned >= count:
+			if positions.size() >= count:
 				break
-			var position = _random_edge_position(edge, center, edge_distance, spread)
-			_spawn_bat(position)
-			spawned += 1
-		while spawned < count:
-			var edge = randi() % 4
-			var position = _random_edge_position(edge, center, edge_distance, spread)
-			_spawn_bat(position)
-			spawned += 1
+			positions.append(_random_edge_position(edge, center, edge_distance, spread))
+		while positions.size() < count:
+			positions.append(_random_edge_position(randi() % 4, center, edge_distance, spread))
+		_queue_bats(positions)
 
 func _spawn_plant_wall() -> void:
 	var centers := _event_target_centers()
@@ -242,6 +262,7 @@ func reset() -> void:
 	_next_plant_wall_time = PLANT_WALL_TIME
 	_bat_swarm_count = 0
 	_plant_wall_count = 0
+	_pending_bats.clear()
 	game_time = 0.0
 
 func _get_plant_wall_count() -> int:
@@ -252,4 +273,8 @@ func _get_plant_wall_count() -> int:
 func _get_event_scalar() -> float:
 	var time_scalar = clamp(game_time / 600.0, 0.0, 1.0)
 	var wave_scalar = clamp((_bat_swarm_count + _plant_wall_count) * 0.05, 0.0, 0.35)
-	return 1.0 + time_scalar * 0.6 + wave_scalar
+	var scalar = 1.0 + time_scalar * 0.6 + wave_scalar
+	# Timed events ride the same global balance knob as the regular horde.
+	if game != null and game.has_method("difficulty_count_mult"):
+		scalar *= float(game.difficulty_count_mult())
+	return scalar
