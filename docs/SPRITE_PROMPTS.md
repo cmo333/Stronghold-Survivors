@@ -260,6 +260,17 @@ order `E, SE, S, SW, W, NW, N, NE`.
 Naming: `player_<hero>_32_<DIR>_move_f001..f004_v001.png` → place in a new
 `assets/level1/level1_player_anim_<hero>/` directory (mirrors `level1_player_anim_hunterv2` / `_pyro`).
 
+**Only four facings are actually used.** `directional_sprite.gd` loads `N`, `E`, `SE` and `S`, and
+derives the rest: `W`/`SW` mirror `E`/`SE`, and `NE`/`NW` come from `N` (unmirrored / mirrored). Every
+generated set so far got the up-diagonals wrong — they came back facing the camera, so walking away
+from the screen showed the character's face — and the older sets faced east in all eight facings.
+Deriving makes a heading that disagrees with travel impossible. Spend the generation budget on those
+four facings and let the engine mirror; the other four are ignored if present.
+
+Frames within one facing must keep the body in the same place — the engine re-anchors each frame on
+the cycle's mean upper-body centre, so a character that walks across its own cell gets pulled back,
+but only the drift is removed, not a badly-composed cycle.
+
 **Hero — TECH MARKSMAN (`marksman`)**
 Output: `player_marksman_32_<DIR>_move_f001..f004_v001.png`
 ```
