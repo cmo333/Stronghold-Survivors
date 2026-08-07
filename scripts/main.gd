@@ -1785,15 +1785,11 @@ func _ready() -> void:
 		ground.set_active_level(level_id)
 	if meta != null and bool(meta.autostart_run):
 		meta_autostart = true
-	if meta_autostart:
-		if ui != null and ui.has_method("show_start"):
-			ui.show_start(false)
-	elif ui != null and ui.has_method("show_start"):
-		if ui.has_method("set_start_text"):
-			ui.set_start_text("AVARICE: AGE OF AETHER", "Choose your hero\n1: Hunter  |  2: Pyromancer\nEnter to begin")
-		if ui.has_method("set_start_options"):
-			ui.set_start_options(characters, selected_character)
-		ui.show_start(true)
+	# No press-Enter gate. The main menu already picks the hero (meta.pending_hero,
+	# applied above) and the level, so the in-game character-select screen only
+	# added a second confirmation between hitting Play and actually playing.
+	if ui != null and ui.has_method("show_start"):
+		ui.show_start(false)
 	_setup_minimap()
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
@@ -1810,9 +1806,13 @@ func _ready() -> void:
 	_reset_run_stats()
 	_set_pause_allowed(false)
 	mark_flow_field_dirty()
-	if meta_autostart and meta != null:
+	# Always drop straight into the run. Clearing the flag keeps a menu-launched
+	# run from re-arming autostart for a later scene load; starting is now
+	# unconditional either way, including when the game scene is opened directly
+	# from the editor rather than through the menu.
+	if meta != null:
 		meta.autostart_run = false
-		_start_game()
+	_start_game()
 	# FFA has no character-select / press-to-start gate: the host already locked
 	# the roster in the lobby, so every peer drops straight into the match.
 	if is_ffa():
@@ -2382,6 +2382,11 @@ func _apply_meta_run_start() -> void:
 		run_ramp_speed_mult = float(fx.get("ramp_speed_mult", 1.0))
 
 func _start_game() -> void:
+	# Idempotent: solo now starts unconditionally during setup and the FFA branch
+	# starts explicitly, so both can reach here in one _ready. Re-running would
+	# re-apply meta bonuses and re-announce the intro.
+	if game_started:
+		return
 	game_started = true
 	start_timer = 0.0
 	_apply_base_time_scale()
