@@ -174,6 +174,11 @@ func _ready() -> void:
 	# Enemies collide with allies/buildings, but not the player body.
 	collision_mask = GameLayers.ALLY | GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	# Skipped when the frame budget is already tight - a shadow is the first thing
+	# worth losing in a 300-body horde, and the only thing lost is depth.
+	if _game == null or not _game.has_method("get_adaptive_perf_scale") \
+			or float(_game.get_adaptive_perf_scale()) >= 0.8:
+		ContactShadow.attach(self, 26.0, 0.30, 9.0)
 	if body != null:
 		_base_color = body.modulate
 		body.scale = Vector2.ONE * 1.8

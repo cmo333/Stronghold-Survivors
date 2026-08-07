@@ -42,6 +42,9 @@ func _apply_common() -> void:
 		var shape = RectangleShape2D.new()
 		shape.size = Vector2(footprint_radius * 2.0, footprint_radius * 2.0)
 		collider_shape.shape = shape
+	# Wider than the footprint and dropped to the base of the art, otherwise the
+	# building covers its own shadow completely and nothing reads as grounded.
+	ContactShadow.attach(self, footprint_radius * 3.8, 0.42, footprint_radius * 0.85)
 
 func _apply_tier_stats(tier_data: Dictionary) -> void:
 	max_health = float(tier_data.get("health", max_health))

@@ -1303,6 +1303,7 @@ var _damage_number_window_ms = 0
 var _damage_number_budget = FeedbackConfig.DAMAGE_NUMBER_BUDGET_PER_SEC
 var _setpiece_fx_last_ms: Dictionary = {}
 var _damage_font: Font = null
+var _screen_grade: CanvasLayer = null
 const DAMAGE_BADGE_PATHS = {
 	"normal_small": "res://assets/ui_damage/normal_small.png",
 	"normal_large": "res://assets/ui_damage/normal_large.png",
@@ -1735,6 +1736,7 @@ func _ready() -> void:
 	_load_damage_font()
 	_prepare_damage_badges()
 	_damage_number_budget = _get_damage_budget_per_sec()
+	_setup_screen_grade()
 
 	# Multiplayer: build the player registry. In solo this just registers the
 	# existing scene player (zero behavior change); in FFA it spawns one player
@@ -4593,6 +4595,16 @@ func _vary_damage_color(base: Color) -> Color:
 		s = clampf(s + randf_range(-FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER, FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER), 0.0, 1.0)
 	v = clampf(v + randf_range(-FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER, FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER), 0.35, 1.0)
 	return Color.from_hsv(h, s, v, base.a)
+
+func _setup_screen_grade() -> void:
+	"""Full-screen grade, on its own canvas layer between the world and the HUD.
+	Layer 1 here, UI moved to layer 2 - the grade must seat the scene without
+	dimming the numbers the player reads off the interface."""
+	if _screen_grade != null and is_instance_valid(_screen_grade):
+		return
+	_screen_grade = ScreenGrade.new()
+	_screen_grade.name = "ScreenGrade"
+	add_child(_screen_grade)
 
 func _load_damage_font() -> void:
 	var path = FeedbackConfig.DAMAGE_NUMBER_FONT_PATH

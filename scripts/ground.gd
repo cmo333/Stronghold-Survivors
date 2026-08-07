@@ -5,7 +5,10 @@ extends TileMap
 @export var grass_radius: int = 25
 @export var transition_width: int = 15
 @export var use_asset_tiles: bool = true
-@export var variant_patch_cells: int = 2
+# 1 = a tile variant per cell. At 2 the variants came in 2x2 blocks (64px), which
+# read as a coarse checkerboard across open ground rather than as ground texture.
+# Per-cell variation plus the calm-tile weighting below gives texture, not noise.
+@export var variant_patch_cells: int = 1
 @export var fill_margin_cells: int = 20
 
 # Per-level terrain palettes. Each level maps the three distance biomes
