@@ -153,9 +153,7 @@ const DEFAULT_STATE := {
 	"unlocked_heroes": {"hunter": true, "pyromancer": false},
 	"permanent_upgrades": {},
 	"unlocked_levels": {"graveyard": true},
-	"first_victory": false,
-	# The arrival cinematic plays once, on the first launch of a fresh save.
-	"intro_seen": false
+	"first_victory": false
 }
 
 const VICTORY_CORES_BONUS := 50
@@ -248,22 +246,6 @@ func _save_to_disk() -> void:
 		return
 	file.store_string(JSON.stringify(_state, "\t"))
 	file.close()
-
-# ---- Intro cinematic ----
-
-func has_seen_intro() -> bool:
-	return bool(_state.get("intro_seen", false))
-
-func mark_intro_seen() -> void:
-	if has_seen_intro():
-		return
-	_state["intro_seen"] = true
-	_save_to_disk()
-
-# Clears the flag so the arrival cinematic plays again on the next launch.
-func replay_intro() -> void:
-	_state["intro_seen"] = false
-	_save_to_disk()
 
 # ---- Currency ----
 

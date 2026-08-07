@@ -1,6 +1,6 @@
 extends Control
 
-## Arrival cinematic. Plays once, on the first launch of a fresh save.
+## Arrival cinematic. Plays on every launch; any input skips it.
 ##
 ## Beats: black, then the title alone in pixel space among the stars; the stars
 ## stretch into a warp; a white-out; and out of the white a planet, which you
@@ -10,7 +10,10 @@ extends Control
 ## is a texture built at load. That keeps the whole thing one script with no new
 ## art to ship, and lets it render at any window size.
 ##
-## Any input skips straight to the menu.
+## It runs on every launch rather than only the first. Gating it on a saved flag
+## meant the only way to see it again was a command-line argument, which is not
+## a thing anyone reaches for - and a skip that works from the first frame makes
+## the gate unnecessary anyway.
 
 const NEXT_SCENE := "res://scenes/main_menu.tscn"
 const FONT_PIXEL := "res://assets/ui/pixel_font.ttf"
@@ -49,28 +52,11 @@ var _hint: Label = null
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	# Already seen: hand straight over. Deferred because changing scenes from
-	# inside _ready tears down the node that is still being set up.
-	if not _forced() and _meta() != null and _meta().has_seen_intro():
-		# Nothing gets built on this path, so _process must not run: the scene
-		# swap is deferred and _process would spend the frames until it lands
-		# dereferencing nodes that were never created.
-		_finished = true
-		set_process(false)
-		call_deferred("_go_to_menu")
-		return
 	_seed_stars()
 	_build_planet()
 	_build_text()
 	_build_white()
 	AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
-
-func _meta() -> Node:
-	return get_node_or_null("/root/MetaProgression")
-
-# Launch with --intro to watch it again without clearing the save.
-func _forced() -> bool:
-	return OS.get_cmdline_args().has("--intro") or OS.get_cmdline_user_args().has("--intro")
 
 func _seed_stars() -> void:
 	_stars.clear()
@@ -275,8 +261,6 @@ func _finish() -> void:
 	if _finished:
 		return
 	_finished = true
-	if _meta() != null:
-		_meta().mark_intro_seen()
 	_go_to_menu()
 
 func _go_to_menu() -> void:
