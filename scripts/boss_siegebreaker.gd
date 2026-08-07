@@ -207,7 +207,12 @@ func _on_mortar_impact(body: Node, mortar: Node, impact_pos: Vector2) -> void:
 		mortar.queue_free()
 
 func _apply_mortar_damage(center: Vector2) -> void:
-	"""Apply AOE damage from mortar explosion"""
+	"""Apply AOE damage from mortar explosion.
+
+	Deliberately ignores line of sight, unlike the ground-level slams and pulses
+	that now respect it: a mortar is indirect fire arcing over cover, so walling
+	yourself in is supposed to be no defence against it. That is the whole point
+	of the siegebreaker."""
 	var radius_sq = mortar_radius * mortar_radius
 	
 	# Damage player

@@ -413,16 +413,25 @@ func _has_attack_los(target: Node2D) -> bool:
 		return false
 	if target.is_in_group("buildings"):
 		return true
-	var world = get_world_2d()
+	return has_los_between(global_position, target.global_position, self)
+
+# Shared by melee swings and by ground-level AoE (slams, pulses). Those used to
+# test radius alone, so a hit landed on anyone inside the circle even with a
+# packed tower block between - damage visibly passing through solid walls.
+# Attacks that genuinely arc over cover (mortars) deliberately skip this.
+static func has_los_between(from: Vector2, to: Vector2, exclude_node: Node = null) -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return true
+	var world := tree.root.world_2d
 	if world == null:
 		return true
-	var params = PhysicsRayQueryParameters2D.create(global_position, target.global_position, GameLayers.BUILDING)
-	params.exclude = [self]
+	var params := PhysicsRayQueryParameters2D.create(from, to, GameLayers.BUILDING)
+	if exclude_node != null and exclude_node is CollisionObject2D:
+		params.exclude = [exclude_node]
 	params.collide_with_areas = false
 	params.collide_with_bodies = true
-	var hit = world.direct_space_state.intersect_ray(params)
-	# A building between us and the target blocks the melee swing.
-	return hit.is_empty()
+	return world.direct_space_state.intersect_ray(params).is_empty()
 
 func _create_health_bar() -> void:
 	if _health_bar_bg != null:

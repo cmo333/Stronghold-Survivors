@@ -158,7 +158,10 @@ func _apply_slam_damage() -> void:
 	# Damage player
 	if _game != null and _game.player != null and is_instance_valid(_game.player):
 		var dist_sq = global_position.distance_squared_to(_game.player.global_position)
-		if dist_sq <= radius_sq:
+		# A shockwave travels along the ground, so a solid building between the
+		# impact and the target stops it. Buildings themselves still take it -
+		# that is the slam hitting the wall.
+		if dist_sq <= radius_sq and has_los_between(global_position, _game.player.global_position, self):
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
 			var damage = slam_damage * damage_factor
 			if _game.player.has_method("take_damage"):
@@ -169,7 +172,7 @@ func _apply_slam_damage() -> void:
 		if ally == null or not is_instance_valid(ally):
 			continue
 		var dist_sq = global_position.distance_squared_to(ally.global_position)
-		if dist_sq <= radius_sq:
+		if dist_sq <= radius_sq and has_los_between(global_position, ally.global_position, self):
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
 			var damage = slam_damage * damage_factor
 			if ally.has_method("take_damage"):
