@@ -1813,6 +1813,7 @@ func _ready() -> void:
 	if meta != null:
 		meta.autostart_run = false
 	_start_game()
+	_print_startup_banner()
 	# FFA has no character-select / press-to-start gate: the host already locked
 	# the roster in the lobby, so every peer drops straight into the match.
 	if is_ffa():
@@ -4600,6 +4601,19 @@ func _vary_damage_color(base: Color) -> Color:
 		s = clampf(s + randf_range(-FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER, FeedbackConfig.DAMAGE_NUMBER_SAT_JITTER), 0.0, 1.0)
 	v = clampf(v + randf_range(-FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER, FeedbackConfig.DAMAGE_NUMBER_VAL_JITTER), 0.35, 1.0)
 	return Color.from_hsv(h, s, v, base.a)
+
+func _print_startup_banner() -> void:
+	"""One line stating whether the run actually began. A game that starts wrong
+	looks identical to a game that started fine but is showing an old build, and
+	without this there was nothing to tell them apart from a screenshot."""
+	var panel_shown := false
+	if ui != null:
+		var panel = ui.get_node_or_null("HUD/StartPanel")
+		if panel != null:
+			panel_shown = (panel as CanvasItem).is_visible_in_tree()
+	print("[startup] scene=%s started=%s resources=%d start_panel_visible=%s" % [
+		scene_file_path, str(game_started), resources, str(panel_shown)
+	])
 
 func _setup_screen_grade() -> void:
 	"""Full-screen grade, on its own canvas layer between the world and the HUD.

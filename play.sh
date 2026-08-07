@@ -18,6 +18,7 @@ BRANCH="${BRANCH:-slim}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$REPO_DIR/.play.pid"
 GODOT_PATH_FILE="$REPO_DIR/.play.godot"
+LOG_FILE="$REPO_DIR/.play.log"
 RUN_GAME=1
 [ "${1:-}" = "--no-run" ] && RUN_GAME=0
 
@@ -142,6 +143,22 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 say "Launching AVARICE ..."
-"$GODOT_BIN" --path "$REPO_DIR" >/dev/null 2>&1 &
+# Keep the engine's output. Discarding it meant a game that started wrong was
+# undiagnosable - no parse errors, no startup state, nothing to look at.
+: > "$LOG_FILE"
+"$GODOT_BIN" --path "$REPO_DIR" >"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 echo "running (pid $(cat "$PID_FILE"))"
+
+# Surface the startup banner and anything that failed to load, so a bad launch
+# announces itself instead of just looking wrong on screen.
+sleep 3
+if [ -f "$LOG_FILE" ]; then
+	grep -E "^\[startup\]" "$LOG_FILE" | head -3
+	if grep -qE "SCRIPT ERROR|Parse Error|Failed to compile" "$LOG_FILE"; then
+		warn ""
+		warn "Script errors during startup (first 5):"
+		grep -E "SCRIPT ERROR|Parse Error|Failed to compile" "$LOG_FILE" | head -5
+	fi
+fi
+echo "full log: $LOG_FILE"

@@ -11,3 +11,4 @@ output/
 # play.sh tracks the game process it launched
 .play.pid
 .play.godot
+.play.log
