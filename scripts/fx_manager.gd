@@ -69,7 +69,7 @@ func _get_effective_fx_scale() -> float:
 # PROJECTILE TRAILS
 # ============================================
 
-func spawn_projectile_trail(projectile: Node2D, damage_type: String = "normal") -> Node2D:
+func spawn_projectile_trail(projectile: Node2D, damage_type: String = "normal", color_override: Color = Color(0, 0, 0, 0)) -> Node2D:
 	"""Create a fading trail that follows a projectile"""
 	if _fx_root == null or not is_instance_valid(projectile):
 		return null
@@ -88,13 +88,17 @@ func spawn_projectile_trail(projectile: Node2D, damage_type: String = "normal") 
 		trail.reparent(_fx_root)
 	trail.visible = true
 
-	# Configure based on damage type
+	# Length and falloff belong to the trail itself - they are how the effect is
+	# drawn, not a per-caller choice. Colour is the shot's identity, so a caller
+	# with its own (a tower tier, an evolution) overrides the damage-type default;
+	# without that, every arrow tier trailed the same cream regardless of tint.
 	var color = _get_damage_type_color(damage_type)
+	if color_override.a > 0.0:
+		color = color_override
 	var width = 3.0
-	var fade_time = 0.3
 
 	if trail.has_method("setup"):
-		trail.setup(projectile, color, width, fade_time)
+		trail.setup(projectile, color, width)
 
 	return trail
 

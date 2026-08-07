@@ -336,7 +336,10 @@ func get_projectile_visual_profile() -> Dictionary:
 	var profile = {
 		"projectile_frames": MISSILE_SHOT_FRAMES,
 		"projectile_fps": 16.0,
-		"projectile_static_frame": 0,
+		# Frame 0 of the bolt flipbook is 5 opaque pixels - the wind-up, not the
+		# bolt. Freezing the shot on it meant the missile turret fired a speck and
+		# everything the player saw was the trail. Frame 1 is the actual bolt.
+		"projectile_static_frame": 1,
 		"projectile_scale": 1.35,
 		"trail_damage_type": "normal",
 		"impact_damage_type": "normal",

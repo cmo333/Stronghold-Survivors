@@ -171,19 +171,29 @@ func _physics_process(delta: float) -> void:
 		_explode_if_needed()
 		queue_free()
 
-func _update_motion_blur(velocity_magnitude: float) -> void:
+# Reference speed at which a shot earns the full stretch. Slower shots (lobbed
+# cannon shells) keep their shape; fast ones smear along travel.
+const MOTION_BLUR_FULL_SPEED := 700.0
+
+func _update_motion_blur(_velocity_magnitude: float) -> void:
 	if sprite == null:
 		return
-	# Stretch sprite in direction of movement
-	var stretch = 1.0 + (velocity_magnitude / speed) * (FeedbackConfig.PROJECTILE_MOTION_BLUR_STRETCH - 1.0)
-	sprite.scale = Vector2(stretch, 1.0 / stretch) * _projectile_scale_override
+	# This used to divide the per-frame step by the speed, which is just the
+	# frame delta - so the stretch factor was 1.0167 every frame and the motion
+	# blur never actually did anything. Scale it off the projectile's speed.
+	var t := clampf(speed / MOTION_BLUR_FULL_SPEED, 0.0, 1.0)
+	var stretch := lerpf(1.0, FeedbackConfig.PROJECTILE_MOTION_BLUR_STRETCH, t)
+	# Squash across travel far less than the stretch along it; a full 1/stretch
+	# reciprocal turns a bolt into a needle.
+	var squash := lerpf(1.0, 0.85, t)
+	sprite.scale = Vector2(stretch, squash) * _projectile_scale_override
 	sprite.rotation = direction.angle()
 
 func _spawn_trail() -> void:
 	# Use FX Manager for high-quality trail if available
 	var visual_damage_type = _trail_damage_type_override if _trail_damage_type_override != "" else damage_type
 	if _game != null and _game.fx_manager != null:
-		_trail = _game.fx_manager.spawn_projectile_trail(self, visual_damage_type)
+		_trail = _game.fx_manager.spawn_projectile_trail(self, visual_damage_type, _trail_color())
 	else:
 		# Fallback to simple glow particles
 		if _game == null or not _game.has_method("spawn_glow_particle"):
@@ -194,6 +204,16 @@ func _spawn_trail() -> void:
 		elif visual_damage_type == "ice":
 			trail_color = Color(0.5, 0.8, 1.0, 0.6)
 		_game.spawn_glow_particle(global_position, trail_color, 4.0, 0.15, Vector2.ZERO, 1.2, 0.5, 0.8, -1)
+
+# The shot's own tint, so the streak matches the bolt instead of every tier
+# trailing the same damage-type cream. Transparent means "no opinion" and the
+# FX manager falls back to the damage-type colour.
+func _trail_color() -> Color:
+	if _projectile_tint_override.is_equal_approx(Color.WHITE):
+		return Color(0, 0, 0, 0)
+	var c := _projectile_tint_override
+	c.a = 1.0
+	return c
 
 func _update_trail_interval_scale() -> void:
 	_trail_interval_scale = 1.0
