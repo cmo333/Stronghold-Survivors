@@ -21,6 +21,26 @@ var _was_damaged = false
 var _under_attack_warning_shown = false
 var _income_text_cooldown: float = 0.0
 
+# --- Objective beacon ---------------------------------------------------------
+# The extractor is both the win condition and what the entire horde walks toward,
+# yet a packed base buries it behind two rows of towers. A light column drawn
+# above the buildings keeps it locatable, and brightening it with progress makes
+# "nearly done" readable from across the map - exciting for the player, and fair
+# warning that the pressure is about to peak.
+const BEACON_COLOR = Color(0.42, 1.0, 0.70)
+const BEACON_WIDTH = 26
+const BEACON_HEIGHT = 132
+const BEACON_Z = 60           # above buildings (0), below the player (120)
+const BEACON_PULSE_SPEED = 2.6
+const BEACON_MIN_SCALE = 0.55
+const BEACON_MAX_SCALE = 1.0
+const BEACON_MIN_ALPHA = 0.30
+const BEACON_MAX_ALPHA = 0.78
+
+static var _shared_beacon_tex: ImageTexture = null
+var _beacon: Sprite2D = null
+var _beacon_phase: float = 0.0
+
 # Visual components
 @onready var body: CanvasItem = get_node_or_null("Body")
 @onready var base_modulate: Color = Color.WHITE
@@ -44,8 +64,75 @@ func _ready() -> void:
 	if _game != null and _game.has_method("on_extractor_placed"):
 		_game.on_extractor_placed(self)
 
+	_setup_beacon()
+
 	# Check zone membership after scene tree is ready
 	call_deferred("_check_zone_membership")
+
+func _is_the_extractor() -> bool:
+	"""Only the run objective gets a beacon. Lighting up every income generator
+	would recreate exactly the clutter this is meant to cut through."""
+	if _game == null:
+		return false
+	if not ("extractor" in _game):
+		return false
+	return _game.extractor == self
+
+static func _get_beacon_texture() -> ImageTexture:
+	if _shared_beacon_tex != null:
+		return _shared_beacon_tex
+	var img := Image.create(BEACON_WIDTH, BEACON_HEIGHT, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var cx := float(BEACON_WIDTH) * 0.5
+	for y in range(BEACON_HEIGHT):
+		# Row 0 is the top of the image, which becomes the top of the column:
+		# faint there, solid where it meets the crystal, so it reads as light
+		# rather than a painted bar.
+		var t := float(y) / float(BEACON_HEIGHT - 1)
+		var vertical := pow(t, 1.7)
+		for x in range(BEACON_WIDTH):
+			var dx: float = absf(float(x) + 0.5 - cx) / cx
+			var horizontal: float = clampf(1.0 - dx * dx, 0.0, 1.0)
+			var a: float = vertical * horizontal
+			if a <= 0.004:
+				continue
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
+	_shared_beacon_tex = ImageTexture.create_from_image(img)
+	return _shared_beacon_tex
+
+func _setup_beacon() -> void:
+	if _beacon != null or not _is_the_extractor():
+		return
+	_beacon = Sprite2D.new()
+	_beacon.name = "ObjectiveBeacon"
+	_beacon.texture = _get_beacon_texture()
+	_beacon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_beacon.centered = false
+	_beacon.z_as_relative = false
+	_beacon.z_index = BEACON_Z
+	# Additive so it reads as emitted light and never hides the art behind it.
+	var mat := CanvasItemMaterial.new()
+	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_beacon.material = mat
+	_beacon.position = Vector2(-float(BEACON_WIDTH) * 0.5, -float(BEACON_HEIGHT))
+	_beacon.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, BEACON_MIN_ALPHA)
+	add_child(_beacon)
+
+func _update_beacon(delta: float) -> void:
+	if _beacon == null or not is_instance_valid(_beacon):
+		return
+	_beacon_phase += delta * BEACON_PULSE_SPEED
+	var progress := 0.0
+	if _game != null and "extraction_progress" in _game:
+		progress = clampf(float(_game.extraction_progress), 0.0, 1.0)
+	var height_scale := lerpf(BEACON_MIN_SCALE, BEACON_MAX_SCALE, progress)
+	var pulse := 0.5 + 0.5 * sin(_beacon_phase)
+	var alpha := lerpf(BEACON_MIN_ALPHA, BEACON_MAX_ALPHA, progress) * (0.78 + 0.22 * pulse)
+	# The sprite grows from its top edge, so the base has to travel with it to
+	# keep the column planted on the crystal.
+	_beacon.scale.y = height_scale
+	_beacon.position.y = -float(BEACON_HEIGHT) * height_scale
+	_beacon.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, alpha)
 
 func _check_zone_membership() -> void:
 	if _game == null or not _game.has_method("get_zone_at"):
@@ -65,6 +152,8 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 func _process(delta: float) -> void:
 	if _is_destroyed or _game == null:
 		return
+	# Before the income gate: the objective stays lit even when it stops paying.
+	_update_beacon(delta)
 	# Inert generators (owner dead/left in FFA) stop producing income.
 	if inert:
 		return

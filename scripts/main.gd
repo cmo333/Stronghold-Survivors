@@ -4187,7 +4187,10 @@ func _update_essence_announcement(delta: float) -> void:
 	if ui != null and ui.has_method("show_announcement"):
 		var amount = _essence_announce_count
 		var text = "+%d ESSENCE" % amount
-		ui.show_announcement(text, Color(0.8, 0.4, 1.0), 28, 2.0, _essence_announce_position)
+		# Sized as a pickup, not an announcement. At 28 this covered a fifth of the
+		# screen and hid live combat behind a routine notification; centre-screen
+		# warnings stay large, this does not.
+		ui.show_announcement(text, Color(0.8, 0.4, 1.0), 15, 1.4, _essence_announce_position)
 	_essence_announce_count = 0
 	_essence_announce_timer = 0.0
 

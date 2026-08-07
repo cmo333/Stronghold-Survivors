@@ -425,7 +425,7 @@ func _enforce_directional_scale() -> void:
 		return
 	var tier := clampi(upgrade_level, 1, 3)
 	var s: float = DIRECTIONAL_BODY_SCALE * (1.0 + (tier - 1) * 0.12)
-	body_sprite.scale = Vector2.ONE * s
+	set_body_base_scale(s)
 	_sync_body_anim_base_scale(true)
 
 # Distance from the tower centre to the ballista mouth, scaled with the body so
@@ -516,7 +516,7 @@ func _apply_evolution_visuals() -> void:
 		_setup_body_presentation()
 		_refresh_body_frames(true)
 		if body_sprite != null:
-			body_sprite.scale = Vector2.ONE * EVOLVED_BODY_SCALE
+			set_body_base_scale(EVOLVED_BODY_SCALE)
 			body_sprite.visible = true
 			_sync_body_anim_base_scale(true)
 		_ensure_evolution_body_visible()
@@ -561,7 +561,7 @@ func _enforce_directional_scale_evolved() -> void:
 		return
 	var tier := clampi(upgrade_level, 1, 3)
 	var s: float = DIRECTIONAL_BODY_SCALE * (1.0 + (tier - 1) * 0.12)
-	body_sprite.scale = Vector2.ONE * s
+	set_body_base_scale(s)
 	body_sprite.visible = true
 	_sync_body_anim_base_scale(true)
 
@@ -624,7 +624,7 @@ func _ensure_evolution_body_visible() -> void:
 	body_sprite.visible = true
 	# Scale the large (~1254px) iso art down to the same world size the base tower
 	# uses so the evolved tower matches its footprint instead of dwarfing the map.
-	body_sprite.scale = Vector2.ONE * (DIRECTIONAL_BODY_SCALE * (1.0 + 2 * 0.12))
+	set_body_base_scale(DIRECTIONAL_BODY_SCALE * (1.0 + 2 * 0.12))
 	if _glow_sprite != null:
 		_glow_sprite.texture = tex
 	_sync_body_anim_base_scale(true)

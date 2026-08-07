@@ -14,6 +14,12 @@ var upgrade_level = 1  # 1 = Base, 2 = Enhanced, 3 = Master
 var max_upgrade_level = 3
 var _is_upgrading = false  # Prevents spam
 var _upgrade_cooldown = 0.0
+# How large tower bodies render, as a multiplier on each tower's measured scale.
+# Purely visual: footprints, colliders and pathing are untouched, so a smaller
+# value only buys back readability - the grid and the maze show through instead
+# of drowning under overlapping art.
+const TOWER_VISUAL_SCALE := 0.75
+
 const ESSENCE_INFUSION_GOLD_COST = 500
 const ESSENCE_INFUSION_ESSENCE_COST = 1
 const ESSENCE_INFUSION_DAMAGE_MULT = [1.0, 1.30, 1.65]
@@ -220,7 +226,7 @@ func _ready() -> void:
 	if body_sprite != null:
 		body_sprite.stop()
 		body_sprite.frame = 0
-		body_sprite.scale = Vector2.ONE * 1.35
+		set_body_base_scale(1.35)
 		_body_anim_base_position = body_sprite.position
 		_sync_body_anim_base_scale(true)
 	_setup_body_presentation()
@@ -732,7 +738,7 @@ func _apply_tier_visuals_immediate(scale: float, element_color: Color) -> void:
 			_glow_sprite.modulate = Color(element_color.r, element_color.g, element_color.b, 0.5)
 	
 	if body_sprite != null:
-		body_sprite.scale = Vector2.ONE * scale
+		set_body_base_scale(scale)
 		# Slight brightness boost for higher tiers
 		var brightness = 1.0 + (upgrade_level - 1) * 0.08
 		body_sprite.modulate = Color(brightness, brightness, brightness, 1.0)
@@ -1202,6 +1208,21 @@ func _sync_body_presentation_state() -> void:
 	_body_head_sprite.rotation = body_sprite.rotation
 	_body_base_sprite.modulate = body_sprite.modulate
 	_body_head_sprite.modulate = body_sprite.modulate
+
+func set_body_base_scale(nominal: float) -> void:
+	"""Single entry point for a tower's resting body size.
+
+	The per-tower / per-tier DIRECTIONAL_BODY_SCALE values were measured so the
+	three towers read at the same size as each other - they stay authoritative for
+	RELATIVE sizing. TOWER_VISUAL_SCALE then moves all of them together, so the
+	base reads as a structure instead of a solid wall of overlapping art.
+
+	Only call this with a nominal (unscaled) value. The per-frame animation writes
+	body_sprite.scale directly from _body_anim_smooth_scale and must not come
+	through here, or the multiplier would compound every frame."""
+	if body_sprite == null:
+		return
+	body_sprite.scale = Vector2.ONE * (nominal * TOWER_VISUAL_SCALE)
 
 func _sync_body_anim_base_scale(force_reset: bool) -> void:
 	if body_sprite == null:

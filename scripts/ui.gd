@@ -97,6 +97,9 @@ var _recent_announcements: Dictionary = {}  # text -> last-shown msec (dedupe)
 const ANNOUNCE_DEDUPE_MS := 400
 const ANNOUNCE_STACK_TOP := 78.0    # px below the top edge (under wave countdown)
 const ANNOUNCE_STACK_GAP := 8.0     # vertical gap between stacked rows
+# Keeps the essence hint inside the left HUD column instead of trailing across
+# the battlefield.
+const ESSENCE_HINT_MAX_WIDTH := 210.0
 var _upgrade_popup: PanelContainer = null
 var _upgrade_popup_vbox: VBoxContainer = null
 var _upgrade_popup_labels: Dictionary = {}
@@ -968,15 +971,34 @@ func _build_essence_label() -> void:
 	essence_label.position = Vector2(16, 150)
 	essence_label.visible = false  # Hidden until player has essence
 	hud.add_child(essence_label)
-	# Hint label below essence showing what it does
+	# Hint label below essence showing what it does. It sits over the world, so it
+	# needs its own dark plate and an outline - low-contrast purple on a packed
+	# tower base was unreadable, and the part that names the key comes first.
 	_essence_hint_label = Label.new()
 	_essence_hint_label.name = "EssenceHint"
 	_essence_hint_label.text = ""
 	_essence_hint_label.add_theme_font_size_override("font_size", 10)
 	_essence_hint_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.8, 0.7))
+	_essence_hint_label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.9))
+	_essence_hint_label.add_theme_constant_override("outline_size", 3)
+	var hint_plate := StyleBoxFlat.new()
+	hint_plate.bg_color = Color(0.04, 0.02, 0.08, 0.55)
+	hint_plate.content_margin_left = 4.0
+	hint_plate.content_margin_right = 4.0
+	hint_plate.content_margin_top = 1.0
+	hint_plate.content_margin_bottom = 1.0
+	hint_plate.corner_radius_top_left = 3
+	hint_plate.corner_radius_top_right = 3
+	hint_plate.corner_radius_bottom_left = 3
+	hint_plate.corner_radius_bottom_right = 3
+	_essence_hint_label.add_theme_stylebox_override("normal", hint_plate)
 	if _ui_font != null:
 		_essence_hint_label.add_theme_font_override("font", _ui_font)
 	_essence_hint_label.position = Vector2(16, 166)
+	# Never let a long hint run past the left column into the play area.
+	_essence_hint_label.size = Vector2(ESSENCE_HINT_MAX_WIDTH, 0)
+	_essence_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_essence_hint_label.clip_text = false
 	_essence_hint_label.visible = false
 	hud.add_child(_essence_hint_label)
 
@@ -996,7 +1018,11 @@ func set_essence(amount: int) -> void:
 	if _essence_hint_label != null:
 		_essence_hint_label.visible = true
 		if amount >= 3:
-			_essence_hint_label.text = "U = Essence Infusion (500g+1) | T3 can evolve."
+			# Key first: that is the actionable part, and it is what got lost when
+			# the line was long enough to trail off.
+			# Explicit line break: left to autowrap it split at the separator and
+			# left a dangling dash reading like a bullet.
+			_essence_hint_label.text = "[U] Infuse tower\n500g + 1 Essence"
 			_essence_hint_label.add_theme_color_override("font_color", Color(0.8, 0.5, 1.0, 0.9))
 			# Pulse the essence label when enough to evolve
 			if _essence_pulse_tween == null and is_inside_tree():
@@ -1005,7 +1031,9 @@ func set_essence(amount: int) -> void:
 				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 0.5, 0.6).set_trans(Tween.TRANS_SINE)
 				_essence_pulse_tween.tween_property(essence_label, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
 		else:
-			_essence_hint_label.text = "Tower infusion costs 500g + 1 Essence"
+			# Explicit line break: left to autowrap it split at the separator and
+			# left a dangling dash reading like a bullet.
+			_essence_hint_label.text = "[U] Infuse tower\n500g + 1 Essence"
 			_essence_hint_label.add_theme_color_override("font_color", Color(0.6, 0.4, 0.8, 0.7))
 			if _essence_pulse_tween != null:
 				_essence_pulse_tween.kill()

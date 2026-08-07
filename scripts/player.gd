@@ -62,12 +62,20 @@ var _berserk_multiplier = 1.0
 var _berserk_timer = 0.0
 var _berserk_glow: Sprite2D = null
 var _contrast_plate: Sprite2D = null
+var _outline_material: ShaderMaterial = null
 var _visibility_halo: Sprite2D = null
 var _focus_marker: Sprite2D = null
 var _visibility_halo_time: float = 0.0
 var _combat_density: float = 0.0
 var _health_bar_bg: ColorRect = null
 var _health_bar_fill: ColorRect = null
+# Warm near-white: reads against grey stone, green grass and the dark contrast
+# plate alike, and stays distinct from the enemies' green and the extractor's cyan.
+const PLAYER_OUTLINE_COLOR = Color(1.0, 0.96, 0.78, 0.95)
+# In source texels (art is 32x32). Above ~1.2 the rim starts bridging the gap
+# between the legs and the silhouette turns into a blob.
+const PLAYER_OUTLINE_WIDTH = 1.0
+
 const PLAYER_HP_BAR_WIDTH = 38.0
 const PLAYER_HP_BAR_HEIGHT = 4.0
 const PLAYER_HP_BAR_OFFSET_Y = 22.0
@@ -154,6 +162,7 @@ func set_character(base_path: String, prefix: String) -> void:
 		sprite.configure(base_path, prefix)
 
 func _physics_process(delta: float) -> void:
+	_update_outline_fade()
 	_ensure_game_ref()
 	# While dying, the death sequence owns the frame: advance it and skip the
 	# normal movement/combat update so the run-end screen can be triggered.
@@ -543,10 +552,73 @@ func _get_move_vector() -> Vector2:
 		input_vector = input_vector.normalized()
 	return input_vector
 
+# A bright rim traced around the player's silhouette. Against a packed tower base
+# everything is mid-grey stone and the player - small, dark, and the one thing you
+# must never lose - blends straight into it. An outline separates them regardless
+# of what is behind, which a glow or a tint cannot do.
+const PLAYER_OUTLINE_SHADER := """
+shader_type canvas_item;
+
+uniform vec4 outline_color : source_color = vec4(1.0, 0.96, 0.78, 1.0);
+uniform float outline_width = 1.0;
+// Mirrors sprite.modulate.a. The rim lives where the texture is transparent, so
+// it never picks up modulate on its own and would stay solid through the death
+// fade. MODULATE is not exposed to canvas_item shaders in this renderer, so the
+// player pushes the value in each frame instead.
+uniform float rim_alpha = 1.0;
+
+// Treat anything outside the frame as empty. Sampling past the edge would
+// otherwise clamp and smear the border pixels into a false outline.
+// TEXTURE has to be passed in: shader built-ins are only visible inside the
+// entry-point functions, not in user-defined ones.
+float edge_alpha(sampler2D tex, vec2 uv) {
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+		return 0.0;
+	}
+	return texture(tex, uv).a;
+}
+
+void fragment() {
+	// COLOR arrives as texture * modulate, so it is already the correct pixel for
+	// the sprite itself - leave it alone and only paint the surrounding rim.
+	vec4 base = COLOR;
+	vec4 src = texture(TEXTURE, UV);
+	vec2 px = TEXTURE_PIXEL_SIZE * outline_width;
+	float neighbour = 0.0;
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(px.x, 0.0)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - vec2(px.x, 0.0)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(0.0, px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - vec2(0.0, px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + px));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - px));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(px.x, -px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(-px.x, px.y)));
+	// Paint only where the sprite is transparent but a neighbour is not.
+	float rim = clamp(neighbour - src.a, 0.0, 1.0);
+	vec3 rgb = mix(base.rgb, outline_color.rgb, rim);
+	COLOR = vec4(rgb, max(base.a, rim * outline_color.a * rim_alpha));
+}
+"""
+
 func _setup_visibility_halo() -> void:
-	# Cyan glow ring removed (it cluttered the player silhouette). The dark
-	# contrast plate below the feet still provides readability against the horde.
-	return
+	# Cyan glow ring removed (it cluttered the player silhouette). Readability now
+	# comes from the dark contrast plate under the feet plus a rim outline on the
+	# sprite itself, which survives being surrounded by towers.
+	if sprite == null or not (sprite is CanvasItem):
+		return
+	var shader := Shader.new()
+	shader.code = PLAYER_OUTLINE_SHADER
+	_outline_material = ShaderMaterial.new()
+	_outline_material.shader = shader
+	_outline_material.set_shader_parameter("outline_color", PLAYER_OUTLINE_COLOR)
+	_outline_material.set_shader_parameter("outline_width", PLAYER_OUTLINE_WIDTH)
+	(sprite as CanvasItem).material = _outline_material
+
+func _update_outline_fade() -> void:
+	# Keep the rim in step with the sprite's own fade (death, respawn, flashes).
+	if _outline_material == null or sprite == null:
+		return
+	_outline_material.set_shader_parameter("rim_alpha", (sprite as CanvasItem).modulate.a)
 
 func _setup_contrast_plate() -> void:
 	if _contrast_plate != null:

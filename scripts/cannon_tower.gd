@@ -160,7 +160,7 @@ func _enforce_directional_scale() -> void:
 		return
 	var tier := clampi(upgrade_level, 1, 3)
 	var s: float = float(DIRECTIONAL_BODY_SCALE_BY_TIER[clampi(tier - 1, 0, 2)])
-	body_sprite.scale = Vector2.ONE * s
+	set_body_base_scale(s)
 	_sync_body_anim_base_scale(true)
 
 # Directional art is a single baked iso view: don't split/rotate the body.
