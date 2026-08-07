@@ -19,14 +19,30 @@ const NEXT_SCENE := "res://scenes/main_menu.tscn"
 const FONT_PIXEL := "res://assets/ui/pixel_font.ttf"
 const TITLE := "AVARICE"
 const SUBTITLE := "AGE OF AETHER"
+const QUOTE := "Alexander wept for with the number of worlds infinite he had yet to conquer one"
+const SIGNOFF := "GOOD LUCK"
 
-# Beat boundaries, in seconds from the start. Each phase runs until the next.
+# Fixed beats, in seconds from the start.
 const T_STARS_IN := 0.9      # black -> stars fade up, slow drift
-const T_TITLE := 3.8         # title holds, stars drift
-const T_WARP := 4.9          # stars stretch into streaks, title dissolves
-const T_WHITE := 5.35        # white-out
-const T_DESCENT := 7.9       # out of the white, falling into the planet
-const T_END := 8.3           # fade off and hand over
+const T_TITLE_OUT := 3.0     # title starts dissolving
+const T_QUOTE := 3.5         # first character of the quote
+
+# The rest is derived from how long the text takes to type, so editing QUOTE
+# reflows the whole cinematic instead of desyncing it from hardcoded beats.
+const QUOTE_CPS := 34.0      # characters per second
+const QUOTE_HOLD := 0.9      # dwell on the finished line before it clears
+const SIGNOFF_GAP := 0.4     # dark beat between the quote and the sign-off
+const SIGNOFF_CPS := 8.0     # slower: two words landing one at a time
+const SIGNOFF_HOLD := 0.8
+const TEXT_FADE := 0.35
+const WARP_TIME := 0.9       # sign-off gone -> full white
+const WHITE_TO_DESCENT := 2.3
+const HANDOFF := 0.4
+
+# Typewriter ticks, kept quiet and slightly detuned so a line of them reads as
+# texture rather than a machine gun.
+const TICK_VOLUME_DB := -22.0
+const TICK_VOICES := 4
 
 const STAR_COUNT := 520
 const STAR_FIELD_DEPTH := 900.0
@@ -36,6 +52,8 @@ const FOCAL := 420.0
 const COLOR_TITLE := Color(1.0, 0.85, 0.35)
 const COLOR_SUBTITLE := Color(0.45, 0.95, 1.0)
 const COLOR_HINT := Color(0.62, 0.60, 0.70)
+# Cooler and dimmer than the title: the quote is meant to be read, not shouted.
+const COLOR_QUOTE := Color(0.86, 0.88, 0.94)
 
 var _t := 0.0
 var _stars: Array[Vector3] = []
@@ -48,15 +66,73 @@ var _white: ColorRect = null
 var _title: Label = null
 var _subtitle: Label = null
 var _hint: Label = null
+var _quote: Label = null
+var _signoff: Label = null
+
+# Derived beat boundaries, filled in by _build_timeline().
+var _quote_end := 0.0
+var _quote_gone := 0.0
+var _signoff_start := 0.0
+var _signoff_end := 0.0
+var _signoff_gone := 0.0
+var _t_warp := 0.0
+var _t_white := 0.0
+var _t_descent := 0.0
+var _t_end := 0.0
+
+var _ticks: Array[AudioStreamPlayer] = []
+var _tick_voice := 0
+var _quote_shown := 0
+var _signoff_shown := 0
+var _title_stung := false
+var _quote_stung := false
+var _signoff_stung := false
+var _warp_stung := false
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	_build_timeline()
+	_build_ticks()
 	_seed_stars()
 	_build_planet()
 	_build_text()
 	_build_white()
 	AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+
+func _build_timeline() -> void:
+	_quote_end = T_QUOTE + float(QUOTE.length()) / QUOTE_CPS
+	_quote_gone = _quote_end + QUOTE_HOLD + TEXT_FADE
+	_signoff_start = _quote_gone + SIGNOFF_GAP
+	_signoff_end = _signoff_start + float(SIGNOFF.length()) / SIGNOFF_CPS
+	_signoff_gone = _signoff_end + SIGNOFF_HOLD + TEXT_FADE
+	_t_warp = _signoff_gone
+	_t_white = _t_warp + WARP_TIME
+	_t_descent = _t_white + WHITE_TO_DESCENT
+	_t_end = _t_descent + HANDOFF
+
+# A small pool of players rather than one shot per character: at 34 characters a
+# second the per-call node churn is real, and a pool lets ticks overlap without
+# cutting each other off.
+func _build_ticks() -> void:
+	var stream = load("res://assets/audio/ui/hover.wav") if ResourceLoader.exists("res://assets/audio/ui/hover.wav") else null
+	if stream == null:
+		return
+	for i in range(TICK_VOICES):
+		var pl := AudioStreamPlayer.new()
+		pl.stream = stream
+		pl.bus = "UI" if AudioServer.get_bus_index("UI") >= 0 else "Master"
+		pl.volume_db = TICK_VOLUME_DB
+		add_child(pl)
+		_ticks.append(pl)
+
+func _tick(pitch: float) -> void:
+	if _ticks.is_empty():
+		return
+	var pl: AudioStreamPlayer = _ticks[_tick_voice]
+	_tick_voice = (_tick_voice + 1) % _ticks.size()
+	pl.pitch_scale = pitch * randf_range(0.94, 1.06)
+	pl.play()
 
 func _seed_stars() -> void:
 	_stars.clear()
@@ -106,6 +182,35 @@ func _build_text() -> void:
 		_subtitle.add_theme_font_override("font", font)
 	add_child(_subtitle)
 
+	# The quote is mixed-case and wraps; the sign-off is a single short sting.
+	_quote = Label.new()
+	_quote.text = QUOTE
+	_quote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_quote.add_theme_font_size_override("font_size", 20)
+	_quote.add_theme_color_override("font_color", COLOR_QUOTE)
+	_quote.add_theme_constant_override("outline_size", 6)
+	_quote.add_theme_color_override("font_outline_color", Color(0.02, 0.02, 0.05, 1.0))
+	_quote.add_theme_constant_override("line_spacing", 10)
+	_quote.visible_characters = 0
+	_quote.modulate.a = 0.0
+	if font != null:
+		_quote.add_theme_font_override("font", font)
+	add_child(_quote)
+
+	_signoff = Label.new()
+	_signoff.text = SIGNOFF
+	_signoff.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_signoff.add_theme_font_size_override("font_size", 34)
+	_signoff.add_theme_color_override("font_color", COLOR_TITLE)
+	_signoff.add_theme_constant_override("outline_size", 7)
+	_signoff.add_theme_color_override("font_outline_color", Color(0.16, 0.03, 0.06, 1.0))
+	_signoff.visible_characters = 0
+	_signoff.modulate.a = 0.0
+	if font != null:
+		_signoff.add_theme_font_override("font", font)
+	add_child(_signoff)
+
 	_hint = Label.new()
 	_hint.text = "PRESS ANY KEY TO SKIP"
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -143,10 +248,11 @@ func _process(delta: float) -> void:
 	_layout_text(size)
 	_advance_stars(delta)
 	_update_title()
+	_update_typed_lines()
 	_update_white()
 	_update_planet(center)
 
-	if _t >= T_END:
+	if _t >= _t_end:
 		_finish()
 		return
 	queue_redraw()
@@ -156,17 +262,27 @@ func _layout_text(size: Vector2) -> void:
 	_title.position = Vector2(0, size.y * 0.5 - 96)
 	_subtitle.size.x = size.x
 	_subtitle.position = Vector2(0, size.y * 0.5 - 8)
+	# Give the quote a measured column instead of the full width, so it breaks
+	# into a couple of lines rather than one long stripe on a wide window.
+	var quote_w: float = clampf(size.x * 0.62, 420.0, 900.0)
+	_quote.size.x = quote_w
+	_quote.position = Vector2((size.x - quote_w) * 0.5, size.y * 0.5 - 34)
+	_signoff.size.x = size.x
+	_signoff.position = Vector2(0, size.y * 0.5 - 24)
 	_hint.size.x = size.x
 	_hint.position = Vector2(0, size.y - 54)
 
 # Star speed ramps gently through the title, then hard through the warp. z is
 # distance from the viewer, so subtracting it pulls stars past the camera.
 func _advance_stars(delta: float) -> void:
+	# Creep during the title and the text, then ramp hard once the sign-off
+	# clears - the quote should be read against a near-still field.
 	var target := 60.0
-	if _t >= T_TITLE:
-		var w := clampf((_t - T_TITLE) / max(0.001, T_WARP - T_TITLE), 0.0, 1.0)
+	var ramp_from: float = _signoff_start
+	if _t >= ramp_from:
+		var w := clampf((_t - ramp_from) / max(0.001, _t_warp - ramp_from), 0.0, 1.0)
 		target = lerpf(60.0, 2400.0, w * w)
-	if _t >= T_WARP:
+	if _t >= _t_warp:
 		target = 2400.0
 	_speed = lerpf(_speed, target, clampf(delta * 3.0, 0.0, 1.0))
 	for i in range(_stars.size()):
@@ -181,8 +297,11 @@ func _update_title() -> void:
 	var a := 0.0
 	if _t >= T_STARS_IN:
 		a = clampf((_t - T_STARS_IN) / 0.9, 0.0, 1.0)
-	if _t >= T_TITLE:
-		a *= clampf(1.0 - (_t - T_TITLE) / 0.6, 0.0, 1.0)
+	if _t >= T_TITLE_OUT:
+		a *= clampf(1.0 - (_t - T_TITLE_OUT) / 0.5, 0.0, 1.0)
+	if a > 0.9 and not _title_stung:
+		_title_stung = true
+		AudioManager.play_ui_sound("wave_start")
 	_title.modulate.a = a
 	_subtitle.modulate.a = a * clampf((_t - T_STARS_IN - 0.5) / 0.8, 0.0, 1.0)
 	# A slow drift toward the viewer, so the title sits in the field rather than
@@ -195,31 +314,90 @@ func _update_title() -> void:
 	var hint_a := 0.0
 	if _t >= 1.6:
 		hint_a = 0.55 * (0.6 + 0.4 * sin(_t * 3.0))
-	if _t >= T_TITLE:
-		hint_a *= clampf(1.0 - (_t - T_TITLE) / 0.4, 0.0, 1.0)
+	if _t >= T_TITLE_OUT:
+		hint_a *= clampf(1.0 - (_t - T_TITLE_OUT) / 0.4, 0.0, 1.0)
 	_hint.modulate.a = hint_a
+
+# Reveal characters on a clock rather than per frame, so the cadence is the same
+# at 30fps and 240fps, and tick a sound on each newly revealed non-space glyph.
+func _update_typed_lines() -> void:
+	# --- the quote ---
+	var q_a := 0.0
+	if _t >= T_QUOTE:
+		q_a = clampf((_t - T_QUOTE) / 0.25, 0.0, 1.0)
+		var want: int = int(floor((_t - T_QUOTE) * QUOTE_CPS))
+		want = clampi(want, 0, QUOTE.length())
+		if want > _quote_shown:
+			# One tick for the batch, not per character: a long frame must not
+			# fire six clicks at once.
+			var voiced := false
+			for i in range(_quote_shown, want):
+				if QUOTE[i] != " ":
+					voiced = true
+			if voiced:
+				_tick(1.0)
+			_quote_shown = want
+			_quote.visible_characters = want
+		if not _quote_stung:
+			_quote_stung = true
+			AudioManager.play_ui_sound("hover")
+	if _t >= _quote_end + QUOTE_HOLD:
+		q_a *= clampf(1.0 - (_t - _quote_end - QUOTE_HOLD) / TEXT_FADE, 0.0, 1.0)
+	_quote.modulate.a = q_a
+
+	# --- the sign-off ---
+	var s_a := 0.0
+	if _t >= _signoff_start:
+		s_a = clampf((_t - _signoff_start) / 0.2, 0.0, 1.0)
+		var want2: int = int(floor((_t - _signoff_start) * SIGNOFF_CPS))
+		want2 = clampi(want2, 0, SIGNOFF.length())
+		if want2 > _signoff_shown:
+			var voiced2 := false
+			for i in range(_signoff_shown, want2):
+				if SIGNOFF[i] != " ":
+					voiced2 = true
+			if voiced2:
+				# Deeper than the quote: this line is the one that lands.
+				_tick(0.72)
+			_signoff_shown = want2
+			_signoff.visible_characters = want2
+		if _signoff_shown >= SIGNOFF.length() and not _signoff_stung:
+			_signoff_stung = true
+			AudioManager.play_ui_sound("upgrade")
+	if _t >= _signoff_end + SIGNOFF_HOLD:
+		s_a *= clampf(1.0 - (_t - _signoff_end - SIGNOFF_HOLD) / TEXT_FADE, 0.0, 1.0)
+	_signoff.modulate.a = s_a
+	# A slow swell on the sign-off so it grows into the warp.
+	var grow := 1.0 + 0.06 * clampf((_t - _signoff_start) / 1.6, 0.0, 1.0)
+	_signoff.pivot_offset = _signoff.size * 0.5
+	_signoff.scale = Vector2(grow, grow)
+
+	# --- the riser under the warp ---
+	if _t >= _t_warp and not _warp_stung:
+		_warp_stung = true
+		AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
 
 func _update_white() -> void:
 	var a := 0.0
-	if _t >= T_WARP:
+	if _t >= _t_warp:
 		# Slam to white...
-		a = clampf((_t - T_WARP) / max(0.001, T_WHITE - T_WARP), 0.0, 1.0)
-	if _t >= T_WHITE:
+		a = clampf((_t - _t_warp) / max(0.001, _t_white - _t_warp), 0.0, 1.0)
+	if _t >= _t_white:
 		# ...then bleed off to reveal what you arrived at.
-		a = clampf(1.0 - (_t - T_WHITE) / 0.7, 0.0, 1.0)
-	if _t >= T_DESCENT:
+		a = clampf(1.0 - (_t - _t_white) / 0.7, 0.0, 1.0)
+	if _t >= _t_descent:
 		# Final wash as the planet swallows the frame, covering the hand-off.
-		a = maxf(a, clampf((_t - T_DESCENT) / max(0.001, T_END - T_DESCENT), 0.0, 1.0))
+		a = maxf(a, clampf((_t - _t_descent) / max(0.001, _t_end - _t_descent), 0.0, 1.0))
 	_white.color.a = a
 
 func _update_planet(center: Vector2) -> void:
-	if _t < T_WHITE:
+	if _t < _t_white:
 		_planet.visible = false
 		return
 	if not _planet.visible:
 		_planet.visible = true
 		AudioManager.play_one_shot("jackpot_fanfare", Vector2.ZERO, AudioManager.CRITICAL_PRIORITY)
-	var p := clampf((_t - T_WHITE) / max(0.001, T_DESCENT - T_WHITE), 0.0, 1.0)
+	var p := clampf((_t - _t_white) / max(0.001, _t_descent - _t_white), 0.0, 1.0)
 	# Ease in: the fall accelerates, which is what selling "falling" needs.
 	var eased := p * p * p
 	_planet.position = center + Vector2(0.0, lerpf(-10.0, 90.0, eased))
@@ -229,7 +407,7 @@ func _update_planet(center: Vector2) -> void:
 func _draw() -> void:
 	var size := get_viewport_rect().size
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.04, 1.0), true)
-	if _t >= T_WHITE:
+	if _t >= _t_white:
 		return  # past the white-out the planet owns the frame
 	var center := size * 0.5
 	var fade := clampf(_t / T_STARS_IN, 0.0, 1.0)
