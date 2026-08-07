@@ -29,9 +29,11 @@ const PATH_CLEARANCE_DIRS = [
 ]
 const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
 # Half-width of the local box used to prove the extractor/generators are not
-# walled in. Large enough that any ring a player can actually afford fails to
-# escape it, small enough that the extra BFS stays cheap during build preview.
-const PATH_ESCAPE_BOX_RADIUS = 420.0
+# walled in. 420 was too small: a late-game fort spans more than that, so a ring
+# built at its outer wall escaped the box and read as open. Sized to cover a
+# realistic base. This runs only when the exact reachability test is
+# inconclusive, so the larger BFS is not on the common path.
+const PATH_ESCAPE_BOX_RADIUS = 900.0
 # The extractor/generator scene. Placing one has to be validated the same way as
 # walling one in: until it exists there is nothing in the scene to protect, so
 # dropping it into an already-sealed pocket would otherwise sail through.

@@ -383,6 +383,20 @@ var extraction_phase: int = ExtractionPhase.SCOUT
 var extractor: Node = null                 # the one placed extractor
 var extractor_placed_at: float = -1.0      # run time when it landed
 var extraction_progress: float = 0.0       # 0..1
+
+# --- Breach mode --------------------------------------------------------------
+# Walling the extractor off cannot be fully prevented by placement rules alone:
+# any geometric check has to guess at enclosure shapes, and a big enough fort
+# will always find a case it does not cover. So the invariant is enforced at
+# runtime instead - if the horde genuinely cannot reach the objective, it stops
+# pathing and tears down whatever is in the way. Turtling then defeats itself.
+const BREACH_CONFIRM_TIME := 0.8      # sustained before it trips, so a flow-field
+                                      # rebuild mid-frame can't false-trigger it
+const BREACH_MIN_ENEMIES := 5         # need a real sample before trusting "none can reach"
+const BREACH_DAMAGE_MULT := 3.0       # walls come down fast; this is a penalty, not a puzzle
+var extractor_sealed: bool = false
+var _breach_confirm_timer: float = 0.0
+var _breach_announced: bool = false
 var _extraction_auto_placed := false
 var _extraction_warned_30s := false
 var _extraction_warned_10s := false
@@ -2157,6 +2171,7 @@ func _process(delta: float) -> void:
 	_rebuild_enemy_grid()
 	_refresh_target_caches(delta)
 	_update_flow_field(delta)
+	_update_breach_state(delta)
 	if wave_manager != null and wave_manager.has_method("update"):
 		wave_manager.update(delta, elapsed)
 	# Host owns the shared horde; clients receive enemies via replication and do
@@ -3785,6 +3800,71 @@ func clamp_to_play_area(pos: Vector2) -> Vector2:
 func mark_flow_field_dirty() -> void:
 	_flow_dirty = true
 
+func is_extractor_sealed() -> bool:
+	return extractor_sealed
+
+func get_breach_damage_mult() -> float:
+	return BREACH_DAMAGE_MULT if extractor_sealed else 1.0
+
+func _update_breach_state(delta: float) -> void:
+	"""Ground truth, not geometry: ask the enemies that are actually on the field
+	whether any of them can still path to the objective.
+
+	Sampling live enemies rather than a ring of theoretical spawn points avoids
+	depending on how far the flow field happens to extend - every enemy is inside
+	it by construction."""
+	if not has_extractor() or game_over:
+		_breach_confirm_timer = 0.0
+		if extractor_sealed:
+			_set_breach(false)
+		return
+	var enemies = enemies_root.get_children() if enemies_root != null else []
+	var sampled := 0
+	var reachable := 0
+	for e in enemies:
+		if e == null or not is_instance_valid(e) or not (e is Node2D):
+			continue
+		if "_is_dying" in e and e._is_dying:
+			continue
+		var pos: Vector2 = (e as Node2D).global_position
+		# Only enemies inside the field can testify. Outside it there is no data,
+		# and counting them as unreachable would trip a breach on distance alone.
+		if not is_in_flow_field(pos):
+			continue
+		sampled += 1
+		if is_flow_reachable(pos):
+			reachable += 1
+			break  # one is enough to prove a route exists
+	if sampled < BREACH_MIN_ENEMIES:
+		# Too few bodies to conclude anything; never trip on a thin field.
+		_breach_confirm_timer = 0.0
+		if extractor_sealed:
+			_set_breach(false)
+		return
+	if reachable > 0:
+		_breach_confirm_timer = 0.0
+		if extractor_sealed:
+			_set_breach(false)
+		return
+	_breach_confirm_timer += delta
+	if _breach_confirm_timer >= BREACH_CONFIRM_TIME and not extractor_sealed:
+		_set_breach(true)
+
+func _set_breach(active: bool) -> void:
+	if extractor_sealed == active:
+		return
+	extractor_sealed = active
+	if active:
+		if not _breach_announced and ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement("PATH BLOCKED - HORDE IS BREACHING!", Color(1.0, 0.35, 0.25), 30, 3.0)
+			_breach_announced = true
+		AudioManager.play_ui_sound("wave_start")
+	else:
+		_breach_announced = false
+	# Enemies re-pick their target on the next refresh; nudge the field so anyone
+	# already moving reacts promptly.
+	mark_flow_field_dirty()
+
 func _update_flow_field(delta: float) -> void:
 	if player == null:
 		return
@@ -3987,6 +4067,14 @@ func _find_nearest_reachable_cell(cell: Vector2i, max_radius: int) -> Vector2i:
 		if best_cell != cell:
 			return best_cell
 	return best_cell
+
+func is_in_flow_field(world_pos: Vector2) -> bool:
+	"""Distinguishes "inside the field but cut off" from "simply outside the grid".
+	is_flow_reachable() answers false for both, which is right for pathing but
+	would make a far-off enemy look sealed out when it is only far away."""
+	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
+		return false
+	return _flow_index(_world_to_flow_cell(world_pos)) >= 0
 
 func is_flow_reachable(world_pos: Vector2) -> bool:
 	if _flow_dist.is_empty() or _flow_size == Vector2i.ZERO:
@@ -5671,6 +5759,9 @@ func _reset_game_state() -> void:
 	extractor = null
 	extractor_placed_at = -1.0
 	extraction_progress = 0.0
+	extractor_sealed = false
+	_breach_confirm_timer = 0.0
+	_breach_announced = false
 	_extraction_auto_placed = false
 	_extraction_warned_30s = false
 	_extraction_warned_10s = false

@@ -124,6 +124,34 @@ func _allies_list() -> Array:
 		return _game.get_cached_allies()
 	return get_tree().get_nodes_in_group("allies")
 
+func _breach_damage_mult(target: Node) -> float:
+	"""Extra damage against structures while breaching. Sealing the objective is
+	meant to be a losing move, so the wall has to come down on a timescale the
+	player feels - not eventually."""
+	if target == null or not target.is_in_group("buildings"):
+		return 1.0
+	if _game == null or not _game.has_method("get_breach_damage_mult"):
+		return 1.0
+	return float(_game.get_breach_damage_mult())
+
+func _nearest_blocking_building() -> Node2D:
+	"""Closest structure that actually obstructs pathing. Only walls and towers
+	qualify - chasing a non-blocking prop would leave the route just as sealed."""
+	var best: Node2D = null
+	var best_dist := INF
+	for building in _buildings_list():
+		if building == null or not is_instance_valid(building) or not (building is Node2D):
+			continue
+		if "blocks_path" in building and not bool(building.blocks_path):
+			continue
+		if building.has_method("is_destroyed") and building.is_destroyed():
+			continue
+		var d: float = global_position.distance_squared_to((building as Node2D).global_position)
+		if d < best_dist:
+			best_dist = d
+			best = building as Node2D
+	return best
+
 func _buildings_list() -> Array:
 	if _game != null and _game.has_method("get_cached_buildings"):
 		return _game.get_cached_buildings()
@@ -191,7 +219,7 @@ func _physics_process(delta: float) -> void:
 	if dist <= _effective_attack_range(target):
 		if _attack_cooldown <= 0.0 and _has_attack_los(target):
 			if target.has_method("take_damage"):
-				target.take_damage(attack_damage)
+				target.take_damage(attack_damage * _breach_damage_mult(target))
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 		velocity = knockback_step
 		if knockback_step != Vector2.ZERO:
@@ -278,6 +306,15 @@ func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = INF
 	var is_generator = false
+
+	# Breach mode: the objective has been walled off, so there is no route to
+	# path along. Stop trying and tear down whatever is in the way instead -
+	# otherwise the horde mills about outside a sealed fort and the player wins
+	# by doing nothing.
+	if _game.has_method("is_extractor_sealed") and _game.is_extractor_sealed():
+		var blocker := _nearest_blocking_building()
+		if blocker != null:
+			return blocker
 
 	# Extraction mode: the extractor is the objective, so it outranks everything.
 	# Enemies only peel off to swing at the player or allies that are close
