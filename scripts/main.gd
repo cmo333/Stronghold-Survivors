@@ -2567,9 +2567,6 @@ func _setup_world_environment() -> void:
 		env.background_mode = Environment.BG_CANVAS
 		env.glow_enabled = true
 		env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-		# Bias glow toward the brightest taps so the scene stays readable.
-		for i in range(7):
-			env.set_glow_level(i, 1.0 if i <= 2 else 0.0)
 		_world_environment.environment = env
 		add_child(_world_environment)
 	_apply_glow_settings()
@@ -2578,15 +2575,24 @@ func _apply_glow_settings() -> void:
 	if _world_environment == null or _world_environment.environment == null:
 		return
 	var env := _world_environment.environment
-	var settings := {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
+	var settings := {
+		"enabled": true, "intensity": 0.8, "strength": 1.05,
+		"bloom": 0.0, "hdr_threshold": 1.0,
+		"levels": [1.0, 1.0, 0.85, 0.5, 0.25, 0.0, 0.0],
+	}
 	var manager = _get_settings_manager()
 	if manager != null and manager.has_method("get_glow_settings"):
 		settings = manager.get_glow_settings()
 	env.glow_enabled = bool(settings.get("enabled", true))
 	env.glow_intensity = float(settings.get("intensity", 0.8))
-	env.glow_strength = float(settings.get("strength", 1.1))
-	env.glow_bloom = float(settings.get("bloom", 0.18))
-	env.glow_hdr_threshold = float(settings.get("hdr_threshold", 0.85))
+	env.glow_strength = float(settings.get("strength", 1.05))
+	env.glow_bloom = float(settings.get("bloom", 0.0))
+	env.glow_hdr_threshold = float(settings.get("hdr_threshold", 1.0))
+	# The tier picks how many blur taps build the halo - that is what makes a
+	# higher setting cost more and look better, rather than exposure.
+	var levels: Array = settings.get("levels", [])
+	for i in range(7):
+		env.set_glow_level(i, float(levels[i]) if i < levels.size() else 0.0)
 
 func _on_settings_changed(category: String, key: String, value: Variant) -> void:
 	_sync_runtime_settings(category, key, value)

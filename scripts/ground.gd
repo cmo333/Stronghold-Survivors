@@ -10,6 +10,12 @@ extends TileMap
 # Per-cell variation plus the calm-tile weighting below gives texture, not noise.
 @export var variant_patch_cells: int = 1
 @export var fill_margin_cells: int = 20
+# The terrain fills nearly the whole screen, and at full brightness it competes
+# with the units and towers standing on it - the eye reads the field as the
+# subject and the action as clutter on top of it. Dimming the ground layer
+# alone (sprites, FX and UI keep their own values) seats it behind the action.
+# One knob: 1.0 is the raw tile art, lower is a calmer field.
+@export var terrain_brightness: float = 0.88
 
 # Per-level terrain palettes. Each level maps the three distance biomes
 # (inner/grass, mid/mud, outer/stone) to its own art set. "blight" is a shared
@@ -141,6 +147,8 @@ func _resolved_tile_size() -> Vector2i:
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var b := clampf(terrain_brightness, 0.5, 1.0)
+	modulate = Color(b, b, b, 1.0)
 	_seed_offset = randi()
 	_setup_tileset()
 	_generate_terrain()

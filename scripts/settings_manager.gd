@@ -337,21 +337,48 @@ func get_damage_budget_scale() -> float:
 		scale *= 0.8
 	return clampf(scale, 0.4, 1.5)
 
+# Bloom belongs to the things that emit light - projectiles, tesla arcs, muzzle
+# flashes, the extractor beacon - and to nothing else. Two knobs decide that:
+#
+#   hdr_threshold  what counts as emitting. The viewport runs HDR 2D, so the
+#                  additive FX push past 1.0 while terrain, sprites and UI never
+#                  do. Anything below 1.0 starts blooming the ground itself.
+#   bloom          a constant glow added to the WHOLE image. Any value above
+#                  zero is a flat wash over every pixel, emissive or not.
+#
+# Both used to ramp with the quality tier, so choosing the best setting made the
+# picture brighter and flatter instead of better - +11% mean luminance and -4%
+# saturation from low to ultra, which is exactly what washed out looks like.
+# Exposure is now fixed across the ladder and the tiers buy bloom *shape*: how
+# many blur taps the halo is built from, and so how wide and soft it falls off.
+# That costs GPU time, which is what a quality setting is supposed to trade.
+const GLOW_TIERS := {
+	"low": {
+		"enabled": false, "intensity": 0.0, "strength": 0.0,
+		"levels": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+	},
+	"medium": {
+		"enabled": true, "intensity": 0.75, "strength": 1.0,
+		"levels": [1.0, 1.0, 0.5, 0.0, 0.0, 0.0, 0.0],
+	},
+	"high": {
+		"enabled": true, "intensity": 0.8, "strength": 1.05,
+		"levels": [1.0, 1.0, 0.85, 0.5, 0.25, 0.0, 0.0],
+	},
+	"ultra": {
+		"enabled": true, "intensity": 0.85, "strength": 1.1,
+		"levels": [1.0, 1.0, 0.9, 0.7, 0.5, 0.3, 0.15],
+	},
+}
+
 func get_glow_settings() -> Dictionary:
-	# Punchy / neon bloom, gated by quality tier for perf safety.
-	# Low tier disables glow entirely; higher tiers ramp intensity/bloom.
-	var quality := get_quality()
-	match quality:
-		"low":
-			return {"enabled": false, "intensity": 0.0, "strength": 0.0, "bloom": 0.0, "hdr_threshold": 1.0}
-		"medium":
-			return {"enabled": true, "intensity": 0.55, "strength": 0.9, "bloom": 0.10, "hdr_threshold": 0.95}
-		"high":
-			return {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
-		"ultra":
-			return {"enabled": true, "intensity": 1.0, "strength": 1.25, "bloom": 0.25, "hdr_threshold": 0.75}
-		_:
-			return {"enabled": true, "intensity": 0.8, "strength": 1.1, "bloom": 0.18, "hdr_threshold": 0.85}
+	var tier: Dictionary = GLOW_TIERS.get(get_quality(), GLOW_TIERS["high"])
+	var out := tier.duplicate(true)
+	# Never tier-dependent: a constant wash is not a quality level, and letting
+	# sub-1.0 luminance bloom puts the grass in the bloom pass.
+	out["bloom"] = 0.0
+	out["hdr_threshold"] = 1.0
+	return out
 
 func get_screenshake_multiplier() -> float:
 	var mult = get_screenshake_intensity()
