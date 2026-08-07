@@ -7,6 +7,8 @@ extends Control
 # panel frames, themed button textures, animated atmospheric background.
 
 const GAME_SCENE := "res://scenes/main.tscn"
+# Play drops into the descent cinematic, which hands off to GAME_SCENE itself.
+const DESCENT_SCENE := "res://scenes/descent.tscn"
 const LOBBY_SCENE := "res://scenes/lobby.tscn"
 const SETTINGS_SCENE := preload("res://scenes/settings_menu.tscn")
 
@@ -540,7 +542,7 @@ func _on_play() -> void:
 		meta.pending_hero = _selected_hero
 		meta.pending_level = _selected_level
 		meta.autostart_run = true
-	get_tree().change_scene_to_file(GAME_SCENE)
+	get_tree().change_scene_to_file(DESCENT_SCENE)
 
 func _on_ffa() -> void:
 	# Online Free-For-All. Hand off to the lobby; the match scene is loaded by
