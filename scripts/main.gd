@@ -5171,8 +5171,10 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 	
 	_refresh_tech_scalars()
 	_update_ui()
-	if ui != null and ui.has_method("show_upgrade_popup"):
-		ui.show_upgrade_popup(id, rarity)
+	# No stat-name popup here. The chest reveal already presents the haul as
+	# named prize cards; this pushed a second list of raw upgrade ids ("+ Speed",
+	# "+ Build Cost") into a panel over the base that outlived the reveal by its
+	# own 2.5s timer, so the leftover was what stayed on screen.
 
 func register_building_effect(effect: String, source_id: int, value: float) -> void:
 	if not building_effects.has(effect):

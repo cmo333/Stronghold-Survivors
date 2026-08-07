@@ -100,10 +100,6 @@ const ANNOUNCE_STACK_GAP := 8.0     # vertical gap between stacked rows
 # Keeps the essence hint inside the left HUD column instead of trailing across
 # the battlefield.
 const ESSENCE_HINT_MAX_WIDTH := 210.0
-var _upgrade_popup: PanelContainer = null
-var _upgrade_popup_vbox: VBoxContainer = null
-var _upgrade_popup_labels: Dictionary = {}
-var _upgrade_popup_timer: Timer = null
 var _tech_ledger_panel: TextureRect = null
 var _tech_ledger_container: HBoxContainer = null
 var _tech_ledger_label: Label = null
@@ -145,89 +141,12 @@ func _ready() -> void:
 	_build_upgrade_panel()
 	_build_announcement_root()
 	_build_wave_announcement()
-	_setup_upgrade_popup_timer()
 	_build_tech_ledger()
 	set_tech_ledger_visible(false)
 	_build_vignette()
 	_build_build_focus_ui()
 	_build_streak_label()
 	_build_objective_ui()
-
-func _setup_upgrade_popup_timer() -> void:
-	if _upgrade_popup_timer != null:
-		return
-	_upgrade_popup_timer = Timer.new()
-	_upgrade_popup_timer.wait_time = 0.25
-	_upgrade_popup_timer.one_shot = false
-	_upgrade_popup_timer.autostart = true
-	add_child(_upgrade_popup_timer)
-	_upgrade_popup_timer.timeout.connect(_cleanup_upgrade_popup)
-
-func _ensure_upgrade_popup() -> void:
-	if _upgrade_popup != null and is_instance_valid(_upgrade_popup):
-		return
-	_upgrade_popup = PanelContainer.new()
-	_upgrade_popup.name = "UpgradePopup"
-	_upgrade_popup.size = Vector2(320, 220)
-	var viewport = get_viewport()
-	var view_size = viewport.get_visible_rect().size if viewport != null else Vector2(1280, 720)
-	_upgrade_popup.position = Vector2(view_size.x / 2 - 160, 98)
-	var popup_style: StyleBox = null
-	if ResourceLoader.exists(UPGRADE_POPUP_TEX):
-		var style_tex = StyleBoxTexture.new()
-		style_tex.texture = load(UPGRADE_POPUP_TEX)
-		style_tex.texture_margin_left = 28.0
-		style_tex.texture_margin_top = 24.0
-		style_tex.texture_margin_right = 28.0
-		style_tex.texture_margin_bottom = 24.0
-		popup_style = style_tex
-	else:
-		var style_fallback = StyleBoxFlat.new()
-		style_fallback.bg_color = Color(0.08, 0.08, 0.12, 0.92)
-		style_fallback.border_width_left = 2
-		style_fallback.border_width_top = 2
-		style_fallback.border_width_right = 2
-		style_fallback.border_width_bottom = 2
-		style_fallback.border_color = Color(0.75, 0.72, 0.62, 0.8)
-		style_fallback.corner_radius_top_left = 6
-		style_fallback.corner_radius_top_right = 6
-		style_fallback.corner_radius_bottom_left = 6
-		style_fallback.corner_radius_bottom_right = 6
-		popup_style = style_fallback
-	if popup_style != null:
-		_upgrade_popup.add_theme_stylebox_override("panel", popup_style)
-	add_child(_upgrade_popup)
-	_upgrade_popup_vbox = VBoxContainer.new()
-	_upgrade_popup_vbox.name = "VBox"
-	_upgrade_popup_vbox.anchor_left = 0.0
-	_upgrade_popup_vbox.anchor_top = 0.0
-	_upgrade_popup_vbox.anchor_right = 1.0
-	_upgrade_popup_vbox.anchor_bottom = 1.0
-	_upgrade_popup_vbox.offset_left = 18.0
-	_upgrade_popup_vbox.offset_top = 18.0
-	_upgrade_popup_vbox.offset_right = -18.0
-	_upgrade_popup_vbox.offset_bottom = -18.0
-	_upgrade_popup_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	_upgrade_popup_vbox.add_theme_constant_override("separation", 4)
-	_upgrade_popup.add_child(_upgrade_popup_vbox)
-	_upgrade_popup.visible = false
-
-func _cleanup_upgrade_popup() -> void:
-	if _upgrade_popup_vbox == null or not is_instance_valid(_upgrade_popup_vbox):
-		return
-	var now = Time.get_ticks_msec()
-	var keys = _upgrade_popup_labels.keys()
-	for key in keys:
-		var row = _upgrade_popup_labels[key]
-		if row == null or not is_instance_valid(row):
-			_upgrade_popup_labels.erase(key)
-			continue
-		var expires_at = int(row.get_meta("expires_at", now))
-		if expires_at <= now:
-			row.queue_free()
-			_upgrade_popup_labels.erase(key)
-	if _upgrade_popup != null and is_instance_valid(_upgrade_popup):
-		_upgrade_popup.visible = _upgrade_popup_vbox.get_child_count() > 0
 
 # =========================================================
 # UPGRADE PANEL
@@ -1441,6 +1360,12 @@ func set_chest_blackout(active: bool) -> void:
 # All tweens ignore time_scale because the chest modal freezes the game.
 # ============================================
 
+const CHEST_CARD_FRAMES := {
+	"common": "res://assets/ui/tech/ui_tech_card_common_420x74_v001.png",
+	"rare": "res://assets/ui/tech/ui_tech_card_rare_420x74_v001.png",
+	"epic": "res://assets/ui/tech/ui_tech_card_epic_420x74_v001.png",
+	"diamond": "res://assets/ui/tech/ui_tech_card_diamond_420x74_v001.png",
+}
 const CHEST_RARITY_COLORS := {
 	"common": Color(0.55, 0.95, 0.55),
 	"rare": Color(0.40, 0.70, 1.0),
@@ -1452,6 +1377,7 @@ const CHEST_RARITY_RANK := {"common": 0, "rare": 1, "epic": 2, "diamond": 3}
 var _chest_reveal_root: Control = null
 var _chest_rays: TextureRect = null
 var _chest_sprite: TextureRect = null
+var _chest_cards: VBoxContainer = null
 var _chest_banner: Label = null
 var _chest_flash: ColorRect = null
 static var _rays_texture: ImageTexture = null
@@ -1524,6 +1450,14 @@ func _build_chest_reveal() -> void:
 	_chest_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_chest_reveal_root.add_child(_chest_sprite)
 
+	_chest_cards = VBoxContainer.new()
+	_chest_cards.set_anchors_preset(Control.PRESET_CENTER)
+	_chest_cards.custom_minimum_size = Vector2(440, 0)
+	_chest_cards.position = Vector2(-220, -10)
+	_chest_cards.add_theme_constant_override("separation", 8)
+	_chest_cards.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chest_reveal_root.add_child(_chest_cards)
+
 	_chest_banner = Label.new()
 	_chest_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_chest_banner.set_anchors_preset(Control.PRESET_CENTER_TOP)
@@ -1562,6 +1496,8 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	# Reset state
 	_chest_reveal_root.visible = true
 	_chest_reveal_root.modulate.a = 1.0
+	for c in _chest_cards.get_children():
+		c.queue_free()
 	_chest_banner.modulate.a = 0.0
 	_chest_flash.color = Color(1, 1, 1, 0)
 	_chest_rays.modulate = Color(1.0, 0.9, 0.5, 0.0)
@@ -1605,24 +1541,24 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	if not is_inside_tree():
 		return
 
-	# 4. One beat per prize, each louder than the last.
-	#
-	# These used to slam in a stack of named cards. That list was a holdover from
-	# an older build: the HUD banner already says what dropped, and the panel sat
-	# over the base restating it while the burst it was supposed to punctuate had
-	# already faded. The beat itself stays - rays kick round and the screen pulses
-	# once per item, on the same clock as the sounds and particles the chest fires
-	# in world space, so a five-item haul still reads as five things happening.
+	# 4. Prizes slam in one at a time, each louder than the last.
 	for i in range(items.size()):
 		var item: Dictionary = items[i]
+		var card := _make_chest_card(item)
+		_chest_cards.add_child(card)
+		card.modulate.a = 0.0
+		card.pivot_offset = Vector2(220, 34)
+		card.scale = Vector2(1.7, 1.7)
+		card.position.x = 260.0
+		var tw := create_tween()
+		tw.set_ignore_time_scale(true)
+		tw.set_parallel(true)
+		tw.tween_property(card, "modulate:a", 1.0, 0.16)
+		tw.tween_property(card, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		tw.tween_property(card, "position:x", 0.0, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		# Rarer prizes get a brighter pop and a longer beat to land.
 		var rank := int(CHEST_RARITY_RANK.get(str(item.get("rarity", "common")), 0))
-		var tint: Color = CHEST_RARITY_COLORS.get(str(item.get("rarity", "common")), Color.WHITE)
 		_chest_rays.rotation += 0.18 + rank * 0.1
-		_rt(_chest_rays, "modulate", Color(1.0, 0.95, 0.7, 0.55 + rank * 0.12), 0.12)
-		# Rarer prizes flash brighter, so the escalation is visible and not just
-		# audible.
-		_chest_flash.color = Color(tint.r, tint.g, tint.b, 0.10 + rank * 0.07)
-		_rt(_chest_flash, "color", Color(tint.r, tint.g, tint.b, 0.0), 0.28)
 		await tree.create_timer(0.3 + rank * 0.12, true, false, true).timeout
 		if not is_inside_tree():
 			return
@@ -1645,9 +1581,8 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 		if not is_inside_tree():
 			return
 
-	# 6. Let the last beat land, then clear. Shorter than it was: the hold used
-	# to exist so the prize cards could be read, and there is nothing to read now.
-	await tree.create_timer(0.25, true, false, true).timeout
+	# 6. Hold so the player can actually read the prizes, then clear.
+	await tree.create_timer(0.55, true, false, true).timeout
 	if not is_inside_tree():
 		return
 	_rt(_chest_reveal_root, "modulate:a", 0.0, 0.3)
@@ -1655,6 +1590,57 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	if not is_inside_tree():
 		return
 	_chest_reveal_root.visible = false
+	for c in _chest_cards.get_children():
+		c.queue_free()
+
+func _make_chest_card(item: Dictionary) -> Control:
+	var rarity := str(item.get("rarity", "common"))
+	var color: Color = CHEST_RARITY_COLORS.get(rarity, Color.WHITE)
+	var card := Control.new()
+	card.custom_minimum_size = Vector2(440, 68)
+
+	var frame_path := str(CHEST_CARD_FRAMES.get(rarity, CHEST_CARD_FRAMES["common"]))
+	if ResourceLoader.exists(frame_path):
+		var frame := TextureRect.new()
+		frame.texture = load(frame_path)
+		frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+		frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(frame)
+	else:
+		# No frame art for this rarity — fall back to a tinted panel so the
+		# card still reads instead of rendering as bare text.
+		var bg := ColorRect.new()
+		bg.color = Color(color.r * 0.18, color.g * 0.18, color.b * 0.18, 0.9)
+		bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+		bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(bg)
+
+	var name_lbl := Label.new()
+	name_lbl.text = str(item.get("name", "UPGRADE")).to_upper()
+	name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	name_lbl.set_anchors_preset(Control.PRESET_FULL_RECT)
+	name_lbl.offset_top = -8.0
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_font(name_lbl, 18)
+	name_lbl.add_theme_color_override("font_color", color)
+	name_lbl.add_theme_constant_override("outline_size", 5)
+	name_lbl.add_theme_color_override("font_outline_color", Color(0.05, 0.02, 0.06))
+	card.add_child(name_lbl)
+
+	var desc := str(item.get("desc", ""))
+	if desc != "":
+		var desc_lbl := Label.new()
+		desc_lbl.text = desc
+		desc_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		desc_lbl.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+		desc_lbl.offset_top = -26.0
+		desc_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_apply_font(desc_lbl, 11)
+		desc_lbl.add_theme_color_override("font_color", Color(0.85, 0.85, 0.9))
+		card.add_child(desc_lbl)
+	return card
 
 func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
 	_modal_backdrop_for_tech = true
@@ -2132,73 +2118,3 @@ func _set_start_option(label: Label, icon: TextureRect, options: Array, index: i
 			icon.modulate = Color.WHITE if is_selected else Color(0.6, 0.6, 0.6)
 		else:
 			icon.texture = null
-
-func show_upgrade_popup(upgrade_id: String, rarity: String = "common") -> void:
-	var rarity_colors = {
-		"common": Color(0.4, 0.9, 0.4),
-		"rare": Color(0.3, 0.6, 1.0),
-		"epic": Color(0.8, 0.3, 1.0),
-		"legendary": Color(1.0, 0.82, 0.28),
-		"mythic": Color(1.0, 0.48, 0.35),
-		"diamond": Color(0.2, 1.0, 1.0)
-	}
-	var color = rarity_colors.get(rarity, Color.WHITE)
-	_ensure_upgrade_popup()
-	if _upgrade_popup_vbox == null or not is_instance_valid(_upgrade_popup_vbox):
-		return
-	_upgrade_popup.visible = true
-
-	var row: HBoxContainer = null
-	if _upgrade_popup_labels.has(upgrade_id):
-		row = _upgrade_popup_labels[upgrade_id]
-		if row == null or not is_instance_valid(row):
-			_upgrade_popup_labels.erase(upgrade_id)
-			row = null
-	if row == null:
-		row = HBoxContainer.new()
-		row.name = "Upgrade_%s" % upgrade_id
-		row.alignment = BoxContainer.ALIGNMENT_CENTER
-		row.add_theme_constant_override("separation", 8)
-		row.custom_minimum_size = Vector2(268, 26)
-
-		var badge = TextureRect.new()
-		badge.name = "Badge"
-		badge.custom_minimum_size = Vector2(20, 20)
-		badge.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		badge.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		row.add_child(badge)
-
-		var label = Label.new()
-		label.name = "Text"
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-		label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		if _ui_font != null:
-			label.add_theme_font_override("font", _ui_font)
-		label.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.95))
-		label.add_theme_constant_override("outline_size", 1)
-		row.add_child(label)
-
-		_upgrade_popup_labels[upgrade_id] = row
-		_upgrade_popup_vbox.add_child(row)
-
-	var badge_rect = row.get_node_or_null("Badge") as TextureRect
-	if badge_rect != null:
-		var badge_path = str(RARITY_FRAME_TEXTURES.get(rarity, RARITY_FRAME_TEXTURES["common"]))
-		if badge_path != "" and ResourceLoader.exists(badge_path):
-			badge_rect.texture = load(badge_path)
-		else:
-			badge_rect.texture = null
-
-	var label = row.get_node_or_null("Text") as Label
-	if label == null:
-		return
-	label.add_theme_color_override("font_color", color)
-	var display_name = upgrade_id.replace("_", " ").capitalize()
-	if rarity == "diamond" or rarity == "legendary" or rarity == "mythic":
-		label.text = "%s %s" % [rarity.to_upper(), display_name]
-		label.add_theme_font_size_override("font_size", 20)
-	else:
-		label.text = "+ %s" % display_name
-		label.add_theme_font_size_override("font_size", 16)
-	row.set_meta("expires_at", Time.get_ticks_msec() + 2500)
