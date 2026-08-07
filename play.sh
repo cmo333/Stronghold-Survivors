@@ -9,7 +9,7 @@
 #
 # Overrides:
 #   BRANCH=main ./play.sh                        # different branch
-#   GODOT=/path/to/Godot ./play.sh               # explicit engine binary
+#   GODOT=/path/to/Godot ./play.sh               # explicit engine binary (remembered)
 #   ./play.sh --no-run                           # update only, don't launch
 
 set -uo pipefail
@@ -17,6 +17,7 @@ set -uo pipefail
 BRANCH="${BRANCH:-slim}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PID_FILE="$REPO_DIR/.play.pid"
+GODOT_PATH_FILE="$REPO_DIR/.play.godot"
 RUN_GAME=1
 [ "${1:-}" = "--no-run" ] && RUN_GAME=0
 
@@ -63,26 +64,58 @@ git --no-pager log --oneline -1 | sed 's/^/now at: /'
 [ "$RUN_GAME" -eq 1 ] || exit 0
 
 # --- 4. Find the engine ------------------------------------------------------
+# Resolution order: explicit GODOT= -> remembered path -> installed app bundles
+# (any Godot*.app, since versioned downloads keep their version in the name) ->
+# PATH -> Spotlight. Whatever wins is remembered so this only happens once.
 GODOT_BIN=""
-if [ -n "${GODOT:-}" ] && [ -x "$GODOT" ]; then
-	GODOT_BIN="$GODOT"
-else
-	for candidate in \
-		"/Applications/Godot.app/Contents/MacOS/Godot" \
-		"$HOME/Applications/Godot.app/Contents/MacOS/Godot" \
-		"/Applications/Godot_mono.app/Contents/MacOS/Godot"; do
-		if [ -x "$candidate" ]; then GODOT_BIN="$candidate"; break; fi
+
+try_bin() { [ -n "${1:-}" ] && [ -x "$1" ] && GODOT_BIN="$1"; }
+
+# App bundles anywhere the installer or a download might have put them.
+scan_bundles() {
+	for app in \
+		/Applications/Godot*.app \
+		"$HOME"/Applications/Godot*.app \
+		"$HOME"/Downloads/Godot*.app \
+		"$HOME"/Desktop/Godot*.app; do
+		[ -d "$app" ] || continue
+		for inner in "$app/Contents/MacOS/Godot" "$app/Contents/MacOS/Godot_mono"; do
+			if [ -x "$inner" ]; then echo "$inner"; return 0; fi
+		done
 	done
+	return 1
+}
+
+[ -z "$GODOT_BIN" ] && try_bin "${GODOT:-}"
+[ -z "$GODOT_BIN" ] && [ -f "$GODOT_PATH_FILE" ] && try_bin "$(cat "$GODOT_PATH_FILE" 2>/dev/null || true)"
+[ -z "$GODOT_BIN" ] && try_bin "$(scan_bundles || true)"
+[ -z "$GODOT_BIN" ] && try_bin "$(command -v godot4 2>/dev/null || true)"
+[ -z "$GODOT_BIN" ] && try_bin "$(command -v godot 2>/dev/null || true)"
+# Last resort: ask Spotlight where the app went.
+if [ -z "$GODOT_BIN" ] && command -v mdfind >/dev/null 2>&1; then
+	SPOT="$(mdfind "kMDItemKind == 'Application' && kMDItemFSName == 'Godot*.app'" 2>/dev/null | head -1)"
+	[ -n "$SPOT" ] && try_bin "$SPOT/Contents/MacOS/Godot"
 fi
-if [ -z "$GODOT_BIN" ]; then
-	GODOT_BIN="$(command -v godot4 2>/dev/null || command -v godot 2>/dev/null || true)"
-fi
+
 if [ -z "$GODOT_BIN" ]; then
 	warn ""
 	warn "Updated, but couldn't find Godot to launch it."
-	warn "Point at it once and it'll be remembered for that run:"
-	warn "  GODOT=/Applications/Godot.app/Contents/MacOS/Godot ./play.sh"
+	warn ""
+	warn "Find it with either of these:"
+	warn "  ls -d /Applications/Godot*.app ~/Applications/Godot*.app ~/Downloads/Godot*.app"
+	warn "  mdfind -name 'Godot' | grep '\\.app$'"
+	warn ""
+	warn "Then point at the binary INSIDE the app, once:"
+	warn "  GODOT='/Applications/Godot.app/Contents/MacOS/Godot' ./play.sh"
+	warn ""
+	warn "It gets remembered after that, so plain ./play.sh works from then on."
 	exit 0
+fi
+
+# Remember it so the next run doesn't have to search.
+if [ ! -f "$GODOT_PATH_FILE" ] || [ "$(cat "$GODOT_PATH_FILE" 2>/dev/null || true)" != "$GODOT_BIN" ]; then
+	printf '%s\n' "$GODOT_BIN" > "$GODOT_PATH_FILE"
+	echo "engine: $GODOT_BIN (remembered)"
 fi
 
 # --- 5. Restart the game -----------------------------------------------------
