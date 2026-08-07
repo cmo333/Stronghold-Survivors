@@ -32,6 +32,10 @@ const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
 # walled in. Large enough that any ring a player can actually afford fails to
 # escape it, small enough that the extra BFS stays cheap during build preview.
 const PATH_ESCAPE_BOX_RADIUS = 420.0
+# The extractor/generator scene. Placing one has to be validated the same way as
+# walling one in: until it exists there is nothing in the scene to protect, so
+# dropping it into an already-sealed pocket would otherwise sail through.
+const PROTECTED_BUILD_SCENE = "res://scenes/buildings/resource_generator.tscn"
 
 var _last_path_block_reason := "Must leave path open!"
 var game: Node2D = null
@@ -390,7 +394,7 @@ func bot_place_tower(owner_id: int, pos: Vector2, tower_id: String) -> bool:
 	if not _is_clear(snapped, footprint):
 		return false
 	var blocks_path = bool(def.get("blocks_path", true))
-	if blocks_path and not _check_path_validity(snapped, footprint):
+	if blocks_path and not _check_path_validity(snapped, footprint, _def_is_protected_target(def)):
 		return false
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
@@ -989,7 +993,7 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	# Check path blocking - only for buildings that block path
 	var blocks_path = bool(def.get("blocks_path", true))
 	if blocks_path and result["clear"]:
-		result["path_clear"] = _check_path_validity(pos, result["footprint"])
+		result["path_clear"] = _check_path_validity(pos, result["footprint"], _def_is_protected_target(def))
 		if not result["path_clear"]:
 			result["reason"] = _last_path_block_reason
 	
@@ -1004,7 +1008,7 @@ func _get_effective_footprint_radius(def: Dictionary) -> float:
 		radius = max(radius, 16.0)
 	return radius
 
-func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
+func _check_path_validity(proposed_pos: Vector2, proposed_radius: float, proposed_is_target: bool = false) -> bool:
 	"""Check if placing a building would block paths to the player or seal off the
 	extraction objective."""
 	_last_path_block_reason = "Must leave path open!"
@@ -1090,8 +1094,7 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool
 
 	# The extractor and generators must stay attackable - sealing the objective
 	# behind walls would win the run without defending it.
-	if not _protected_targets_stay_reachable(dist, origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius):
-		_last_path_block_reason = "Can't wall in the extractor!"
+	if not _protected_targets_stay_reachable(dist, origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius, proposed_is_target):
 		return false
 
 	# Validate enough reachable spawn ring cells to keep spawning reliable.
@@ -1181,15 +1184,40 @@ func _approach_cells(target_pos: Vector2, target_radius: float, origin: Vector2,
 			cells.append(y * grid_size + x)
 	return cells
 
-func _protected_targets_stay_reachable(dist: PackedInt32Array, origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float) -> bool:
+func _def_is_protected_target(def: Dictionary) -> bool:
+	"""Is the building being placed itself an extractor/generator? Matched on
+	scene path because _evaluate_placement only ever receives the def, not its id."""
+	if def.is_empty():
+		return false
+	return str(def.get("scene", "")) == PROTECTED_BUILD_SCENE
+
+func _protected_targets_stay_reachable(dist: PackedInt32Array, origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float, proposed_is_target: bool) -> bool:
+	var checks: Array = []
 	for target in _protected_targets():
-		var target_pos: Vector2 = (target as Node2D).global_position
-		var target_radius := _target_footprint(target)
+		checks.append({
+			"pos": (target as Node2D).global_position,
+			"radius": _target_footprint(target),
+			"reason": "Can't wall in the extractor!"
+		})
+	# A generator being placed right now counts too - it is not in the scene yet,
+	# so _protected_targets() cannot see it. Without this, building the fort first
+	# and dropping the extractor into a sealed pocket bypasses the rule entirely.
+	if proposed_is_target:
+		checks.append({
+			"pos": proposed_pos,
+			"radius": proposed_radius,
+			"reason": "Extractor needs an open path!"
+		})
+
+	for check in checks:
+		var target_pos: Vector2 = check["pos"]
+		var target_radius: float = check["radius"]
 		var cells := _approach_cells(target_pos, target_radius, origin, grid_size, cell_size)
 		if cells.is_empty():
 			# Target sits outside the player-centred grid entirely; fall back to a
 			# local check around it.
 			if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+				_last_path_block_reason = str(check["reason"])
 				return false
 			continue
 		var connected := false
@@ -1203,6 +1231,7 @@ func _protected_targets_stay_reachable(dist: PackedInt32Array, origin: Vector2, 
 		# genuine seal or a route that loops outside the grid, so confirm with a
 		# local escape test before rejecting the placement.
 		if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+			_last_path_block_reason = str(check["reason"])
 			return false
 	return true
 
