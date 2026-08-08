@@ -26,22 +26,76 @@ var _income_text_cooldown: float = 0.0
 
 # --- Objective beacon ---------------------------------------------------------
 # The extractor is both the win condition and what the entire horde walks toward,
-# yet a packed base buries it behind two rows of towers. A light column drawn
-# above the buildings keeps it locatable, and brightening it with progress makes
-# "nearly done" readable from across the map - exciting for the player, and fair
-# warning that the pressure is about to peak.
-const BEACON_COLOR = Color(0.42, 1.0, 0.70)
-const BEACON_WIDTH = 26
-const BEACON_HEIGHT = 132
-const BEACON_Z = 60           # above buildings (0), below the player (120)
-const BEACON_PULSE_SPEED = 2.6
-const BEACON_MIN_SCALE = 0.55
-const BEACON_MAX_SCALE = 1.0
-const BEACON_MIN_ALPHA = 0.30
-const BEACON_MAX_ALPHA = 0.78
+# yet a packed base buries it behind two rows of towers.
+#
+# The first version of this was a 26px column, 132px tall, at 0.30 alpha until
+# extraction was well underway. That is narrower than the tower it sits on and
+# barely clears its own roof, and it blends ADDITIVELY in the same green as the
+# extractor's own plume -- so on a real screenshot of a built-up base it was
+# simply not there. Nothing was broken; it was just too small and too dim to
+# survive its own background.
+#
+# So it is now an actual sky beam: wide enough at the base to wrap the whole
+# tower, running far enough up to leave the top of the screen at every zoom the
+# game uses, with a shimmer shader so it reads as a live column of light rather
+# than a painted stripe. A separate radial glow sits on the building itself so
+# the tower is lit, not just the air above it. Progress drives brightness and
+# width rather than height -- "goes to the sky" should be true from the moment
+# it lands, and "nearly done" still has to be readable from across the map.
+const BEACON_COLOR = Color(0.60, 1.0, 0.82)
+const BEACON_Z = 60           # above buildings (0-2), below the player (120)
+const BEACON_PULSE_SPEED = 2.2
 
-static var _shared_beacon_tex: ImageTexture = null
+# 1024 world px of beam. The viewport is 720 tall and the camera runs at roughly
+# 1.9-2.4 zoom, so about 300-380 world px are on screen above the tower: this
+# leaves the frame with a wide margin at any zoom anyone is likely to set.
+const BEAM_WIDTH = 96
+const BEAM_HEIGHT = 1024
+const BEAM_BASE_Y = 8.0       # bottom of the beam, just above the stone footing
+
+# The building spans roughly -53..+23 around the node origin, so the glow is
+# centred slightly high to cover the machinery and the base of the jet.
+const GLOW_SIZE = 168
+const GLOW_CENTRE_Y = -14.0
+const GLOW_Z = 1              # over the tower art, under the health bar (2)
+
+const BEACON_MIN_ALPHA = 0.55
+const BEACON_MAX_ALPHA = 1.0
+const BEAM_MIN_WIDTH_SCALE = 0.82
+const BEAM_MAX_WIDTH_SCALE = 1.15
+# Deliberately modest. This is a halo that picks the tower out of a packed base,
+# and additive light over 48x112 of detailed pixel art turns into a green smear
+# very quickly -- measured by eye at 0.62, where the stonework stopped reading.
+const GLOW_MIN_ALPHA = 0.22
+const GLOW_MAX_ALPHA = 0.45
+
+# Shimmer. Two counter-scrolling band sets at unrelated frequencies so the
+# pattern never visibly loops, modulated into the sprite's existing COLOR rather
+# than replacing it -- COLOR arrives already multiplied by the node's modulate,
+# which is what carries the beacon's colour and its progress-driven alpha, and
+# overwriting it would throw both away. (MODULATE itself is not exposed in this
+# renderer; see the readability pass.)
+const BEAM_SHADER_CODE := """
+shader_type canvas_item;
+render_mode blend_add;
+
+uniform float shimmer_speed = 1.0;
+uniform float shimmer_depth = 0.34;
+
+void fragment() {
+	float fast = sin(UV.y * 34.0 - TIME * 5.2 * shimmer_speed);
+	float slow = sin(UV.y * 11.3 + TIME * 1.7 * shimmer_speed + UV.x * 4.0);
+	float bands = 0.5 + 0.5 * (fast * 0.58 + slow * 0.42);
+	COLOR.a *= (1.0 - shimmer_depth) + shimmer_depth * bands;
+	COLOR.rgb *= 0.86 + 0.28 * bands;
+}
+"""
+
+static var _shared_beam_tex: ImageTexture = null
+static var _shared_glow_tex: ImageTexture = null
+static var _shared_beam_shader: Shader = null
 var _beacon: Sprite2D = null
+var _beacon_glow: Sprite2D = null
 var _beacon_phase: float = 0.0
 
 # Visual components
@@ -81,43 +135,110 @@ func _is_the_extractor() -> bool:
 		return false
 	return _game.extractor == self
 
-static func _get_beacon_texture() -> ImageTexture:
-	if _shared_beacon_tex != null:
-		return _shared_beacon_tex
-	var img := Image.create(BEACON_WIDTH, BEACON_HEIGHT, false, Image.FORMAT_RGBA8)
+static func _smoothstep(edge0: float, edge1: float, x: float) -> float:
+	var t: float = clampf((x - edge0) / maxf(edge1 - edge0, 0.0001), 0.0, 1.0)
+	return t * t * (3.0 - 2.0 * t)
+
+static func _get_beam_texture() -> ImageTexture:
+	"""A column that flares out over the tower and narrows as it climbs.
+
+	Drawn white; the sprite's modulate supplies the colour, so one texture is
+	shared by every extractor that ever exists in the process."""
+	if _shared_beam_tex != null:
+		return _shared_beam_tex
+	var img := Image.create(BEAM_WIDTH, BEAM_HEIGHT, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
-	var cx := float(BEACON_WIDTH) * 0.5
-	for y in range(BEACON_HEIGHT):
-		# Row 0 is the top of the image, which becomes the top of the column:
-		# faint there, solid where it meets the crystal, so it reads as light
-		# rather than a painted bar.
-		var t := float(y) / float(BEACON_HEIGHT - 1)
-		var vertical := pow(t, 1.7)
-		for x in range(BEACON_WIDTH):
-			var dx: float = absf(float(x) + 0.5 - cx) / cx
-			var horizontal: float = clampf(1.0 - dx * dx, 0.0, 1.0)
-			var a: float = vertical * horizontal
+	var cx := float(BEAM_WIDTH) * 0.5
+	for y in range(BEAM_HEIGHT):
+		# u: 0 at the tower, 1 at the far top. Row 0 of the image is the top.
+		var u: float = float(BEAM_HEIGHT - 1 - y) / float(BEAM_HEIGHT - 1)
+		# The flare is what makes the beam belong to the building instead of
+		# hovering over it: 34px half-width at the footing, pinched to a 9px
+		# shaft within the first fifth of the climb.
+		var flare: float = 1.0 - _smoothstep(0.0, 0.20, u)
+		var half_w: float = 9.0 + 25.0 * flare
+		var core_w: float = 3.0 + 3.0 * flare
+		# Dims with height but is still strong where it leaves the screen, so it
+		# reads as continuing upward rather than stopping just out of frame.
+		var vertical: float = pow(1.0 - u, 0.8)
+		# ...and fades back out over the bottom ~85px, which is exactly the part
+		# that overlaps the building. At full strength the flare capped the tower
+		# in flat green and erased both the stonework and the extractor's own
+		# jet; the point is to light the tower, not to paint over it. Faded, the
+		# beam looks like it is being emitted by the crystal instead.
+		# The floor matters: at 0.16 a dim gap opened between the top of the
+		# extractor's own jet and the point where the beam takes over, and the
+		# two read as separate effects. 0.26 keeps them joined.
+		vertical *= 0.26 + 0.74 * _smoothstep(0.0, 0.085, u)
+		for x in range(BEAM_WIDTH):
+			var dx: float = absf(float(x) + 0.5 - cx)
+			var body: float = clampf(1.0 - pow(dx / half_w, 2.0), 0.0, 1.0)
+			body = pow(body, 1.4)
+			var core: float = exp(-pow(dx / core_w, 2.0) * 1.6)
+			var a: float = vertical * clampf(body * 0.68 + core * 0.90, 0.0, 1.0)
 			if a <= 0.004:
 				continue
 			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
-	_shared_beacon_tex = ImageTexture.create_from_image(img)
-	return _shared_beacon_tex
+	_shared_beam_tex = ImageTexture.create_from_image(img)
+	return _shared_beam_tex
+
+static func _get_glow_texture() -> ImageTexture:
+	"""Soft radial pool that lights the tower itself."""
+	if _shared_glow_tex != null:
+		return _shared_glow_tex
+	var img := Image.create(GLOW_SIZE, GLOW_SIZE, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := float(GLOW_SIZE) * 0.5
+	for y in range(GLOW_SIZE):
+		for x in range(GLOW_SIZE):
+			var dx: float = (float(x) + 0.5 - c) / c
+			var dy: float = (float(y) + 0.5 - c) / c
+			var d: float = sqrt(dx * dx + dy * dy)
+			var a: float = clampf(1.0 - d, 0.0, 1.0)
+			a = pow(a, 2.2)
+			if a <= 0.004:
+				continue
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
+	_shared_glow_tex = ImageTexture.create_from_image(img)
+	return _shared_glow_tex
+
+static func _get_beam_shader() -> Shader:
+	if _shared_beam_shader != null:
+		return _shared_beam_shader
+	_shared_beam_shader = Shader.new()
+	_shared_beam_shader.code = BEAM_SHADER_CODE
+	return _shared_beam_shader
 
 func _setup_beacon() -> void:
 	if _beacon != null or not _is_the_extractor():
 		return
+
+	_beacon_glow = Sprite2D.new()
+	_beacon_glow.name = "ObjectiveGlow"
+	_beacon_glow.texture = _get_glow_texture()
+	_beacon_glow.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_beacon_glow.z_as_relative = false
+	_beacon_glow.z_index = GLOW_Z
+	var glow_mat := CanvasItemMaterial.new()
+	glow_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_beacon_glow.material = glow_mat
+	_beacon_glow.position = Vector2(0.0, GLOW_CENTRE_Y)
+	_beacon_glow.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, GLOW_MIN_ALPHA)
+	add_child(_beacon_glow)
+
 	_beacon = Sprite2D.new()
 	_beacon.name = "ObjectiveBeacon"
-	_beacon.texture = _get_beacon_texture()
+	_beacon.texture = _get_beam_texture()
 	_beacon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	_beacon.centered = false
 	_beacon.z_as_relative = false
 	_beacon.z_index = BEACON_Z
-	# Additive so it reads as emitted light and never hides the art behind it.
-	var mat := CanvasItemMaterial.new()
-	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_beacon.material = mat
-	_beacon.position = Vector2(-float(BEACON_WIDTH) * 0.5, -float(BEACON_HEIGHT))
+	# The shader declares blend_add itself; a ShaderMaterial replaces the
+	# CanvasItemMaterial that used to carry the blend mode.
+	var beam_mat := ShaderMaterial.new()
+	beam_mat.shader = _get_beam_shader()
+	_beacon.material = beam_mat
+	_beacon.position = Vector2(-float(BEAM_WIDTH) * 0.5, BEAM_BASE_Y - float(BEAM_HEIGHT))
 	_beacon.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, BEACON_MIN_ALPHA)
 	add_child(_beacon)
 
@@ -128,14 +249,27 @@ func _update_beacon(delta: float) -> void:
 	var progress := 0.0
 	if _game != null and "extraction_progress" in _game:
 		progress = clampf(float(_game.extraction_progress), 0.0, 1.0)
-	var height_scale := lerpf(BEACON_MIN_SCALE, BEACON_MAX_SCALE, progress)
 	var pulse := 0.5 + 0.5 * sin(_beacon_phase)
-	var alpha := lerpf(BEACON_MIN_ALPHA, BEACON_MAX_ALPHA, progress) * (0.78 + 0.22 * pulse)
-	# The sprite grows from its top edge, so the base has to travel with it to
-	# keep the column planted on the crystal.
-	_beacon.scale.y = height_scale
-	_beacon.position.y = -float(BEACON_HEIGHT) * height_scale
+
+	# Height is fixed. Progress widens and brightens instead, so the beam reaches
+	# the sky from the moment the extractor lands while "nearly done" still reads
+	# from across the map.
+	var alpha := lerpf(BEACON_MIN_ALPHA, BEACON_MAX_ALPHA, progress) * (0.86 + 0.14 * pulse)
+	var width_scale := lerpf(BEAM_MIN_WIDTH_SCALE, BEAM_MAX_WIDTH_SCALE, progress)
+	_beacon.scale.x = width_scale
+	# centered = false, so widening from the left edge would walk the beam
+	# sideways off the tower. Re-anchor the left edge on every change.
+	_beacon.position.x = -float(BEAM_WIDTH) * 0.5 * width_scale
 	_beacon.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, alpha)
+	var beam_mat := _beacon.material as ShaderMaterial
+	if beam_mat != null:
+		# The shimmer quickens as extraction closes out.
+		beam_mat.set_shader_parameter("shimmer_speed", 1.0 + progress * 1.1)
+
+	if _beacon_glow != null and is_instance_valid(_beacon_glow):
+		var glow_alpha := lerpf(GLOW_MIN_ALPHA, GLOW_MAX_ALPHA, progress) * (0.80 + 0.20 * pulse)
+		_beacon_glow.modulate = Color(BEACON_COLOR.r, BEACON_COLOR.g, BEACON_COLOR.b, glow_alpha)
+		_beacon_glow.scale = Vector2.ONE * (0.96 + 0.06 * pulse)
 
 func _check_zone_membership() -> void:
 	if _game == null or not _game.has_method("get_zone_at"):
