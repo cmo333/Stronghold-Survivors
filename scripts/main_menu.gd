@@ -38,7 +38,7 @@ var _font: FontFile = null
 var _cores_label: Label = null
 var _content: VBoxContainer = null
 var _settings_menu: CanvasLayer = null
-var _selected_hero: String = "hunter"
+var _selected_hero: String = "warlock"
 var _selected_level: String = "graveyard"
 
 var _bg_gradient: TextureRect = null
@@ -85,9 +85,9 @@ func _meta() -> Node:
 func _pick_default_hero() -> String:
 	var meta := _meta()
 	if meta == null:
-		return "hunter"
-	if meta.is_hero_unlocked("hunter"):
-		return "hunter"
+		return "warlock"
+	if meta.is_hero_unlocked("warlock"):
+		return "warlock"
 	for h in meta.HERO_DEFS:
 		var id := str(h.get("id", ""))
 		if meta.is_hero_unlocked(id):

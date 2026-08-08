@@ -278,9 +278,17 @@ var _draft_pity: Dictionary = {
 var _draft_telemetry: Dictionary = {}
 var characters = [
 	{
+		"id": "warlock",
+		"name": "Tech Warlock",
+		"desc": "Arcane-circuit caster",
+		"base_path": "res://assets/level1/level1_player_anim_warlock",
+		"prefix": "player_warlock_32",
+		"icon": "res://assets/level1/level1_player_anim_warlock/player_warlock_32_S_move_f001_v001.png"
+	},
+	{
 		"id": "hunter",
-		"name": "Hunter",
-		"desc": "Balanced ranger with steady fire",
+		"name": "OG Hunter",
+		"desc": "The one who came first",
 		"base_path": "res://assets/level1/level1_player_anim_hunterv2",
 		"prefix": "player_hunterv2_32",
 		"icon": "res://assets/level1/level1_player_anim_hunterv2/player_hunterv2_32_S_move_f001_v001.png"
@@ -1918,7 +1926,7 @@ func _host_spawn_all_players() -> void:
 	var i := 0
 	for entry in roster:
 		var pid := int(entry["peer_id"])
-		var hero := str(entry.get("hero", "hunter"))
+		var hero := str(entry.get("hero", "warlock"))
 		var bot := bool(entry.get("is_bot", false))
 		var pos := _ffa_spawn_position(i, roster.size())
 		_ffa_spawn_data.append({"pid": pid, "hero": hero, "bot": bot, "pos": pos})

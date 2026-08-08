@@ -17,11 +17,18 @@ const PROTOTYPE_MIN_CORES := 1000
 
 const HERO_DEFS := [
 	{
-		"id": "hunter",
-		"name": "Hunter",
-		"desc": "Balanced ranger with steady fire.",
+		"id": "warlock",
+		"name": "Tech Warlock",
+		"desc": "Arcane-circuit caster. The standard issue.",
 		"core_cost": 0,
 		"unlocked_by_default": true
+	},
+	{
+		"id": "hunter",
+		"name": "OG Hunter",
+		"desc": "The one who came first. Prestige unlock.",
+		"core_cost": 10000,
+		"unlocked_by_default": false
 	},
 	{
 		"id": "hunter_classic",
@@ -150,7 +157,9 @@ const LEVEL_DEFS := [
 const DEFAULT_STATE := {
 	"cores": 0,
 	"lifetime_cores_earned": 0,
-	"unlocked_heroes": {"hunter": true, "pyromancer": false},
+	# Fresh saves start on the warlock. An existing save keeps whatever it
+	# already unlocked -- repricing a hero must not confiscate one a player has.
+	"unlocked_heroes": {"warlock": true, "hunter": false, "pyromancer": false},
 	"permanent_upgrades": {},
 	"unlocked_levels": {"graveyard": true},
 	"first_victory": false
@@ -161,7 +170,7 @@ const VICTORY_CORES_BONUS := 50
 var _state: Dictionary = {}
 
 # Transient selections chosen in the main menu (not persisted).
-var pending_hero: String = "hunter"
+var pending_hero: String = "warlock"
 var pending_level: String = "graveyard"
 var pending_modifier: String = "none"
 # Set true by the menu when launching a run so the game scene auto-starts
