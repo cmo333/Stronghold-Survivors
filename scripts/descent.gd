@@ -31,8 +31,8 @@ const T_CASCADE := 7.0       # tiles flood the plane, the frame starts shaking
 const T_VORTEX := 8.0        # everything spirals inward
 const T_STATIC := 9.0          # signal breaks up: scrambled static wipe
 const T_MESSAGE := 9.9         # the rift warning
-const T_SCRAMBLE_OUT := 12.9   # 3.0s of message, then it tears apart again
-const T_END := 13.4            # hand over to the run
+const T_SCRAMBLE_OUT := 13.9   # 4.0s of message, then it tears apart again
+const T_END := 14.4            # hand over to the run
 
 # What used to sit between T_STATIC and T_END was a "spawn" beat: a collapsing
 # ring with a twelve-block stick figure fading up inside it, meant to read as the
@@ -43,17 +43,25 @@ const T_END := 13.4            # hand over to the run
 
 const MESSAGE_LINES := "The time is fleeting.\nWe don't know how long the rift will stay open.\nExtract as much as you can, traveler..."
 const MESSAGE_STING := "More are coming."
-const T_STING_IN := 1.5      # seconds into the message beat
-const MESSAGE_FADE := 0.45
+const T_STING_IN := 2.55     # seconds into the message beat
+const MESSAGE_FADE := 0.30
+const TYPE_LINES := 2.0      # seconds to type the three lines on
+const TYPE_STING := 0.55     # seconds to type the sting on
 const MESSAGE_MARGIN := 110.0
 
 # The hand-off used to cut from the message screen straight to the run. Measured
 # off frames of each: the message screen averages luma 0.094 and the first frame
 # of a run averages 0.42, so that cut is a 4.5x jump in brightness and it lands
-# like a flashbulb. The out-scramble ramps the whole field up to roughly the
-# run's own mean colour, so the two frames either side of the cut match and the
-# noise covers what is left.
-const HANDOFF_WASH := Color(0.39, 0.46, 0.21)
+# like a flashbulb. The out-scramble ramps the whole field up to meet it.
+#
+# Cool grey rather than the map's green: matching the LUMA is what kills the
+# flash, and the colour is free to stay in the black-and-space register the rest
+# of the sequence lives in. 0.2126*0.40 + 0.7152*0.43 + 0.0722*0.47 = 0.427,
+# against the run's measured 0.42.
+const HANDOFF_WASH := Color(0.40, 0.43, 0.47)
+
+# Dead-channel palette: cold whites and blues over black, no green.
+const STATIC_TINT := Color(0.62, 0.68, 0.82)
 
 const COLOR_MESSAGE := Color(0.72, 1.0, 0.86)
 const COLOR_STING := Color(1.0, 0.42, 0.34)
@@ -105,10 +113,22 @@ var _shake := Vector2.ZERO
 var _message: Label = null
 var _sting: Label = null
 var _preload_started := false
+var _world: Node = null
+var _world_layers: Array[CanvasLayer] = []
+var _typewriter_chars := -1
+var _skip_next_delta := false
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# Above everything the run can draw. Tree order alone is not enough to keep
+	# the world covered while it is mounted behind this scene: z_index outranks
+	# it, and the run uses the range freely -- towers 0-2, the extractor beacon
+	# 60, the player 120. Caught in a render, where the player and its health bar
+	# were sitting on top of the transition in the top-left corner, drawn at the
+	# world origin because the camera is off. 4096 is the engine's maximum.
+	z_index = 4096
+	z_as_relative = false
 	# Fixed seed: the lattice assembles the same way every time, so the sequence
 	# is a designed thing rather than a different accident on each launch.
 	_rng.seed = 20260808
@@ -198,6 +218,103 @@ func _update_message() -> void:
 	var out: float = clampf(1.0 - (_t - T_SCRAMBLE_OUT) / 0.16, 0.0, 1.0)
 	_message.modulate.a = clampf(m / MESSAGE_FADE, 0.0, 1.0) * out
 	_sting.modulate.a = clampf((m - T_STING_IN) / MESSAGE_FADE, 0.0, 1.0) * out
+	# Typed on rather than faded in. visible_ratio counts through the string the
+	# Label already laid out, so wrapping, centring and the outline all stay
+	# exactly as they are and no per-character bookkeeping is needed.
+	_message.visible_ratio = clampf(m / TYPE_LINES, 0.0, 1.0)
+	_sting.visible_ratio = clampf((m - T_STING_IN) / TYPE_STING, 0.0, 1.0)
+	_tick_typewriter()
+
+func _tick_typewriter() -> void:
+	"""One tick per character revealed, from a pool, skipping whitespace.
+
+	Driven off the count rather than per frame, so the cadence is the same at
+	30fps and at 240fps, and a long frame fires one tick instead of a burst."""
+	var shown: int = _message.visible_characters + _sting.visible_characters
+	if _typewriter_chars < 0:
+		_typewriter_chars = shown
+		return
+	if shown <= _typewriter_chars:
+		return
+	var stepped := shown > _typewriter_chars + 1
+	_typewriter_chars = shown
+	if stepped:
+		return
+	_play_thump(2.6 + randf_range(-0.12, 0.12), -28.0)
+
+func _try_mount_world() -> void:
+	"""Build the run behind this scene, while the animation is still playing.
+
+	Preloading the resource off-thread only ever removed part of the wait.
+	main.tscn's _ready() -- where the world is actually assembled -- runs on the
+	main thread the moment the node enters the tree, and no amount of background
+	loading moves that. Measured before any of this: 1.0s resource load, then
+	5.9s in _ready, then 0.9s on the first frame.
+
+	So the node is added here instead of at the end, as early as the loader
+	allows. It goes in behind this Control and is held completely inert:
+
+	  * PROCESS_MODE_DISABLED stops _process, _physics_process and every input
+	    callback, so the run sits at frame zero rather than playing underneath.
+	  * its Camera2D is switched off, because a live Camera2D owns the canvas
+	    transform for the default layer and would drag this Control off-screen
+	    along with the world.
+	  * its CanvasLayers are hidden -- the HUD sits on layer 2 and would
+	    otherwise draw straight over the top of the descent regardless of tree
+	    order.
+
+	Everything else stays visible, hidden behind an opaque backdrop, so the
+	world's textures and shaders warm up on a covered frame instead of on the
+	player's first."""
+	if _world != null or _finished or not _preload_started:
+		return
+	if ResourceLoader.load_threaded_get_status(NEXT_SCENE) != ResourceLoader.THREAD_LOAD_LOADED:
+		return
+	var packed = ResourceLoader.load_threaded_get(NEXT_SCENE)
+	if not (packed is PackedScene):
+		_preload_started = false
+		return
+	var started := Time.get_ticks_usec()
+	var inst: Node = (packed as PackedScene).instantiate()
+	inst.process_mode = Node.PROCESS_MODE_DISABLED
+	var tree_root := get_tree().root
+	tree_root.add_child(inst)
+	tree_root.move_child(inst, 0)
+	_world = inst
+	if "camera" in inst and inst.camera != null:
+		inst.camera.enabled = false
+	# Only the ones that were actually showing, and remember exactly those. A
+	# blanket hide-all / show-all restores PauseMenu, SettingsMenu and GameOverUI
+	# to visible whether or not they started that way, which would put the
+	# game-over screen up over a run that has not started yet.
+	for child in inst.get_children():
+		if child is CanvasLayer and (child as CanvasLayer).visible:
+			(child as CanvasLayer).visible = false
+			_world_layers.append(child as CanvasLayer)
+	# Swallow the next frame's delta. Building the world stops the main thread,
+	# and that time arrives as one enormous delta on the FOLLOWING frame -- left
+	# alone it fast-forwards the animation by most of a second and skips a beat
+	# outright. Subtracting the measured duration here instead does not work:
+	# _t += delta runs at the top of _process, before this, so the correction
+	# lands a frame early and the jump still arrives. Cancelling the frame the
+	# stall actually shows up on is exact.
+	_skip_next_delta = true
+	print("[descent] world built behind the transition in %.0f ms" % (
+		float(Time.get_ticks_usec() - started) / 1000.0))
+
+func _reveal_world() -> bool:
+	if _world == null or not is_instance_valid(_world):
+		return false
+	if "camera" in _world and _world.camera != null:
+		_world.camera.enabled = true
+	for layer in _world_layers:
+		if is_instance_valid(layer):
+			layer.visible = true
+	_world.process_mode = Node.PROCESS_MODE_INHERIT
+	get_tree().current_scene = _world
+	_world = null
+	queue_free()
+	return true
 
 func _build_audio() -> void:
 	for path in ["res://assets/audio/sfx/building_hit.wav", "res://assets/audio/sfx/shield_hit.wav"]:
@@ -231,6 +348,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if _finished:
 		return
+	if _skip_next_delta:
+		_skip_next_delta = false
+		delta = 0.0
 	_t += delta
 	_tick_beat()
 	_update_shake(delta)
@@ -246,6 +366,7 @@ func _process(delta: float) -> void:
 	if _t >= T_SCRAMBLE_OUT and not _out_played:
 		_out_played = true
 		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+	_try_mount_world()
 	_update_message()
 	if _t >= T_END:
 		_finish()
@@ -528,7 +649,7 @@ func _draw_static(size: Vector2) -> void:
 	# Floods down the frame, holds, then thins out to nothing.
 	var flood: float = clampf(f / 0.40, 0.0, 1.0)
 	var density: float = 1.0 - clampf((f - 0.62) / 0.38, 0.0, 1.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.03), true)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.01, 0.02), true)
 	if density <= 0.0:
 		return
 	var limit: float = size.y * flood
@@ -543,7 +664,7 @@ func _draw_static(size: Vector2) -> void:
 		var v: float = _rng.randf()
 		# Tinted toward the rift's own cyan-green rather than grey, so the dead
 		# channel still belongs to this game.
-		var col := Color(0.42 + v * 0.55, 0.80 + v * 0.20, 0.68 + v * 0.32,
+		var col := Color(STATIC_TINT.r + v * 0.38, STATIC_TINT.g + v * 0.32, STATIC_TINT.b + v * 0.18,
 			density * (0.08 + v * 0.55))
 		draw_rect(Rect2(_snap(Vector2(dx - 32.0, y)), Vector2(size.x + 64.0, h)), col, true)
 		y += h
@@ -570,7 +691,7 @@ func _draw_static(size: Vector2) -> void:
 func _draw_scramble_out(size: Vector2) -> void:
 	var f: float = clampf((_t - T_SCRAMBLE_OUT) / maxf(0.001, T_END - T_SCRAMBLE_OUT), 0.0, 1.0)
 	var lift: float = smoothstep(0.0, 1.0, f)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.03).lerp(HANDOFF_WASH, lift), true)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.01, 0.02).lerp(HANDOFF_WASH, lift), true)
 	var y := 0.0
 	while y < size.y:
 		var h: float = PIXEL * float(_rng.randi_range(1, 4))
@@ -580,7 +701,7 @@ func _draw_scramble_out(size: Vector2) -> void:
 		if _rng.randf() < 0.30:
 			dx = float(_rng.randi_range(-44, 44))
 		var v: float = _rng.randf()
-		var col := Color(0.42 + v * 0.55, 0.80 + v * 0.20, 0.68 + v * 0.32, 0.10 + v * 0.55)
+		var col := Color(STATIC_TINT.r + v * 0.38, STATIC_TINT.g + v * 0.32, STATIC_TINT.b + v * 0.18, 0.10 + v * 0.55)
 		col = col.lerp(Color(HANDOFF_WASH.r, HANDOFF_WASH.g, HANDOFF_WASH.b, col.a), lift)
 		draw_rect(Rect2(_snap(Vector2(dx - 46.0, y)), Vector2(size.x + 92.0, h)), col, true)
 		y += h
@@ -600,10 +721,12 @@ func _finish() -> void:
 	if _finished:
 		return
 	_finished = true
-	# Hand over the copy the background thread already loaded. If the player
-	# skipped early the load may still be in flight, in which case
-	# load_threaded_get blocks for the remainder -- the same wait as before, just
-	# shorter by however much of the descent had played.
+	# The world is normally already built and sitting behind this scene, in which
+	# case handing over is switching a camera on and freeing this node.
+	if _reveal_world():
+		return
+	# Only reached if the mount never happened -- a skip in the first second, or
+	# a load that failed. Falls back to the plain path.
 	if _preload_started:
 		var status := ResourceLoader.load_threaded_get_status(NEXT_SCENE)
 		if status == ResourceLoader.THREAD_LOAD_LOADED or status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:

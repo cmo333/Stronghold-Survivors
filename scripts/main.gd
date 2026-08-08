@@ -4769,8 +4769,7 @@ func _load_damage_font() -> void:
 func _prepare_damage_badges() -> void:
 	_damage_badge_cache.clear()
 	for key in DAMAGE_BADGE_PATHS.keys():
-		var path = str(DAMAGE_BADGE_PATHS[key])
-		var tex = _load_damage_badge(path)
+		var tex = _load_damage_badge(str(DAMAGE_BADGE_PATHS[key]))
 		if tex != null:
 			_damage_badge_cache[key] = tex
 	_seed_damage_spots()
@@ -4779,30 +4778,32 @@ func _prepare_damage_badges() -> void:
 		_damage_label_shader.code = DAMAGE_LABEL_SHADER_CODE
 
 func _load_damage_badge(path: String) -> Texture2D:
-	if path == "" or not ResourceLoader.exists(path):
+	"""Load a badge with its background already knocked out.
+
+	This used to chroma-key the badge here, walking every pixel in GDScript. The
+	six badges are 1024x1024, so that is 6.3 million interpreted get_pixel /
+	set_pixel calls -- measured at 4427.8 ms, which was 88% of main.tscn's entire
+	_ready() and the whole of the 'it still takes five seconds to load' report.
+	It was recomputing the identical image on every scene load and every restart.
+
+	The key is now baked by tools/bake_damage_badges.gd, which runs the same rule
+	on the same input and writes <name>_keyed.png. Falls back to the unkeyed
+	source if a baked file is missing, so a half-updated checkout still draws
+	something rather than nothing."""
+	if path == "":
+		return null
+	var keyed := path.get_basename() + "_keyed.png"
+	if ResourceLoader.exists(keyed):
+		var baked = load(keyed)
+		if baked is Texture2D:
+			return baked as Texture2D
+		push_warning("Damage badge %s did not load as a texture" % keyed)
+	else:
+		push_warning("Damage badge %s is missing; run tools/bake_damage_badges.gd" % keyed)
+	if not ResourceLoader.exists(path):
 		return null
 	var raw = load(path)
-	if not (raw is Texture2D):
-		return null
-	var src = raw as Texture2D
-	var img = src.get_image()
-	if img == null:
-		return src
-	img.convert(Image.FORMAT_RGBA8)
-	var w = img.get_width()
-	var h = img.get_height()
-	for y in range(h):
-		for x in range(w):
-			var c = img.get_pixel(x, y)
-			var max_c = max(c.r, max(c.g, c.b))
-			var min_c = min(c.r, min(c.g, c.b))
-			var chroma = max_c - min_c
-			if chroma < 0.11 and max_c > 0.18 and max_c < 0.96:
-				c.a = 0.0
-			else:
-				c.a = max(c.a, clampf((chroma - 0.06) / 0.45, 0.0, 1.0))
-			img.set_pixel(x, y, c)
-	return ImageTexture.create_from_image(img)
+	return raw as Texture2D if raw is Texture2D else null
 
 func _damage_badge_key(is_crit: bool, is_kill: bool, is_elite: bool, damage_type: String) -> String:
 	var large = is_crit or is_kill or (is_elite and is_kill)
