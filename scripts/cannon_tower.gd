@@ -572,7 +572,9 @@ func _apply_shockwave_at(pos: Vector2, blast_radius: float) -> void:
 			var push_dir = (enemy.global_position - pos).normalized()
 			if push_dir.length() < 0.1:
 				push_dir = Vector2.RIGHT.rotated(randf() * TAU)
-			var falloff := 1.0 - dist / blast_radius
+			# Explicitly typed: `dist` comes from an untyped array element, so
+			# `:=` here cannot infer and fails to parse.
+			var falloff: float = 1.0 - dist / blast_radius
 			if enemy.has_method("apply_knockback"):
 				enemy.apply_knockback(push_dir, shockwave_knockback * falloff)
 			else:
