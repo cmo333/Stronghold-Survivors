@@ -1,6 +1,6 @@
 extends Control
 
-## Descent: the ~15s transition between pressing Play and the run starting.
+## Descent: the ~13s transition between pressing Play and the run starting.
 ##
 ## The world is not there yet, so it builds itself. A single point of light, a
 ## plane that weaves itself outward from it in perspective, jewels that lock
@@ -29,9 +29,10 @@ const T_WEAVE := 4.2         # the lattice draws itself outward
 const T_JEWELS := 6.0        # jewels lock in
 const T_CASCADE := 7.0       # tiles flood the plane, the frame starts shaking
 const T_VORTEX := 8.0        # everything spirals inward
-const T_STATIC := 9.0        # signal breaks up: scrambled static wipe
-const T_MESSAGE := 9.9       # the rift warning
-const T_END := 14.9          # hand over to the run
+const T_STATIC := 9.0          # signal breaks up: scrambled static wipe
+const T_MESSAGE := 9.9         # the rift warning
+const T_SCRAMBLE_OUT := 12.9   # 3.0s of message, then it tears apart again
+const T_END := 13.4            # hand over to the run
 
 # What used to sit between T_STATIC and T_END was a "spawn" beat: a collapsing
 # ring with a twelve-block stick figure fading up inside it, meant to read as the
@@ -42,9 +43,17 @@ const T_END := 14.9          # hand over to the run
 
 const MESSAGE_LINES := "The time is fleeting.\nWe don't know how long the rift will stay open.\nExtract as much as you can, traveler..."
 const MESSAGE_STING := "More are coming."
-const T_STING_IN := 2.8      # seconds into the message beat
+const T_STING_IN := 1.5      # seconds into the message beat
 const MESSAGE_FADE := 0.45
 const MESSAGE_MARGIN := 110.0
+
+# The hand-off used to cut from the message screen straight to the run. Measured
+# off frames of each: the message screen averages luma 0.094 and the first frame
+# of a run averages 0.42, so that cut is a 4.5x jump in brightness and it lands
+# like a flashbulb. The out-scramble ramps the whole field up to roughly the
+# run's own mean colour, so the two frames either side of the cut match and the
+# noise covers what is left.
+const HANDOFF_WASH := Color(0.39, 0.46, 0.21)
 
 const COLOR_MESSAGE := Color(0.72, 1.0, 0.86)
 const COLOR_STING := Color(1.0, 0.42, 0.34)
@@ -90,6 +99,7 @@ var _thump: Array[AudioStreamPlayer] = []
 var _thump_voice := 0
 var _riser_played := false
 var _static_played := false
+var _out_played := false
 var _cascade_played := false
 var _shake := Vector2.ZERO
 var _message: Label = null
@@ -183,8 +193,11 @@ func _update_message() -> void:
 		_sting.modulate.a = 0.0
 		return
 	var m: float = _t - T_MESSAGE
-	_message.modulate.a = clampf(m / MESSAGE_FADE, 0.0, 1.0)
-	_sting.modulate.a = clampf((m - T_STING_IN) / MESSAGE_FADE, 0.0, 1.0)
+	# Cleared before the out-scramble is fully up. Text surviving into the noise
+	# reads as a rendering fault rather than a transition.
+	var out: float = clampf(1.0 - (_t - T_SCRAMBLE_OUT) / 0.16, 0.0, 1.0)
+	_message.modulate.a = clampf(m / MESSAGE_FADE, 0.0, 1.0) * out
+	_sting.modulate.a = clampf((m - T_STING_IN) / MESSAGE_FADE, 0.0, 1.0) * out
 
 func _build_audio() -> void:
 	for path in ["res://assets/audio/sfx/building_hit.wav", "res://assets/audio/sfx/shield_hit.wav"]:
@@ -229,6 +242,9 @@ func _process(delta: float) -> void:
 		AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
 	if _t >= T_STATIC and not _static_played:
 		_static_played = true
+		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+	if _t >= T_SCRAMBLE_OUT and not _out_played:
+		_out_played = true
 		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
 	_update_message()
 	if _t >= T_END:
@@ -354,6 +370,8 @@ func _draw() -> void:
 			_draw_vortex_streaks(size)
 	elif _t < T_MESSAGE:
 		_draw_static(size)
+	elif _t >= T_SCRAMBLE_OUT:
+		_draw_scramble_out(size)
 
 func _draw_backdrop(size: Vector2) -> void:
 	# Deep space that warms toward the ground colour as the world resolves.
@@ -544,6 +562,39 @@ func _draw_static(size: Vector2) -> void:
 		var g: float = 0.40 + _rng.randf() * 0.60
 		draw_rect(Rect2(_snap(p), Vector2(PIXEL * 2.0, PIXEL)),
 			Color(g, g, g, 0.5 * density), true)
+
+# The way out. No wipe this time -- it snaps on at full density across the whole
+# frame, which is what makes it read as a cut rather than another effect -- and
+# then bleaches toward HANDOFF_WASH so the last frame before the run is already
+# about as bright as the run is.
+func _draw_scramble_out(size: Vector2) -> void:
+	var f: float = clampf((_t - T_SCRAMBLE_OUT) / maxf(0.001, T_END - T_SCRAMBLE_OUT), 0.0, 1.0)
+	var lift: float = smoothstep(0.0, 1.0, f)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.03).lerp(HANDOFF_WASH, lift), true)
+	var y := 0.0
+	while y < size.y:
+		var h: float = PIXEL * float(_rng.randi_range(1, 4))
+		# Tears harder than the way in: this is the channel giving up, not
+		# breaking up.
+		var dx := 0.0
+		if _rng.randf() < 0.30:
+			dx = float(_rng.randi_range(-44, 44))
+		var v: float = _rng.randf()
+		var col := Color(0.42 + v * 0.55, 0.80 + v * 0.20, 0.68 + v * 0.32, 0.10 + v * 0.55)
+		col = col.lerp(Color(HANDOFF_WASH.r, HANDOFF_WASH.g, HANDOFF_WASH.b, col.a), lift)
+		draw_rect(Rect2(_snap(Vector2(dx - 46.0, y)), Vector2(size.x + 92.0, h)), col, true)
+		y += h
+	for i in range(3):
+		if _rng.randf() > 0.6:
+			continue
+		var sy: float = _rng.randf() * size.y
+		draw_rect(Rect2(_snap(Vector2(0.0, sy)), Vector2(size.x, PIXEL)),
+			Color(1, 1, 1, 0.45 * (1.0 - lift * 0.6)), true)
+	for i in range(280):
+		var p2 := Vector2(_rng.randf() * size.x, _rng.randf() * size.y)
+		var g2: float = 0.40 + _rng.randf() * 0.60
+		draw_rect(Rect2(_snap(p2), Vector2(PIXEL * 2.0, PIXEL)),
+			Color(g2, g2, g2, 0.45 * (1.0 - lift * 0.5)), true)
 
 func _finish() -> void:
 	if _finished:
