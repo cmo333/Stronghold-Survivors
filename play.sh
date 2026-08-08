@@ -28,6 +28,15 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 fail() { printf '\033[31m%s\033[0m\n' "$*" >&2; exit 1; }
 
+# Fingerprint of this script before the pull, so we can tell whether the pull
+# rewrote the file we are currently executing.
+self_hash() {
+	if command -v shasum >/dev/null 2>&1; then shasum "$0" | cut -d' ' -f1
+	elif command -v sha1sum >/dev/null 2>&1; then sha1sum "$0" | cut -d' ' -f1
+	else wc -c < "$0"; fi
+}
+SELF_HASH_BEFORE="$(self_hash)"
+
 # --- 1. Never lose local edits -----------------------------------------------
 if [ -n "$(git status --porcelain)" ]; then
 	STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -52,6 +61,19 @@ done
 OLD="$(git rev-parse --short HEAD)"
 git reset --hard "origin/$BRANCH" >/dev/null || fail "Reset failed."
 NEW="$(git rev-parse --short HEAD)"
+
+# --- 3a. Hand off if the pull rewrote this script ----------------------------
+# play.sh updates itself in the reset above, and bash reads a script
+# incrementally rather than all at once -- so once the bytes on disk shift, the
+# rest of THIS run executes from the new file at the old byte offset, which is
+# garbage. It also means a fix to play.sh only takes effect on the run after the
+# one that downloaded it, which is exactly how a launcher fix appears not to
+# work. Re-exec once, guarded by an env flag so no loop can form.
+if [ "${PLAY_SH_REEXEC:-0}" != "1" ] && [ "$SELF_HASH_BEFORE" != "$(self_hash)" ]; then
+	say "play.sh updated itself; restarting with the new version."
+	export PLAY_SH_REEXEC=1
+	exec "$0" "$@"
+fi
 
 if [ "$OLD" = "$NEW" ]; then
 	say "Already up to date at $NEW."
