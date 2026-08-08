@@ -105,8 +105,9 @@ func _boss_behavior(delta: float) -> void:
 		_fire_mortar(target.global_position)
 		_mortar_timer = mortar_cooldown
 	
-	# Move toward target
-	var dir = (target.global_position - global_position).normalized()
+	# Move toward target, following the flow field rather than a straight line
+	# so walls and towers are routed around instead of walked into.
+	var dir = _get_move_direction(target.global_position, delta)
 	velocity = dir * speed * _slow_multiplier
 	move_and_slide()
 	

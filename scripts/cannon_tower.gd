@@ -68,6 +68,7 @@ var _barrel_rotation: float = 0.0
 # Evolution: Hellfire
 var hellfire_pool_damage: float = 8.0
 var hellfire_pool_duration: float = 3.0
+const HELLFIRE_POOL_ALPHA := 0.25   # halved from 0.5; see _spawn_fire_pool
 
 # Shared fire pool texture
 static var _shared_fire_pool_tex: ImageTexture = null
@@ -602,7 +603,15 @@ func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 	else:
 		_game.add_child(pool)
 
-	# Visual: orange circle — shared texture
+	# Visual: orange circle — shared texture.
+	#
+	# HELLFIRE_POOL_ALPHA is halved from the original 0.5 because these pools
+	# blend ADDITIVELY and one is spawned per shot. Four or five upgraded
+	# cannons keep several overlapping at all times, and additive alpha sums:
+	# the ground stopped reading as fire and became a flat white-out that hid
+	# the player, the towers and the horde underneath it. Halving each pool's
+	# contribution keeps the effect at one or two pools and pulls the stacked
+	# case back to something you can still see through.
 	var sprite = Sprite2D.new()
 	if _shared_fire_pool_tex == null:
 		var img = Image.create(64, 64, false, Image.FORMAT_RGBA8)
@@ -612,7 +621,7 @@ func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 			for y in range(64):
 				var d = Vector2(x, y).distance_to(center)
 				if d < 28:
-					var a = (1.0 - d / 28.0) * 0.5
+					var a = (1.0 - d / 28.0) * HELLFIRE_POOL_ALPHA
 					img.set_pixel(x, y, Color(1.0, 0.4, 0.1, a))
 		_shared_fire_pool_tex = ImageTexture.create_from_image(img)
 	sprite.texture = _shared_fire_pool_tex

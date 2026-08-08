@@ -7,7 +7,9 @@ signal boss_died(boss)
 signal boss_phase_changed(phase: int)
 
 @export var intro_duration: float = 0.6
-@export var boss_scale: float = 2.6
+# Regular enemies render at 1.8. 3.9 puts a boss half again as large as the
+# previous 2.6, so it reads as a boss at a glance in a packed field.
+@export var boss_scale: float = 3.9
 
 const PLAYER_COLLISION_RADIUS = 7.0
 
@@ -137,7 +139,10 @@ func _deal_damage(target: Node, amount: float, hit_pos: Vector2, show_hit_fx: bo
 func _style_boss() -> void:
 	if body != null:
 		body.scale = Vector2.ONE * boss_scale
-		body.modulate = body.modulate.lerp(boss_color, 0.35)
+		# Strong enough to read as a distinct variant rather than a tint. At 0.35
+		# a boss was near-indistinguishable from the ordinary enemy it shares art
+		# with; 0.75 plus a brightness lift makes it a coloured elite.
+		body.modulate = body.modulate.lerp(boss_color, 0.75) * 1.15
 	if collision_shape != null and collision_shape.shape is CircleShape2D:
 		var shape: CircleShape2D = collision_shape.shape
 		shape.radius = PLAYER_COLLISION_RADIUS

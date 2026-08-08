@@ -89,8 +89,10 @@ func _calculate_orbit_direction(target_pos: Vector2) -> Vector2:
 	
 	var dir: Vector2
 	if dist > orbit_distance * 1.2:
-		# Move closer
-		dir = to_target.normalized()
+		# Move closer, following the flow field so the approach routes around
+		# walls. The away/orbit legs below stay straight -- they are short-range
+		# positioning around a target already in sight.
+		dir = _get_move_direction(target_pos, get_physics_process_delta_time())
 	elif dist < orbit_distance * 0.8:
 		# Move away
 		dir = -to_target.normalized()

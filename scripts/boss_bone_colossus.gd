@@ -58,7 +58,11 @@ func _boss_behavior(delta: float) -> void:
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 		velocity = Vector2.ZERO
 	else:
-		var dir = (target.global_position - global_position).normalized()
+		# Maze-aware, same as every regular enemy. A raw straight line walked
+		# bosses face-first into whatever tower happened to be between them and
+		# the player, where they ground to a halt instead of taking the route
+		# the horde takes.
+		var dir = _get_move_direction(target.global_position, delta)
 		velocity = dir * speed * _slow_multiplier
 		move_and_slide()
 	
@@ -147,9 +151,10 @@ func _execute_slam() -> void:
 	# Create shockwave projectile
 	_create_shockwave()
 	
-	# Reset visual
+	# Reset visual. Must use boss_scale, not a literal: hardcoding 2.5 here
+	# silently undid the boss sizing on the first slam and every one after.
 	if body != null:
-		body.scale = Vector2.ONE * 2.5
+		body.scale = Vector2.ONE * boss_scale
 
 func _apply_slam_damage() -> void:
 	"""Apply damage to all targets in slam radius"""
