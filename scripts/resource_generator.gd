@@ -4,7 +4,10 @@ const MAX_HP = 120.0
 const LOW_HP_THRESHOLD = 0.3  # 30% health = low HP (pulse red)
 const HEALTH_BAR_WIDTH = 32.0
 const HEALTH_BAR_HEIGHT = 4.0
-const HEALTH_BAR_OFFSET = -28.0  # Above the building
+# Above the building, and "the building" is now 112px tall rather than 64: the
+# v002 art is a fountain whose jet reaches ~53px above the sprite's centre. At
+# the old -28 the bar sat halfway up the plume.
+const HEALTH_BAR_OFFSET = -62.0
 
 var income = 2
 var interval = 2.0
@@ -296,6 +299,11 @@ func _create_health_bar() -> void:
 	_health_bar_container = Node2D.new()
 	_health_bar_container.name = "HealthBarContainer"
 	_health_bar_container.visible = false  # Hidden until damaged
+	# Above the building's own sprite (z 1), for the same reason that has: with
+	# World/Buildings unsorted, a neighbour placed later simply paints over this.
+	# A health bar you cannot see when the thing is being attacked is the one
+	# moment it exists for.
+	_health_bar_container.z_index = 2
 	add_child(_health_bar_container)
 
 	# Create background
