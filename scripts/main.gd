@@ -2193,6 +2193,13 @@ func _process(delta: float) -> void:
 		return
 	if chest_modal_open:
 		return
+	# Drain any level-up that was banked while the evolve chooser was open. Done
+	# here rather than hooked onto the chooser's close so that no close path --
+	# picked, cancelled, right-clicked, or the tower dying under it -- can strand
+	# a pick the player has earned.
+	if pending_picks > 0 and not _evolution_chooser_open():
+		_open_tech_menu()
+		return
 	_handle_resource_dump_input()
 	# Camera zoom controls
 	_handle_zoom_input()
@@ -4946,9 +4953,31 @@ func add_xp(amount: int) -> void:
 	if leveled_up:
 		# Audio: Level up sound
 		AudioManager.play_ui_sound("level_up")
-	if pending_picks > 0 and not tech_open:
+	# Deferred, not stacked, if the tower evolve chooser is already up. The pick is
+	# banked in pending_picks and _process opens the draft the moment the chooser
+	# closes. See _evolution_chooser_open.
+	if pending_picks > 0 and not tech_open and not _evolution_chooser_open():
 		_open_tech_menu()
 	_update_ui()
+
+func _evolution_chooser_open() -> bool:
+	"""True while the tower evolve panel is on screen.
+
+	The evolve chooser and the level-up draft are both centre-screen modals and
+	both bind keys 1 and 2, and they could previously be open at once: pick a T3
+	tower's evolution, have a kill push you over the XP line, and the draft opens
+	underneath the chooser.
+
+	That reads as a hard freeze even though it is not one. The draft sets
+	Engine.time_scale to 0 and must be resolved before anything moves again, but
+	its three options are Labels with MOUSE_FILTER_IGNORE -- it has never taken
+	clicks, only 1/2/3 or a gamepad -- while the chooser sitting on top of it
+	covers all three rows and advertises "Click a card". So the panel you can
+	click is not the one holding the game, and the one holding the game ignores
+	the mouse. Keyboard 1/2 does get out, by silently picking a *tech* while the
+	player believes they are picking an evolution.
+	"""
+	return ui != null and ui.has_method("is_evolution_panel_open") and ui.is_evolution_panel_open()
 
 func _check_level_unlocks() -> void:
 	if level >= 5 and not is_build_unlocked("resource_generator"):

@@ -117,6 +117,21 @@ func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void
 func _process(delta: float) -> void:
 	_preview_status_timer = max(0.0, _preview_status_timer - delta)
 	_animate_selection_ring(delta)
+	# Before any early-out: the evolve chooser belongs to one specific tower, and
+	# nothing closed it when that tower stopped existing. A boss slam landing on
+	# the tower you were mid-evolution on left the panel up, bound to a freed
+	# node, until you happened to press ESC. That was survivable while it was only
+	# a stale panel; it is not now that main.gd holds the level-up draft behind
+	# this panel, because the pick would wait on something that never closes.
+	#
+	# Keyed on _evolution_options rather than on the target reference, for two
+	# reasons. A freed Object compares EQUAL to null in GDScript, so the obvious
+	# `_evolution_target != null and not is_instance_valid(...)` is dead code --
+	# the first half is already false once the tower is freed. And _evolution_
+	# options is emptied by _hide_evolution_panel, so this fires exactly once
+	# instead of restarting the close tween every frame of its 0.15s fade.
+	if not _evolution_options.is_empty() and not is_instance_valid(_evolution_target):
+		_hide_evolution_panel()
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		if preview != null:
 			preview.visible = false
@@ -578,6 +593,13 @@ func _on_evolution_card_clicked(index: int) -> void:
 	choose_evolution(index)
 
 func choose_evolution(index: int) -> void:
+	# The card's gui_input is a direct Control signal, so it bypasses the
+	# is_tech_open() guards in _process and _unhandled_input. main.gd now defers
+	# the draft rather than stacking it, so the two should never overlap -- but a
+	# click that spends essence and evolves a tower underneath a modal that owns
+	# the input is not something to leave resting on that alone.
+	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
+		return
 	if _evolution_target == null or not is_instance_valid(_evolution_target):
 		_hide_evolution_panel()
 		return
