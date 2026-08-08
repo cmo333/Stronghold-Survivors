@@ -142,11 +142,30 @@ if [ -f "$PID_FILE" ]; then
 	rm -f "$PID_FILE"
 fi
 
-say "Launching AVARICE ..."
 # Keep the engine's output. Discarding it meant a game that started wrong was
 # undiagnosable - no parse errors, no startup state, nothing to look at.
 : > "$LOG_FILE"
-"$GODOT_BIN" --path "$REPO_DIR" >"$LOG_FILE" 2>&1 &
+
+# --- 5a. Import anything the pull brought in ---------------------------------
+# `godot --path .` does NOT run the import pipeline. A texture that arrived in
+# the last pull has no entry in .godot/imported, so `load()` returns null and
+# the art renders as nothing at all - not a placeholder, nothing. The .import
+# sidecars are gitignored, so this hits every machine for every new asset, and
+# it is invisible in the game log unless you know to look for "No loader found".
+#
+# The pass is a no-op once everything is cached, so it only costs engine startup
+# on a run where nothing changed.
+say "Importing assets ..."
+if ! "$GODOT_BIN" --headless --path "$REPO_DIR" --import >>"$LOG_FILE" 2>&1; then
+	warn "Import reported a problem; launching anyway. See $LOG_FILE"
+fi
+if grep -qE "Parse Error|Failed to load resource" "$LOG_FILE"; then
+	warn "Import errors (first 5):"
+	grep -E "Parse Error|Failed to load resource" "$LOG_FILE" | head -5
+fi
+
+say "Launching AVARICE ..."
+"$GODOT_BIN" --path "$REPO_DIR" >>"$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 echo "running (pid $(cat "$PID_FILE"))"
 
