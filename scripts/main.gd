@@ -5118,20 +5118,20 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 	match id:
 		# Common upgrades
 		"gun_damage":
-			chest_damage_bonus += 3.0 if rarity == "common" else (5.0 if rarity == "rare" else 7.0)
+			chest_damage_bonus += 6.0 if rarity == "common" else (10.0 if rarity == "rare" else 15.0)
 			_apply_player_damage_bonuses()
 		"tower_range":
-			var mult = 1.12 if rarity == "common" else (1.18 if rarity == "rare" else 1.24)
+			var mult = 1.25 if rarity == "common" else (1.40 if rarity == "rare" else 1.60)
 			chest_tower_range_mult = min(3.0, chest_tower_range_mult * mult)
 		"speed":
-			chest_speed_bonus += 16.0 if rarity == "common" else (24.0 if rarity == "rare" else 34.0)
+			chest_speed_bonus += 26.0 if rarity == "common" else (40.0 if rarity == "rare" else 58.0)
 			if player != null and player.has_method("apply_speed_bonus"):
 				player.apply_speed_bonus(chest_speed_bonus)
 		"max_hp":
-			chest_max_hp_bonus += 18.0 if rarity == "common" else (28.0 if rarity == "rare" else 42.0)
+			chest_max_hp_bonus += 35.0 if rarity == "common" else (55.0 if rarity == "rare" else 80.0)
 			_apply_player_max_health_bonuses()
 		"build_cost":
-			var cost_mult = 0.90 if rarity == "common" else (0.85 if rarity == "rare" else 0.78)
+			var cost_mult = 0.82 if rarity == "common" else (0.74 if rarity == "rare" else 0.64)
 			build_cost_mult = max(0.45, build_cost_mult * cost_mult)
 		"reload_speed":
 			reload_speed_mult *= 0.86 if rarity == "common" else (0.80 if rarity == "rare" else 0.74)
@@ -5150,7 +5150,7 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 		"tower_core_damage":
 			chest_tower_damage_bonus += 8.0 if rarity == "rare" else 12.0
 		"tower_targeting":
-			var rate_mult = 1.18 if rarity == "rare" else 1.25
+			var rate_mult = 1.35 if rarity == "rare" else 1.55
 			chest_tower_rate_mult = min(4.0, chest_tower_rate_mult * rate_mult)
 			chest_tower_chain_bonus += 1
 		
