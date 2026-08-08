@@ -31,8 +31,19 @@ const T_CASCADE := 7.0       # tiles flood the plane, the frame starts shaking
 const T_VORTEX := 8.0        # everything spirals inward
 const T_STATIC := 9.0          # signal breaks up: scrambled static wipe
 const T_MESSAGE := 9.9         # the rift warning
-const T_SCRAMBLE_OUT := 14.9   # 5.0s of message, then it tears apart again
-const T_END := 15.4            # hand over to the run
+const T_SCRAMBLE_OUT := 14.9   # 5.0s of message, then the dive into the run
+const T_END := 15.8            # hand over to the run
+
+# The last beat is a dive, not a cut. The run is already built and sitting
+# behind this scene, so its own camera can do the work: start high above the
+# base and drop to the game's real framing while the veil over it clears. A
+# scramble hid the seam; this makes the seam the point, and it is the same move
+# the rest of the sequence has been making since the first frame.
+#
+# Camera2D zoom is magnification, so "far away" is a value BELOW the run's own
+# zoom, not above it.
+const DIVE_ZOOM_FROM := 0.42   # fraction of the run's zoom to start at
+const DIVE_VEIL := Color(0.02, 0.03, 0.05)
 
 # What used to sit between T_STATIC and T_END was a "spawn" beat: a collapsing
 # ring with a twelve-block stick figure fading up inside it, meant to read as the
@@ -117,6 +128,9 @@ var _world: Node = null
 var _world_layers: Array[CanvasLayer] = []
 var _typewriter_chars := -1
 var _skip_next_delta := false
+var _diving := false
+var _veil: ColorRect = null
+var _cam_zoom := Vector2.ONE
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -302,11 +316,72 @@ func _try_mount_world() -> void:
 	print("[descent] world built behind the transition in %.0f ms" % (
 		float(Time.get_ticks_usec() - started) / 1000.0))
 
+func _begin_dive() -> void:
+	"""Hand the last beat to the run's own camera.
+
+	Everything needed is already in place: the world was built behind this scene
+	a dozen seconds ago and has been sitting there inert with its camera switched
+	off. Turning the camera on and pulling it in from high above is a real move
+	through the real scene, not an effect painted on top of a still.
+
+	The veil that fades off it has to live on a CanvasLayer. This node is a
+	Control on the default canvas, and the moment that Camera2D goes live it owns
+	the canvas transform -- anything drawn here would be dragged around by the
+	dive along with the world. A CanvasLayer is outside that transform, so it
+	stays a full-screen card no matter where the camera goes.
+
+	Falls back to the old scramble if there is no world to dive into: a skip in
+	the first second, or a load that failed."""
+	if _diving or _world == null or not is_instance_valid(_world):
+		return
+	if not ("camera" in _world) or _world.camera == null:
+		return
+	_diving = true
+	_cam_zoom = _world.camera.zoom
+	_world.camera.enabled = true
+	for layer in _world_layers:
+		if is_instance_valid(layer):
+			layer.visible = true
+	if _message != null:
+		_message.visible = false
+	if _sting != null:
+		_sting.visible = false
+
+	var layer_node := CanvasLayer.new()
+	layer_node.name = "DiveVeil"
+	layer_node.layer = 128
+	_veil = ColorRect.new()
+	_veil.color = DIVE_VEIL
+	_veil.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_veil.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer_node.add_child(_veil)
+	add_child(layer_node)
+
+func _update_dive() -> void:
+	if not _diving or _world == null or not is_instance_valid(_world):
+		return
+	var f: float = clampf((_t - T_SCRAMBLE_OUT) / maxf(0.001, T_END - T_SCRAMBLE_OUT), 0.0, 1.0)
+	# Ease out: most of the distance is covered early, then it settles into the
+	# run's framing rather than arriving at speed.
+	var eased: float = 1.0 - pow(1.0 - f, 2.6)
+	if "camera" in _world and _world.camera != null:
+		_world.camera.zoom = _cam_zoom * lerpf(DIVE_ZOOM_FROM, 1.0, eased)
+	if _veil != null and is_instance_valid(_veil):
+		# Clears faster than the camera settles, so the last third of the dive is
+		# played out on a clean frame of the game itself.
+		_veil.color.a = clampf(1.0 - f * 1.7, 0.0, 1.0)
+
 func _reveal_world() -> bool:
 	if _world == null or not is_instance_valid(_world):
 		return false
 	if "camera" in _world and _world.camera != null:
 		_world.camera.enabled = true
+		# Land on the run's own zoom exactly. The dive drives this value directly
+		# while the world is frozen; leaving it a few percent short would hand the
+		# player a permanently mis-zoomed game, because the camera controller
+		# treats whatever it finds here as the current state.
+		if _diving:
+			_world.camera.zoom = _cam_zoom
 	for layer in _world_layers:
 		if is_instance_valid(layer):
 			layer.visible = true
@@ -365,7 +440,9 @@ func _process(delta: float) -> void:
 		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
 	if _t >= T_SCRAMBLE_OUT and not _out_played:
 		_out_played = true
-		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+		_begin_dive()
+		AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+	_update_dive()
 	_try_mount_world()
 	_update_message()
 	if _t >= T_END:
@@ -480,7 +557,8 @@ func _hash01(a: int, b: int) -> float:
 
 func _draw() -> void:
 	var size := get_viewport_rect().size
-	_draw_backdrop(size)
+	if not _diving:
+		_draw_backdrop(size)
 	if _t < T_SPARK * 0.35:
 		_draw_spark(size)
 		return
@@ -491,6 +569,8 @@ func _draw() -> void:
 			_draw_vortex_streaks(size)
 	elif _t < T_MESSAGE:
 		_draw_static(size)
+	elif _t >= T_SCRAMBLE_OUT and _diving:
+		pass  # the run is on screen now; the veil is a CanvasLayer, see _begin_dive
 	elif _t >= T_SCRAMBLE_OUT:
 		_draw_scramble_out(size)
 
