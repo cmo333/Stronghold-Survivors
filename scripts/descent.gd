@@ -1,6 +1,6 @@
 extends Control
 
-## Descent: the ~13s transition between pressing Play and the run starting.
+## Descent: the ~15s transition between pressing Play and the run starting.
 ##
 ## The world is not there yet, so it builds itself. A single point of light, a
 ## plane that weaves itself outward from it in perspective, jewels that lock
@@ -31,8 +31,8 @@ const T_CASCADE := 7.0       # tiles flood the plane, the frame starts shaking
 const T_VORTEX := 8.0        # everything spirals inward
 const T_STATIC := 9.0          # signal breaks up: scrambled static wipe
 const T_MESSAGE := 9.9         # the rift warning
-const T_SCRAMBLE_OUT := 13.9   # 4.0s of message, then it tears apart again
-const T_END := 14.4            # hand over to the run
+const T_SCRAMBLE_OUT := 14.9   # 5.0s of message, then it tears apart again
+const T_END := 15.4            # hand over to the run
 
 # What used to sit between T_STATIC and T_END was a "spawn" beat: a collapsing
 # ring with a twelve-block stick figure fading up inside it, meant to read as the
