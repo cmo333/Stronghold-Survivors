@@ -20,6 +20,7 @@ const ENEMY_PROJECTILE_SCENE = preload("res://scenes/enemy_projectile.tscn")
 const PICKUP_SCENE = preload("res://scenes/pickup.tscn")
 const BREAKABLE_SCENE = preload("res://scenes/breakable.tscn")
 const TREASURE_CHEST_SCENE = preload("res://scenes/treasure_chest.tscn")
+const COMPANION_COCO_SCENE = preload("res://scenes/companion_coco.tscn")
 const POWER_UP_SCENE = preload("res://scenes/power_up.tscn")
 const DEATH_STATS_SCENE = preload("res://scenes/death_stats_screen.tscn")
 const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
@@ -4273,6 +4274,29 @@ func spawn_pickup(position: Vector2, value: int, kind: String = "gold") -> void:
 	if kind == "essence":
 		_queue_essence_announcement(position, value)
 
+func spawn_golden_coco() -> void:
+	"""Mythic chest pull: the golden coco joins the run for good.
+
+	One only. A second mythic pull would otherwise stack auras and double the
+	fetch rate, and the whole point of a mythic is that it happens once.
+	"""
+	for existing in get_tree().get_nodes_in_group("companions"):
+		if is_instance_valid(existing):
+			return
+	var coco = COMPANION_COCO_SCENE.instantiate()
+	var anchor: Vector2 = player.global_position if player != null and is_instance_valid(player) else Vector2.ZERO
+	coco.global_position = anchor + Vector2(randf_range(-40.0, 40.0), 40.0)
+	if coco.has_method("setup"):
+		coco.setup(self)
+	# Parented to the world, not the player: she roams the whole map and must
+	# not inherit the player's transform.
+	var host: Node = pickups_root if pickups_root != null else self
+	host.add_child(coco)
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("GOLDEN COCO JOINS YOU!", Color(1.0, 0.84, 0.3), 44, 3.0)
+	shake_camera(10.0, 0.5)
+	flash_screen(Color(1.0, 0.85, 0.35, 0.30), 0.5)
+
 func spawn_treasure_chest(position: Vector2) -> void:
 	if pickups_root == null:
 		return
@@ -5174,6 +5198,10 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 			chest_tower_aoe_mult = min(3.4, chest_tower_aoe_mult * 1.25)
 			chest_tower_chain_bonus += 2
 
+		# Mythic
+		"golden_coco":
+			spawn_golden_coco()
+
 	if player != null:
 		match rarity:
 			"diamond":
@@ -5824,6 +5852,13 @@ func _reset_game_state() -> void:
 	# Clear pickups
 	for pickup in pickups_root.get_children():
 		pickup.queue_free()
+
+	# Clear companions. They persist for a whole run by design, so a restart is
+	# the only thing that removes them -- miss this and a fresh run starts with
+	# every coco the previous runs ever pulled.
+	for c in get_tree().get_nodes_in_group("companions"):
+		if is_instance_valid(c):
+			c.queue_free()
 	
 	# Clear allies
 	if allies_root != null:

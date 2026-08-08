@@ -32,11 +32,25 @@ const DIAMOND_UPGRADES = {
 	"orbital_matrix": {"name": "🛰️ Orbital Matrix", "rarity": "diamond", "desc": "Towers gain +35% fire rate, +10 damage, +20% range"},
 }
 
+# The rarest thing in the table, and the only pull that is a *creature* rather
+# than a stat. Deliberately one entry: a mythic is a story, not a category.
+const MYTHIC_UPGRADES = {
+	"golden_coco": {
+		"name": "\u2728 GOLDEN COCO",
+		"rarity": "mythic",
+		"desc": "She hunts chests, gathers loot, and burns what she passes",
+	},
+}
+# Rolled before anything else and independently of the diamond slot, so a
+# mythic run can also carry a diamond -- the jackpot should be able to stack.
+const MYTHIC_CHANCE := 0.02
+
 const RARITY_COLORS = {
 	"common": Color(0.4, 0.9, 0.4),
 	"rare": Color(0.3, 0.6, 1.0),
 	"epic": Color(0.8, 0.3, 1.0),
 	"diamond": Color(0.2, 1.0, 1.0),
+	"mythic": Color(1.0, 0.82, 0.25),
 }
 
 const UPGRADE_COUNTS = [
@@ -218,14 +232,16 @@ const REVEAL_SOUNDS := {
 	"rare": "reveal_rare",
 	"epic": "reveal_epic",
 	"diamond": "reveal_diamond",
+	"mythic": "reveal_diamond",
 }
-const RARITY_RANK := {"common": 0, "rare": 1, "epic": 2, "diamond": 3}
+const RARITY_RANK := {"common": 0, "rare": 1, "epic": 2, "diamond": 3, "mythic": 4}
 # Per-rarity punch: screen flash alpha, camera shake, and how long the beat holds.
 const RARITY_PUNCH := {
 	"common": {"flash": 0.10, "shake": 2.0, "hold": 0.28},
 	"rare": {"flash": 0.16, "shake": 4.5, "hold": 0.34},
 	"epic": {"flash": 0.24, "shake": 7.5, "hold": 0.44},
 	"diamond": {"flash": 0.40, "shake": 13.0, "hold": 0.75},
+	"mythic": {"flash": 0.55, "shake": 18.0, "hold": 1.20},
 }
 
 func _best_rarity() -> String:
@@ -547,6 +563,16 @@ func _roll_upgrades() -> Array:
 			count = entry.count
 			break
 	
+	# Mythic first: it takes a slot from the same budget, so a mythic pull is
+	# genuinely rarer loot rather than a free extra on top.
+	if randf() < MYTHIC_CHANCE:
+		var mythic_keys = MYTHIC_UPGRADES.keys()
+		var mythic_key = mythic_keys[randi_range(0, mythic_keys.size() - 1)]
+		var mythic_upgrade = MYTHIC_UPGRADES[mythic_key].duplicate()
+		mythic_upgrade["id"] = mythic_key
+		result.append(mythic_upgrade)
+		count -= 1
+
 	var has_diamond = randf() < 0.10
 	if has_diamond:
 		var diamond_keys = DIAMOND_UPGRADES.keys()
