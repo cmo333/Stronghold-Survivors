@@ -24,6 +24,21 @@ var _intro_timer: float = 0.0
 # actually reach the base and be dealt with deliberately.
 const BOSS_HEALTH_MULT := 3.0
 
+# Boss AoE against structures, applied on top of each attack's own falloff.
+#
+# The colossus slam does 40 in a 120px radius every 4s and a basic arrow turret
+# has 40 health, so every slam deleted every turret it touched -- a measured
+# 12/12 destroyed in 12 seconds, with the boss simply stood next to the player
+# inside their own base. No walling, no breach, no warning: the base just went
+# away. Tripling boss health made that far worse by letting the boss land ~5x
+# as many slams before dying.
+#
+# Bosses should threaten a base, not delete it. At 0.35 a slam takes ~3 hits to
+# kill a basic turret, so the player has ~12s of the boss parked in the base to
+# react -- and the damage still scales with everything else, so a late boss is
+# still the thing that ends a run.
+const BOSS_AOE_BUILDING_MULT := 0.35
+
 # Scaling computed in setup() but applied in _ready(). See _apply_boss_scaling.
 var _scale_health_mult: float = 1.0
 var _scale_damage_mult: float = 1.0

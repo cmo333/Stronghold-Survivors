@@ -231,7 +231,10 @@ func _apply_mortar_damage(center: Vector2) -> void:
 		if dist_sq <= radius_sq:
 			var damage_mult = 1.0 - (sqrt(dist_sq) / mortar_radius) * 0.6
 			if building.has_method("take_damage"):
-				building.take_damage(mortar_damage * damage_mult * 1.5)  # Extra damage to buildings
+				# Keeps its 1.5x siege bonus over the colossus -- breaking bases
+				# is this boss's job -- but under the same structure cap, so it
+				# wears a base down instead of deleting it a shell at a time.
+				building.take_damage(mortar_damage * damage_mult * 1.5 * BOSS_AOE_BUILDING_MULT)
 
 func _update_shield(delta: float) -> void:
 	"""Update shield state and regen"""

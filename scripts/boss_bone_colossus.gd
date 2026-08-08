@@ -185,7 +185,9 @@ func _apply_slam_damage() -> void:
 		var dist_sq = global_position.distance_squared_to(building.global_position)
 		if dist_sq <= radius_sq:
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
-			var damage = slam_damage * damage_factor
+			# Structures take a fraction: at full damage one slam one-shot every
+			# turret in radius, so a boss walking into a base erased it.
+			var damage = slam_damage * damage_factor * BOSS_AOE_BUILDING_MULT
 			if building.has_method("take_damage"):
 				building.take_damage(damage)
 
