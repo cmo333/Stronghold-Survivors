@@ -379,10 +379,30 @@ const EXTRACTION_DURATION := 600.0           # 10:00 of holding to fill the bar
 const EXTRACTION_OVERRUN_PEAK := 1200.0      # 20:00 run time = near-invincible
 const EXTRACTOR_STRUCTURE_ID := "resource_generator"
 
+# --- Extraction milestones ----------------------------------------------------
+# Fractions of the extraction bar that hand the horde a flat step up in both
+# health and speed, on top of the time and phase curves already running.
+#
+# The steps COMPOUND, so the back of the bar is a different fight rather than
+# more of the same one: x1.10 from halfway, x1.375 from three quarters, x1.65
+# for the last tenth. Chest upgrades stack multiplicatively and uncapped, so a
+# smooth curve always loses the endgame to a lucky run -- these are deliberate
+# cliffs the player's power has to be re-earned against.
+#
+# Keyed on extraction progress rather than run time because that is the bar the
+# player is actually watching, so the difficulty spike lands on a beat they can
+# see coming.
+const EXTRACTION_MILESTONES := [
+	{"at": 0.50, "step": 1.10, "banner": "THE HORDE HARDENS"},
+	{"at": 0.75, "step": 1.25, "banner": "THE HORDE SURGES"},
+	{"at": 0.90, "step": 1.20, "banner": "THE HORDE IS UPON YOU"},
+]
+
 var extraction_phase: int = ExtractionPhase.SCOUT
 var extractor: Node = null                 # the one placed extractor
 var extractor_placed_at: float = -1.0      # run time when it landed
 var extraction_progress: float = 0.0       # 0..1
+var _extraction_milestone_index: int = 0   # how many milestone banners have fired
 
 # --- Breach mode --------------------------------------------------------------
 # Walling the extractor off cannot be fully prevented by placement rules alone:
@@ -5378,6 +5398,31 @@ func get_enemy_health_mult() -> float:
 	if ramp_elapsed < EARLY_GAME_HORDE_RAMP_TIME:
 		var t = clampf(ramp_elapsed / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
 		mult *= lerpf(EARLY_GAME_ENEMY_HEALTH_GRACE_MIN, 1.0, t)
+	return mult * extraction_milestone_mult()
+
+func get_enemy_speed_mult() -> float:
+	"""Movement-speed companion to get_enemy_health_mult().
+
+	Only the extraction milestones live here for now; the rest of the speed
+	curve is per-enemy in `enemy.setup()`. Kept as its own accessor so a caller
+	cannot pick up the health step and miss the speed step.
+	"""
+	return extraction_milestone_mult()
+
+func extraction_milestone_mult() -> float:
+	"""Compounded step multiplier for how far the extraction bar has filled.
+
+	Read at spawn, not applied retroactively: healing a live enemy because a bar
+	ticked over would be indefensible, and the horde turns over fast enough that
+	the field is the new tier within seconds of a crossing. OVERRUN sits at
+	progress 1.0, so every step is live once the bar is full.
+	"""
+	if extraction_phase == ExtractionPhase.SCOUT:
+		return 1.0
+	var mult := 1.0
+	for entry in EXTRACTION_MILESTONES:
+		if extraction_progress >= float(entry["at"]):
+			mult *= float(entry["step"])
 	return mult
 
 func _get_available_tech_ids() -> Array:
@@ -5798,6 +5843,7 @@ func _reset_game_state() -> void:
 	extractor = null
 	extractor_placed_at = -1.0
 	extraction_progress = 0.0
+	_extraction_milestone_index = 0
 	extractor_sealed = false
 	_breach_confirm_timer = 0.0
 	_breach_announced = false
@@ -6455,6 +6501,7 @@ func on_extractor_placed(node: Node) -> void:
 	extractor_placed_at = elapsed
 	extraction_phase = ExtractionPhase.SIEGE
 	extraction_progress = 0.0
+	_extraction_milestone_index = 0
 	mark_flow_field_dirty()
 	if ui != null and ui.has_method("show_announcement"):
 		ui.show_announcement("EXTRACTION BEGINS", Color(0.4, 1.0, 0.6), 44, 2.6)
@@ -6466,8 +6513,27 @@ func _update_siege_phase(delta: float) -> void:
 	if not has_extractor():
 		return
 	extraction_progress = clampf(extraction_progress + delta / EXTRACTION_DURATION, 0.0, 1.0)
+	_announce_extraction_milestones()
 	if extraction_progress >= 1.0:
 		_on_extraction_complete()
+
+func _announce_extraction_milestones() -> void:
+	"""Call out each milestone as the bar crosses it.
+
+	The step is a cliff, not a ramp, so it has to be legible: without the
+	banner the horde simply gets harder for no reason the player can point at,
+	which reads as the game cheating rather than as a scheduled escalation.
+	"""
+	while _extraction_milestone_index < EXTRACTION_MILESTONES.size():
+		var entry: Dictionary = EXTRACTION_MILESTONES[_extraction_milestone_index]
+		if extraction_progress < float(entry["at"]):
+			return
+		_extraction_milestone_index += 1
+		if ui != null and ui.has_method("show_announcement"):
+			ui.show_announcement(str(entry["banner"]), Color(1.0, 0.45, 0.2), 44, 2.6)
+		flash_screen(Color(0.6, 0.15, 0.0, 0.16), 0.35)
+		shake_camera(6.0, 0.35)
+		AudioManager.play_one_shot("chest_charge", global_position, AudioManager.HIGH_PRIORITY)
 
 func _on_extraction_complete() -> void:
 	extraction_phase = ExtractionPhase.OVERRUN

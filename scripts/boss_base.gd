@@ -19,25 +19,56 @@ var is_boss_active: bool = false
 var _max_phases: int = 1
 var _intro_timer: float = 0.0
 
+# Bosses died off-screen to massed tower fire before they ever became a fight
+# worth noticing. Tripling the pool buys them enough time on the field to
+# actually reach the base and be dealt with deliberately.
+const BOSS_HEALTH_MULT := 3.0
+
+# Scaling computed in setup() but applied in _ready(). See _apply_boss_scaling.
+var _scale_health_mult: float = 1.0
+var _scale_damage_mult: float = 1.0
+var _scale_speed_mult: float = 1.0
+
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
 	var global_health_mult = 1.0
 	if _game != null and _game.has_method("get_enemy_health_mult"):
 		global_health_mult = float(_game.get_enemy_health_mult())
+	var milestone_speed_mult = 1.0
+	if _game != null and _game.has_method("get_enemy_speed_mult"):
+		milestone_speed_mult = float(_game.get_enemy_speed_mult())
 	var diff = max(1.0, difficulty)
-	var diff_health_mult = 1.0 + (diff - 1.0) * 0.45
-	var damage_mult = 1.0 + (diff - 1.0) * 0.2
-	var speed_mult = 1.0 + (diff - 1.0) * 0.1
-	max_health *= global_health_mult * diff_health_mult
+	# Deliberately only recorded here -- see _apply_boss_scaling for why.
+	_scale_health_mult = global_health_mult * (1.0 + (diff - 1.0) * 0.45) * BOSS_HEALTH_MULT
+	_scale_damage_mult = 1.0 + (diff - 1.0) * 0.2
+	_scale_speed_mult = (1.0 + (diff - 1.0) * 0.1) * milestone_speed_mult
+
+func _apply_boss_scaling() -> void:
+	"""Apply the multipliers setup() worked out, once base stats are final.
+
+	setup() is called on the instance BEFORE it is added to the tree, so it runs
+	before _ready() -- and every boss subclass assigns its own `max_health`,
+	`speed` and `attack_damage` inside its `_ready()`. Scaling in setup() was
+	therefore overwritten a moment later, in every case: bosses have always
+	fought at their flat authored health (2000 / 5000 / 10000 / 20000) with no
+	difficulty, run-length or milestone scaling at all, which is a large part of
+	why they evaporate against a built-up base.
+
+	Subclasses call `super._ready()` after setting their stats, so this is the
+	first point where the base values are real. It runs before Enemy._ready() so
+	the boss health bar is built against the final number.
+	"""
+	max_health *= _scale_health_mult
 	health = max_health
-	attack_damage *= damage_mult
-	speed *= speed_mult
+	attack_damage *= _scale_damage_mult
+	speed *= _scale_speed_mult
 
 func _ready() -> void:
 	is_siege = true
 	is_elite = false
 	is_boss_active = true
 	add_to_group("bosses")
+	_apply_boss_scaling()
 	super._ready()
 	_style_boss()
 	_intro_timer = intro_duration

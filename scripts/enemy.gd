@@ -162,9 +162,12 @@ func setup(game_ref: Node, difficulty: float) -> void:
 	var health_mult = 1.0
 	if _game != null and _game.has_method("get_enemy_health_mult"):
 		health_mult = float(_game.get_enemy_health_mult())
+	var speed_mult = 1.0
+	if _game != null and _game.has_method("get_enemy_speed_mult"):
+		speed_mult = float(_game.get_enemy_speed_mult())
 	max_health = max_health * difficulty * health_mult
 	health = max_health
-	speed = speed * (1.0 + difficulty * 0.03) * 0.72  # 20% slower than current baseline
+	speed = speed * (1.0 + difficulty * 0.03) * 0.72 * speed_mult  # 20% slower than current baseline
 	var damage_scale = 1.0 + max(0.0, difficulty - 1.35) * 0.28
 	attack_damage *= damage_scale
 

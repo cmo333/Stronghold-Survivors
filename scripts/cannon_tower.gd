@@ -73,7 +73,11 @@ var hellfire_pool_duration: float = 3.0
 static var _shared_fire_pool_tex: ImageTexture = null
 
 # Evolution: Shockwave
-var shockwave_knockback: float = 120.0
+# Impulse in px/s, not a distance. Knockback decays at HIT_KNOCKBACK_DECAY
+# (9/s), so the shove this actually produces is roughly v/9 -- about 22px at
+# the blast centre, tapering to nothing at the rim. The old value was 120px of
+# instant displacement per shot, which is over 5x this and did not settle.
+var shockwave_knockback: float = 200.0
 var shockwave_stun_chance: float = 0.4
 var shockwave_stun_duration: float = 0.5
 
@@ -551,11 +555,28 @@ func _apply_shockwave_at(pos: Vector2, blast_radius: float) -> void:
 			continue
 		var dist = pos.distance_to(enemy.global_position)
 		if dist <= blast_radius:
-			# Knockback
+			# Knockback, as a decaying impulse rather than a teleport.
+			#
+			# This used to write `enemy.global_position +=` directly, which had
+			# three problems at once: the shove was instant and permanent
+			# instead of settling, it stacked without limit across every shot
+			# from every evolved cannon, and moving the node by hand skips
+			# collision entirely so enemies were pushed straight through walls.
+			# A battery of these zoned the whole map -- the horde could never
+			# close, which is not what an anti-crowd evolution should do.
+			#
+			# apply_knockback() feeds the same decaying impulse every other hit
+			# in the game uses: it settles, it clamps at HIT_KNOCKBACK_MAX no
+			# matter how many cannons land at once, siege units resist it, and
+			# it resolves through move_and_slide() so walls still block.
 			var push_dir = (enemy.global_position - pos).normalized()
 			if push_dir.length() < 0.1:
 				push_dir = Vector2.RIGHT.rotated(randf() * TAU)
-			enemy.global_position += push_dir * shockwave_knockback * (1.0 - dist / blast_radius)
+			var falloff := 1.0 - dist / blast_radius
+			if enemy.has_method("apply_knockback"):
+				enemy.apply_knockback(push_dir, shockwave_knockback * falloff)
+			else:
+				enemy.global_position += push_dir * shockwave_knockback * falloff * 0.12
 			# Stun chance
 			if randf() < shockwave_stun_chance and enemy.has_method("stun"):
 				enemy.stun(shockwave_stun_duration)
