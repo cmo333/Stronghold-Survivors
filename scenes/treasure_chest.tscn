@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/treasure_chest.gd" id=1]
-[ext_resource type="Texture2D" path="res://assets/level1/level1_props/prop_graveyard_crates_32_v001.png" id=2]
+[ext_resource type="Texture2D" path="res://assets/props/prop_treasure_chest_48_v001.png" id=2]
 [ext_resource type="Texture2D" path="res://assets/ui/ui_selection_ring_64x64_v001.png" id=3]
 
 [sub_resource type="CircleShape2D" id=1]
@@ -19,7 +19,9 @@ texture_filter = 1
 
 [node name="Body" type="Sprite2D" parent="."]
 texture = ExtResource(2)
-scale = Vector2(2.25, 2.25)
+hframes = 4
+frame = 0
+scale = Vector2(1.5, 1.5)
 texture_filter = 1
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]

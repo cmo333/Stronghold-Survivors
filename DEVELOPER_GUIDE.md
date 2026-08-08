@@ -195,7 +195,7 @@ Edit `data/structures.json`:
         "chain_count": 8
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_my_tower_32_v001.png"
+    "preview": "res://assets/ui_build_icons/ui_build_my_tower_32_v002.png"
   }
 }
 ```
@@ -209,7 +209,7 @@ In `main.gd`, add to `tech_defs`:
     "name": "Unlock: My Tower",
     "desc": "Custom tower description",
     "max": 1,
-    "icon": "res://assets/ui/ui_icon_custom_32_v001.png",
+    "icon": "res://assets/ui/ui_icon_custom_32_v002.png",
     "rarity": "epic",
     "min_level": 4,
     "unlock_build": "my_tower"
@@ -218,7 +218,7 @@ In `main.gd`, add to `tech_defs`:
 
 ### Step 5: Add Icons
 
-Create 32x32 icon: `assets/ui_build_icons/ui_build_my_tower_32_v001.png`
+Create 32x32 icon: `assets/ui_build_icons/ui_build_my_tower_32_v002.png`
 
 ---
 

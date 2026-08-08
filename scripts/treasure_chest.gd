@@ -59,9 +59,21 @@ var _opening = false
 var _owns_modal = false
 var _proximity_timer = 0.0
 var _upgrades_to_grant: Array = []
+var _charge_tweens: Array = []
 
 @onready var body: Sprite2D = $Body
 @onready var glow: Sprite2D = $Glow
+
+# Lid states in the sprite strip, in order.
+const FRAME_SHUT := 0
+const FRAME_STRAIN := 1
+const FRAME_CRACK := 2
+const FRAME_OPEN := 3
+
+func _set_body_frame(index: int) -> void:
+	var spr := get_node_or_null("Body") as Sprite2D
+	if spr != null and spr.hframes > index:
+		spr.frame = index
 
 func setup(game_ref: Node) -> void:
 	_game = game_ref
@@ -243,6 +255,8 @@ func _play_jackpot_sequence() -> void:
 		return
 
 	# 2. Burst open + coin payout.
+	_kill_charge_tweens()
+	_set_body_frame(FRAME_OPEN)
 	AudioManager.play_one_shot("chest_open", global_position, AudioManager.HIGH_PRIORITY)
 	AudioManager.play_one_shot("coin_cascade", global_position, AudioManager.DEFAULT_PRIORITY)
 	_burst(Color(1.0, 0.9, 0.5), 26, 1.0)
@@ -284,25 +298,55 @@ func _play_jackpot_sequence() -> void:
 		await get_tree().create_timer(0.75, true, false, true).timeout
 
 func _animate_charge_up() -> void:
-	"""Chest rattles and swells while the riser builds."""
+	"""Chest rattles, strains and swells while the riser builds.
+
+	Both tweens ignore time scale. `begin_chest_modal()` sets
+	`Engine.time_scale` to 0 for the duration of the reveal, so a plain tween
+	here never advances a single step -- the world chest sat perfectly still
+	through its own charge-up while the audio built around it.
+	"""
 	if not is_inside_tree():
 		return
 	var spr := get_node_or_null("Body")
 	if spr == null:
 		return
 	var base_scale: Vector2 = spr.scale
+	_kill_charge_tweens()
 	var tw := create_tween()
+	tw.set_ignore_time_scale(true)
 	tw.set_parallel(false)
-	# Accelerating shake: five shorter, bigger wobbles.
+	# Accelerating shake: five shorter, bigger wobbles, with the lid giving way
+	# partway through so the chest escalates rather than just vibrating. The
+	# wobbles shorten as they go, so the frame changes hang off indices 1 and 2
+	# (~0.32s and ~0.60s) -- the whole charge phase is only 0.85s, and anything
+	# later fires after the burst has already opened the lid.
 	for i in range(5):
 		var amp := 2.0 + float(i) * 1.6
 		var dur := 0.16 - float(i) * 0.02
+		if i == 1:
+			tw.tween_callback(_set_body_frame.bind(FRAME_STRAIN))
+		elif i == 2:
+			tw.tween_callback(_set_body_frame.bind(FRAME_CRACK))
 		tw.tween_property(spr, "position:x", amp, dur * 0.5).as_relative().set_trans(Tween.TRANS_SINE)
 		tw.tween_property(spr, "position:x", -amp * 2.0, dur).as_relative().set_trans(Tween.TRANS_SINE)
 		tw.tween_property(spr, "position:x", amp, dur * 0.5).as_relative().set_trans(Tween.TRANS_SINE)
 	var tw2 := create_tween()
+	tw2.set_ignore_time_scale(true)
 	tw2.tween_property(spr, "scale", base_scale * 1.35, 0.8).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	tw2.parallel().tween_property(spr, "modulate", Color(2.2, 2.0, 1.4), 0.8)
+	_charge_tweens = [tw, tw2]
+
+func _kill_charge_tweens() -> void:
+	"""Stop the charge-up before the burst.
+
+	The shake tween runs 1.20s but the charge phase is 0.85s, so left alive it
+	keeps swelling the chest after it has opened and its trailing frame
+	callback stamps the cracked lid back over the open one.
+	"""
+	for t in _charge_tweens:
+		if t != null and is_instance_valid(t) and t.is_valid():
+			t.kill()
+	_charge_tweens.clear()
 
 func _burst(color: Color, count: int, scale_mult: float) -> void:
 	if _game == null or not _game.has_method("spawn_glow_particle"):

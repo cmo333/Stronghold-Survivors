@@ -11,12 +11,12 @@ const TECH_CARD_TEXTURES = {
 	"diamond": "res://assets/ui/tech/ui_tech_card_diamond_420x74_v001.png"
 }
 const RARITY_FRAME_TEXTURES = {
-	"common": "res://assets/ui_build_icons/ui_rarity_common_frame_32_v001.png",
-	"rare": "res://assets/ui_build_icons/ui_rarity_rare_frame_32_v001.png",
-	"epic": "res://assets/ui_build_icons/ui_rarity_epic_frame_32_v001.png",
-	"legendary": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
-	"mythic": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
-	"diamond": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png"
+	"common": "res://assets/ui_build_icons/ui_rarity_common_frame_32_v002.png",
+	"rare": "res://assets/ui_build_icons/ui_rarity_rare_frame_32_v002.png",
+	"epic": "res://assets/ui_build_icons/ui_rarity_epic_frame_32_v002.png",
+	"legendary": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png",
+	"mythic": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png",
+	"diamond": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png"
 }
 const UPGRADE_POPUP_TEX = "res://assets/ui/ui_tooltip_frame_256x96_v001.png"
 const TECH_PANEL_SIZE = Vector2(480, 320)
@@ -1382,6 +1382,47 @@ var _chest_banner: Label = null
 var _chest_flash: ColorRect = null
 static var _rays_texture: ImageTexture = null
 
+# Chest lid states, in strip order: shut, straining, cracked, open.
+const CHEST_STRIP_PATH := "res://assets/props/prop_treasure_chest_48_v001.png"
+const CHEST_FRAME_SIZE := 48
+const CHEST_FRAME_SHUT := 0
+const CHEST_FRAME_STRAIN := 1
+const CHEST_FRAME_CRACK := 2
+const CHEST_FRAME_OPEN := 3
+
+
+const CHEST_SPRITE_SIZE := 192.0
+# How far above the viewport centre the chest sits, so it clears the prize
+# cards that stack from the centre down.
+const CHEST_SPRITE_RISE := 150.0
+
+
+func _place_chest_sprite() -> void:
+	"""Anchor the chest above the centre of the viewport.
+
+	Via offsets rather than `position`: with PRESET_CENTER anchors, `position`
+	is still parent-relative, so the `Vector2(-96, -150)` this used to be set to
+	parked the sprite off the top-left corner of the screen. The chest has never
+	actually been visible during the reveal -- only the rays, cards and banner
+	were, which is why a 32px crate prop went unnoticed as the hero sprite.
+	"""
+	if _chest_sprite == null or not is_instance_valid(_chest_sprite):
+		return
+	var half := CHEST_SPRITE_SIZE * 0.5
+	_chest_sprite.offset_left = -half
+	_chest_sprite.offset_right = half
+	_chest_sprite.offset_top = -half - CHEST_SPRITE_RISE
+	_chest_sprite.offset_bottom = half - CHEST_SPRITE_RISE
+
+
+func _set_chest_frame(index: int) -> void:
+	if _chest_sprite == null or not is_instance_valid(_chest_sprite):
+		return
+	var atlas := _chest_sprite.texture as AtlasTexture
+	if atlas == null:
+		return
+	atlas.region = Rect2(index * CHEST_FRAME_SIZE, 0, CHEST_FRAME_SIZE, CHEST_FRAME_SIZE)
+
 static func _get_rays_texture() -> ImageTexture:
 	"""Radial god-rays sprite, generated once. Alternating spokes fading out
 	toward the rim — the classic 'something great is happening' backdrop."""
@@ -1437,17 +1478,26 @@ func _build_chest_reveal() -> void:
 	_chest_reveal_root.add_child(_chest_rays)
 
 	_chest_sprite = TextureRect.new()
-	var chest_tex_path := "res://assets/level1/level1_props/prop_graveyard_crates_32_v001.png"
-	if ResourceLoader.exists(chest_tex_path):
-		_chest_sprite.texture = load(chest_tex_path)
+	if ResourceLoader.exists(CHEST_STRIP_PATH):
+		# One frame of the strip at a time. The reveal blows the sprite up to
+		# 192px and then past 2x again on the burst, so this is the single
+		# largest the chest art ever gets -- it used to be a 32px crate prop
+		# borrowed from the graveyard set.
+		var atlas := AtlasTexture.new()
+		atlas.atlas = load(CHEST_STRIP_PATH)
+		atlas.region = Rect2(0, 0, CHEST_FRAME_SIZE, CHEST_FRAME_SIZE)
+		# Scaling an atlas region with nearest filtering samples the neighbouring
+		# frame at the seam unless clipping is on.
+		atlas.filter_clip = true
+		_chest_sprite.texture = atlas
 	_chest_sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_chest_sprite.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_chest_sprite.set_anchors_preset(Control.PRESET_CENTER)
-	_chest_sprite.custom_minimum_size = Vector2(192, 192)
-	_chest_sprite.size = Vector2(192, 192)
-	_chest_sprite.position = Vector2(-96, -150)
-	_chest_sprite.pivot_offset = Vector2(96, 96)
+	_chest_sprite.custom_minimum_size = Vector2(CHEST_SPRITE_SIZE, CHEST_SPRITE_SIZE)
+	_chest_sprite.size = Vector2(CHEST_SPRITE_SIZE, CHEST_SPRITE_SIZE)
+	_chest_sprite.pivot_offset = Vector2(CHEST_SPRITE_SIZE, CHEST_SPRITE_SIZE) * 0.5
 	_chest_sprite.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place_chest_sprite()
 	_chest_reveal_root.add_child(_chest_sprite)
 
 	_chest_cards = VBoxContainer.new()
@@ -1504,7 +1554,8 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	_chest_rays.rotation = 0.0
 	_chest_sprite.scale = Vector2.ZERO
 	_chest_sprite.modulate = Color.WHITE
-	_chest_sprite.position = Vector2(-96, -150)
+	_place_chest_sprite()
+	_set_chest_frame(CHEST_FRAME_SHUT)
 
 	# 1. Chest slams in from nothing and overshoots — physical arrival.
 	_rt(_chest_sprite, "scale", Vector2(1.15, 1.15), 0.28, Tween.TRANS_BACK)
@@ -1513,9 +1564,19 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	if not is_inside_tree():
 		return
 
-	# 2. Anticipation: rattle harder and brighter as the riser builds.
+	# 2. Anticipation: rattle harder and brighter as the riser builds. The lid
+	#    strains, then cracks, so the chest itself escalates alongside the
+	#    sound instead of being a static prop that shakes.
 	var base_pos := _chest_sprite.position
 	for i in range(6):
+		# The rattle steps shorten as they go, so these indices are not evenly
+		# spaced in time: strain lands ~0.35s before the crack, and the crack
+		# holds ~0.2s before the burst. Pushed one step later, the cracked lid
+		# would flash for a single frame.
+		if i == 2:
+			_set_chest_frame(CHEST_FRAME_STRAIN)
+		elif i == 4:
+			_set_chest_frame(CHEST_FRAME_CRACK)
 		var amp := 4.0 + float(i) * 3.0
 		var step := 0.09 - float(i) * 0.008
 		var t1 := create_tween()
@@ -1532,6 +1593,7 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 			return
 
 	# 3. BURST. White flash, chest blows out, rays flare wide.
+	_set_chest_frame(CHEST_FRAME_OPEN)
 	_chest_flash.color = Color(1, 1, 1, 0.85)
 	_rt(_chest_flash, "color", Color(1, 1, 1, 0.0), 0.45)
 	_rt(_chest_sprite, "scale", Vector2(2.6, 2.6), 0.35, Tween.TRANS_QUAD)

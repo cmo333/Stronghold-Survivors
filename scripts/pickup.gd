@@ -1,7 +1,7 @@
 extends Area2D
 
-const GOLD_TEX = preload("res://assets/ui/ui_icon_gold_32_v001.png")
-const HEAL_TEX = preload("res://assets/ui/ui_icon_crystal_32_v001.png")
+const GOLD_TEX = preload("res://assets/ui/ui_icon_gold_32_v002.png")
+const HEAL_TEX = preload("res://assets/ui/ui_icon_crystal_32_v002.png")
 
 var value = 1
 var kind = "gold"

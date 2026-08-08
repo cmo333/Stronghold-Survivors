@@ -7,7 +7,7 @@
 [ext_resource type="Texture2D" uid="uid://bxhh6lfeqopiy" path="res://assets/ui/ui_panel_frame_small_256x128_v001.png" id="6"]
 [ext_resource type="Texture2D" uid="uid://chdf520aoaouq" path="res://assets/ui/ui_bar_xp_384x16_v001.png" id="7"]
 [ext_resource type="Texture2D" uid="uid://bd6hunee4nvrb" path="res://assets/ui/ui_bar_xp_empty_384x16_v001.png" id="8"]
-[ext_resource type="Texture2D" uid="uid://caf0i0ns76qm1" path="res://assets/ui/ui_icon_gold_32_v001.png" id="9"]
+[ext_resource type="Texture2D" path="res://assets/ui/ui_icon_gold_32_v002.png" id="9"]
 [ext_resource type="Script" path="res://scripts/directional_sprite.gd" id="11"]
 [ext_resource type="Texture2D" uid="uid://burf07jpx6hws" path="res://assets/ui/ui_panel_frame_medium_384x192_v001.png" id="13"]
 [ext_resource type="Texture2D" uid="uid://c7ackk6g8qa2u" path="res://assets/ui/ui_dialog_frame_384x224_v001.png" id="14"]

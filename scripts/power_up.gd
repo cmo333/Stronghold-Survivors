@@ -19,7 +19,7 @@ const TYPE_CONFIG = {
 		"spawn_min": 600.0,
 		"spawn_max": 800.0,
 		"duration": 30.0,
-		"icon": "res://assets/ui/ui_icon_gold_32_v001.png"
+		"icon": "res://assets/ui/ui_icon_gold_32_v002.png"
 	},
 	Type.TIME_CRYSTAL: {
 		"name": "Time Crystal",
@@ -28,7 +28,7 @@ const TYPE_CONFIG = {
 		"spawn_min": 500.0,
 		"spawn_max": 700.0,
 		"duration": 20.0,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png"
+		"icon": "res://assets/ui/ui_icon_crystal_32_v002.png"
 	},
 	Type.RESOURCE_CACHE: {
 		"name": "Resource Cache",
@@ -37,7 +37,7 @@ const TYPE_CONFIG = {
 		"spawn_min": 400.0,
 		"spawn_max": 600.0,
 		"duration": 45.0,
-		"icon": "res://assets/ui/ui_icon_gold_32_v001.png"
+		"icon": "res://assets/ui/ui_icon_gold_32_v002.png"
 	},
 	Type.BERSERK_ORB: {
 		"name": "Berserk Orb",
@@ -46,7 +46,7 @@ const TYPE_CONFIG = {
 		"spawn_min": 700.0,
 		"spawn_max": 900.0,
 		"duration": 25.0,
-		"icon": "res://assets/ui/ui_icon_fire_32_v001.png"
+		"icon": "res://assets/ui/ui_icon_fire_32_v002.png"
 	},
 	Type.MAGNET_PULSE: {
 		"name": "Magnet Pulse",
@@ -55,7 +55,7 @@ const TYPE_CONFIG = {
 		"spawn_min": 350.0,
 		"spawn_max": 550.0,
 		"duration": 30.0,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png"
+		"icon": "res://assets/ui/ui_icon_crystal_32_v002.png"
 	}
 }
 
