@@ -74,8 +74,17 @@ const HANDOFF_WASH := Color(0.40, 0.43, 0.47)
 # Dead-channel palette: cold whites and blues over black, no green.
 const STATIC_TINT := Color(0.62, 0.68, 0.82)
 
-const COLOR_MESSAGE := Color(0.72, 1.0, 0.86)
-const COLOR_STING := Color(1.0, 0.42, 0.34)
+const COLOR_MESSAGE := Color(1.0, 1.0, 1.0)
+const COLOR_STING := Color(1.0, 0.32, 0.26)
+
+# The message plays over the same black void the intro opens on, so the two
+# cinematics read as one place. Projected points, same as there: a fixed seed
+# means the field is identical every run, like the lattice.
+const STAR_COUNT := 340
+const STAR_FIELD_DEPTH := 900.0
+const STAR_FOCAL := 300.0
+const STAR_DRIFT := 24.0     # units per second toward the viewer
+const VOID_COLOR := Color(0.008, 0.008, 0.025)
 
 # Vortex shape. Angular speed rises toward the centre, so the middle whips round
 # while the rim is still turning lazily - that is what reads as a whirlpool
@@ -129,6 +138,7 @@ var _world_layers: Array[CanvasLayer] = []
 var _typewriter_chars := -1
 var _skip_next_delta := false
 var _diving := false
+var _stars: Array[Vector3] = []
 var _veil: ColorRect = null
 var _cam_zoom := Vector2.ONE
 
@@ -146,9 +156,47 @@ func _ready() -> void:
 	# Fixed seed: the lattice assembles the same way every time, so the sequence
 	# is a designed thing rather than a different accident on each launch.
 	_rng.seed = 20260808
+	_seed_stars()
 	_build_audio()
 	_build_message()
 	_begin_preload()
+
+func _seed_stars() -> void:
+	_stars.clear()
+	for i in range(STAR_COUNT):
+		_stars.append(_new_star(_rng.randf_range(1.0, STAR_FIELD_DEPTH)))
+
+func _new_star(z: float) -> Vector3:
+	# Wider than the frame so stars keep arriving from off-screen rather than all
+	# streaming out of a hole in the middle.
+	return Vector3(_rng.randf_range(-1400.0, 1400.0), _rng.randf_range(-900.0, 900.0), z)
+
+func _advance_stars(delta: float) -> void:
+	if _t < T_STATIC:
+		return
+	for i in range(_stars.size()):
+		var s: Vector3 = _stars[i]
+		s.z -= STAR_DRIFT * delta
+		if s.z <= 1.0:
+			s = _new_star(STAR_FIELD_DEPTH)
+		_stars[i] = s
+
+func _draw_void(size: Vector2) -> void:
+	draw_rect(Rect2(Vector2.ZERO, size), VOID_COLOR, true)
+	var centre := size * 0.5
+	# Fades up as the lattice gives way, so the field arrives with the static
+	# instead of snapping on underneath it.
+	var fade: float = clampf((_t - T_STATIC) / 0.8, 0.0, 1.0)
+	for s in _stars:
+		var sp: Vector2 = centre + Vector2(s.x, s.y) * (STAR_FOCAL / s.z)
+		if sp.x < 0.0 or sp.y < 0.0 or sp.x > size.x or sp.y > size.y:
+			continue
+		# Nearer stars bigger and brighter -- the only depth cue a field of
+		# identical dots gets.
+		var near: float = clampf(1.0 - s.z / STAR_FIELD_DEPTH, 0.0, 1.0)
+		var px: float = 1.0 + round(near * 2.0)
+		draw_rect(Rect2(_snap(sp), Vector2(px, px)),
+			Color(1.0, 0.97, 0.92, (0.28 + 0.62 * near) * fade), true)
 
 func _begin_preload() -> void:
 	"""Load the run on a background thread while the descent plays.
@@ -181,7 +229,7 @@ func _build_message() -> void:
 	_message.add_theme_font_size_override("font_size", 22)
 	_message.add_theme_color_override("font_color", COLOR_MESSAGE)
 	_message.add_theme_constant_override("outline_size", 6)
-	_message.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.05))
+	_message.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.02))
 	_message.add_theme_constant_override("line_spacing", 12)
 	if font != null:
 		_message.add_theme_font_override("font", font)
@@ -291,9 +339,13 @@ func _try_mount_world() -> void:
 	var started := Time.get_ticks_usec()
 	var inst: Node = (packed as PackedScene).instantiate()
 	inst.process_mode = Node.PROCESS_MODE_DISABLED
-	var tree_root := get_tree().root
-	tree_root.add_child(inst)
-	tree_root.move_child(inst, 0)
+	# Appended, NOT moved to the front. An earlier version did
+	# move_child(inst, 0) to force the run behind this scene, which also shoved
+	# it ahead of every autoload -- AudioManager, Net, Steamworks, MetaProgression
+	# all ended up processing after the game instead of before it. Draw order is
+	# already handled by this node's z_index of 4096, which outranks tree order
+	# anyway, so the reordering bought nothing and quietly restructured the root.
+	get_tree().root.add_child(inst)
 	_world = inst
 	if "camera" in inst and inst.camera != null:
 		inst.camera.enabled = false
@@ -429,6 +481,7 @@ func _process(delta: float) -> void:
 	_t += delta
 	_tick_beat()
 	_update_shake(delta)
+	_advance_stars(delta)
 	if _t >= T_CASCADE and not _cascade_played:
 		_cascade_played = true
 		AudioManager.play_ui_sound("wave_start")
@@ -558,7 +611,10 @@ func _hash01(a: int, b: int) -> float:
 func _draw() -> void:
 	var size := get_viewport_rect().size
 	if not _diving:
-		_draw_backdrop(size)
+		if _t >= T_STATIC:
+			_draw_void(size)
+		else:
+			_draw_backdrop(size)
 	if _t < T_SPARK * 0.35:
 		_draw_spark(size)
 		return
@@ -634,7 +690,29 @@ func _draw_lattice(size: Vector2) -> void:
 				var flood: float = clampf((_t - flood_at) / 0.18, 0.0, 1.0)
 				var fill := COLOR_GROUND.lerp(COLOR_GROUND.lightened(0.35), _beat_phase() * 0.5)
 				fill.a = flood * a * (0.35 + 0.65 * depth_fade)
-				draw_colored_polygon(PackedVector2Array([p00, p10, p11, p01]), fill)
+				if fill.a > 0.004:
+					_fill_quad(p00, p10, p11, p01, fill)
+
+func _tri_area2(a: Vector2, b: Vector2, c: Vector2) -> float:
+	return absf((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y))
+
+func _fill_quad(p00: Vector2, p10: Vector2, p11: Vector2, p01: Vector2, fill: Color) -> void:
+	"""Fill a lattice cell as two guarded triangles.
+
+	This was one draw_colored_polygon over the quad, and it threw "Invalid
+	polygon data, triangulation failed" from the renderer on most cells for most
+	of the vortex -- thousands of failed calls a second, every run. The warp that
+	makes the whirlpool pulls the four corners together and past each other, so
+	cells collapse to a point or fold into a bow-tie, and a self-intersecting or
+	zero-area quad cannot be triangulated.
+
+	Triangles cannot fold, so splitting the quad removes the self-intersection
+	case entirely, and an area test removes the collapsed one. Cells that fail
+	both are sub-pixel by definition, so nothing visible is lost."""
+	if _tri_area2(p00, p10, p11) > 2.0:
+		draw_colored_polygon(PackedVector2Array([p00, p10, p11]), fill)
+	if _tri_area2(p00, p11, p01) > 2.0:
+		draw_colored_polygon(PackedVector2Array([p00, p11, p01]), fill)
 
 func _draw_jewels(size: Vector2) -> void:
 	if _t < T_WEAVE - 0.6:
@@ -729,7 +807,6 @@ func _draw_static(size: Vector2) -> void:
 	# Floods down the frame, holds, then thins out to nothing.
 	var flood: float = clampf(f / 0.40, 0.0, 1.0)
 	var density: float = 1.0 - clampf((f - 0.62) / 0.38, 0.0, 1.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.01, 0.02), true)
 	if density <= 0.0:
 		return
 	var limit: float = size.y * flood
