@@ -1,11 +1,15 @@
 extends Control
 
-## Descent: the ~10s transition between pressing Play and the run starting.
+## Descent: the ~15s transition between pressing Play and the run starting.
 ##
 ## The world is not there yet, so it builds itself. A single point of light, a
 ## plane that weaves itself outward from it in perspective, jewels that lock
-## into the lattice, then a dive down through the surface until the ground fills
-## the frame and the character drops in.
+## into the lattice, a dive down through the surface, and a vortex that drags
+## the whole plane inward. Then the signal breaks up into static and someone on
+## the far side of the rift tells you to hurry.
+##
+## main.tscn loads on a background thread for the whole of it, so the hand-off
+## at the end is a pointer swap rather than a stall.
 ##
 ## Everything is drawn, not authored - projected geometry snapped to a chunky
 ## virtual pixel so it reads as pixel art rather than clean vector lines, which
@@ -25,8 +29,25 @@ const T_WEAVE := 4.2         # the lattice draws itself outward
 const T_JEWELS := 6.0        # jewels lock in
 const T_CASCADE := 7.0       # tiles flood the plane, the frame starts shaking
 const T_VORTEX := 8.0        # everything spirals inward
-const T_SPAWN := 9.0         # the vortex collapses and the character drops in
-const T_END := 10.0          # hand over to the run
+const T_STATIC := 9.0        # signal breaks up: scrambled static wipe
+const T_MESSAGE := 9.9       # the rift warning
+const T_END := 14.9          # hand over to the run
+
+# What used to sit between T_STATIC and T_END was a "spawn" beat: a collapsing
+# ring with a twelve-block stick figure fading up inside it, meant to read as the
+# character arriving. It read as a crudely drawn something-or-other, so it is
+# gone. The signal tearing itself apart and a warning from whoever is on the
+# other end of it does the same job -- covering the hand-off -- without asking
+# twelve rectangles to look like a person.
+
+const MESSAGE_LINES := "The time is fleeting.\nWe don't know how long the rift will stay open.\nExtract as much as you can, traveler..."
+const MESSAGE_STING := "More are coming."
+const T_STING_IN := 2.8      # seconds into the message beat
+const MESSAGE_FADE := 0.45
+const MESSAGE_MARGIN := 110.0
+
+const COLOR_MESSAGE := Color(0.72, 1.0, 0.86)
+const COLOR_STING := Color(1.0, 0.42, 0.34)
 
 # Vortex shape. Angular speed rises toward the centre, so the middle whips round
 # while the rim is still turning lazily - that is what reads as a whirlpool
@@ -68,9 +89,12 @@ var _rng := RandomNumberGenerator.new()
 var _thump: Array[AudioStreamPlayer] = []
 var _thump_voice := 0
 var _riser_played := false
-var _spawn_played := false
+var _static_played := false
 var _cascade_played := false
 var _shake := Vector2.ZERO
+var _message: Label = null
+var _sting: Label = null
+var _preload_started := false
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -79,6 +103,88 @@ func _ready() -> void:
 	# is a designed thing rather than a different accident on each launch.
 	_rng.seed = 20260808
 	_build_audio()
+	_build_message()
+	_begin_preload()
+
+func _begin_preload() -> void:
+	"""Load the run on a background thread while the descent plays.
+
+	This is where the dead air came from. change_scene_to_file() loads
+	main.tscn synchronously at the moment it is called, so the descent would
+	finish, the frame would stop, and the player sat on a held image for as long
+	as the scene took to come off disk. Nothing was animating; there was simply
+	nothing else the main thread could do.
+
+	Starting the request in _ready gives the loader the entire ~15s of the
+	descent to work in, so by the time _finish runs the scene is already in
+	memory and the hand-off is a pointer swap."""
+	if _preload_started:
+		return
+	if not ResourceLoader.exists(NEXT_SCENE):
+		return
+	_preload_started = ResourceLoader.load_threaded_request(NEXT_SCENE) == OK
+
+func _build_message() -> void:
+	var font: FontFile = null
+	if ResourceLoader.exists("res://assets/ui/pixel_font.ttf"):
+		font = load("res://assets/ui/pixel_font.ttf")
+
+	_message = Label.new()
+	_message.name = "RiftMessage"
+	_message.text = MESSAGE_LINES
+	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_message.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_message.add_theme_font_size_override("font_size", 22)
+	_message.add_theme_color_override("font_color", COLOR_MESSAGE)
+	_message.add_theme_constant_override("outline_size", 6)
+	_message.add_theme_color_override("font_outline_color", Color(0.02, 0.06, 0.05))
+	_message.add_theme_constant_override("line_spacing", 12)
+	if font != null:
+		_message.add_theme_font_override("font", font)
+	_message.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Side margins plus word wrap. A Label does not clip to its rect by default,
+	# so a line wider than the viewport just runs off both edges -- which is what
+	# the first cut did, losing "...how long the rift will stay open" past the
+	# right of the frame. Wrapping inside a bounded box makes overflow
+	# unrepresentable rather than something to re-check by eye at each font size.
+	_message.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_message.offset_left = MESSAGE_MARGIN
+	_message.offset_right = -MESSAGE_MARGIN
+	_message.offset_top = -70.0
+	_message.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_message.modulate.a = 0.0
+	add_child(_message)
+
+	_sting = Label.new()
+	_sting.name = "RiftSting"
+	_sting.text = MESSAGE_STING
+	_sting.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_sting.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_sting.add_theme_font_size_override("font_size", 34)
+	_sting.add_theme_color_override("font_color", COLOR_STING)
+	_sting.add_theme_constant_override("outline_size", 7)
+	_sting.add_theme_color_override("font_outline_color", Color(0.10, 0.01, 0.01))
+	if font != null:
+		_sting.add_theme_font_override("font", font)
+	_sting.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_sting.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_sting.offset_left = MESSAGE_MARGIN
+	_sting.offset_right = -MESSAGE_MARGIN
+	_sting.offset_top = 130.0
+	_sting.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_sting.modulate.a = 0.0
+	add_child(_sting)
+
+func _update_message() -> void:
+	if _message == null or _sting == null:
+		return
+	if _t < T_MESSAGE:
+		_message.modulate.a = 0.0
+		_sting.modulate.a = 0.0
+		return
+	var m: float = _t - T_MESSAGE
+	_message.modulate.a = clampf(m / MESSAGE_FADE, 0.0, 1.0)
+	_sting.modulate.a = clampf((m - T_STING_IN) / MESSAGE_FADE, 0.0, 1.0)
 
 func _build_audio() -> void:
 	for path in ["res://assets/audio/sfx/building_hit.wav", "res://assets/audio/sfx/shield_hit.wav"]:
@@ -121,9 +227,10 @@ func _process(delta: float) -> void:
 	if _t >= T_VORTEX and not _riser_played:
 		_riser_played = true
 		AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
-	if _t >= T_SPAWN and not _spawn_played:
-		_spawn_played = true
-		AudioManager.play_ui_sound("level_up")
+	if _t >= T_STATIC and not _static_played:
+		_static_played = true
+		AudioManager.play_one_shot("lightning_crack", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
+	_update_message()
 	if _t >= T_END:
 		_finish()
 		return
@@ -166,9 +273,9 @@ func _update_shake(_delta: float) -> void:
 	if _t >= T_CASCADE:
 		amount = clampf((_t - T_CASCADE) / max(0.001, T_VORTEX - T_CASCADE), 0.0, 1.0) * 0.55
 	if _t >= T_VORTEX:
-		amount = lerpf(0.55, 1.0, clampf((_t - T_VORTEX) / max(0.001, T_SPAWN - T_VORTEX), 0.0, 1.0))
-	if _t >= T_SPAWN:
-		amount *= clampf(1.0 - (_t - T_SPAWN) / 0.35, 0.0, 1.0)
+		amount = lerpf(0.55, 1.0, clampf((_t - T_VORTEX) / max(0.001, T_STATIC - T_VORTEX), 0.0, 1.0))
+	if _t >= T_STATIC:
+		amount *= clampf(1.0 - (_t - T_STATIC) / 0.35, 0.0, 1.0)
 	if amount <= 0.0:
 		_shake = Vector2.ZERO
 		return
@@ -180,7 +287,7 @@ func _update_shake(_delta: float) -> void:
 func _vortex_amount() -> float:
 	if _t < T_VORTEX:
 		return 0.0
-	return clampf((_t - T_VORTEX) / max(0.001, T_SPAWN - T_VORTEX), 0.0, 1.0)
+	return clampf((_t - T_VORTEX) / max(0.001, T_STATIC - T_VORTEX), 0.0, 1.0)
 
 # Every drawn point goes through here: shake, then the spiral. Angular speed
 # scales with how close the point already is to the centre, and the whole field
@@ -240,17 +347,19 @@ func _draw() -> void:
 	if _t < T_SPARK * 0.35:
 		_draw_spark(size)
 		return
-	if _t < T_SPAWN:
+	if _t < T_STATIC:
 		_draw_lattice(size)
 		_draw_jewels(size)
 		if _t >= T_VORTEX:
 			_draw_vortex_streaks(size)
-	else:
-		_draw_spawn(size)
+	elif _t < T_MESSAGE:
+		_draw_static(size)
 
 func _draw_backdrop(size: Vector2) -> void:
 	# Deep space that warms toward the ground colour as the world resolves.
-	var warm := clampf((_t - T_JEWELS) / max(0.001, T_END - T_JEWELS), 0.0, 1.0)
+	# Keyed to T_STATIC, not T_END: the warm-up belongs to the lattice assembling,
+	# and T_END now sits five seconds later on the far side of the message.
+	var warm := clampf((_t - T_JEWELS) / max(0.001, T_STATIC - T_JEWELS), 0.0, 1.0)
 	var top := Color(0.02, 0.02, 0.05).lerp(Color(0.05, 0.09, 0.06), warm)
 	draw_rect(Rect2(Vector2.ZERO, size), top, true)
 
@@ -385,40 +494,70 @@ func _draw_vortex_streaks(size: Vector2) -> void:
 		var l: float = PIXEL * (1.0 + round(3.0 * v))
 		draw_rect(Rect2(_snap(p + _shake), Vector2(l, PIXEL)), col, true)
 
-# The last beat: the ground has filled the frame, light collapses to a point and
-# the character's silhouette resolves out of it.
-func _draw_spawn(size: Vector2) -> void:
-	var f: float = clampf((_t - T_SPAWN) / max(0.001, T_END - T_SPAWN), 0.0, 1.0)
-	var c := Vector2(size.x * 0.5, size.y * 0.62)
-	# The drain blows back out as white, then clears to leave the character.
-	var flash := Color(1, 1, 1, clampf(1.0 - f * 2.6, 0.0, 1.0))
-	if flash.a > 0.0:
-		draw_rect(Rect2(Vector2.ZERO, size), flash, true)
-	# Collapsing ring.
-	var r: float = lerpf(300.0, 34.0, f)
-	var seg := 56
-	var ring := COLOR_LATTICE
-	ring.a = 0.85 * (1.0 - f * 0.4)
-	for i in range(seg):
-		var a0 := TAU * float(i) / float(seg)
-		var p := _snap(c + Vector2(r, 0).rotated(a0))
-		draw_rect(Rect2(p, Vector2(PIXEL, PIXEL)), ring, true)
-	# Silhouette blocking in: a simple standing figure, pixel blocks, fading up.
-	var body := Color(1.0, 0.96, 0.85, clampf((_t - T_SPAWN) / 0.3, 0.0, 1.0))
-	var u := PIXEL * 3.0
-	var feet := c + Vector2(0, u * 3.0)
-	var blocks := [
-		Vector2(0, -6), Vector2(0, -5),                      # head
-		Vector2(-1, -4), Vector2(0, -4), Vector2(1, -4),     # shoulders
-		Vector2(-1, -3), Vector2(0, -3), Vector2(1, -3),
-		Vector2(0, -2), Vector2(0, -1),                      # torso
-		Vector2(-1, 0), Vector2(1, 0),                       # legs
-	]
-	for b in blocks:
-		draw_rect(Rect2(_snap(feet + b * u), Vector2(u, u)), body, true)
+# The vortex hands off to a dead channel: the signal tears itself apart, floods
+# the frame, and clears to leave the warning on black.
+#
+# Rows, not a pixel grid. Filling 1280x720 with 4px cells is ~57,000 draw_rect
+# calls a frame, which is a real cost for a full-second effect; ragged horizontal
+# bands with the occasional one slid sideways is what actually reads as a broken
+# signal anyway, and it lands in a few hundred rects.
+#
+# The scramble comes free from _rng advancing across frames -- no reseeding. The
+# scene's seed is fixed so the lattice assembles identically every launch, and
+# the static inherits that: it is different every frame but the same every run.
+func _draw_static(size: Vector2) -> void:
+	var f: float = clampf((_t - T_STATIC) / max(0.001, T_MESSAGE - T_STATIC), 0.0, 1.0)
+	# Floods down the frame, holds, then thins out to nothing.
+	var flood: float = clampf(f / 0.40, 0.0, 1.0)
+	var density: float = 1.0 - clampf((f - 0.62) / 0.38, 0.0, 1.0)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.03, 0.03), true)
+	if density <= 0.0:
+		return
+	var limit: float = size.y * flood
+
+	var y := 0.0
+	while y < limit:
+		var h: float = PIXEL * float(_rng.randi_range(1, 4))
+		# Tear: roughly one band in five slides sideways.
+		var dx := 0.0
+		if _rng.randf() < 0.22:
+			dx = float(_rng.randi_range(-30, 30))
+		var v: float = _rng.randf()
+		# Tinted toward the rift's own cyan-green rather than grey, so the dead
+		# channel still belongs to this game.
+		var col := Color(0.42 + v * 0.55, 0.80 + v * 0.20, 0.68 + v * 0.32,
+			density * (0.08 + v * 0.55))
+		draw_rect(Rect2(_snap(Vector2(dx - 32.0, y)), Vector2(size.x + 64.0, h)), col, true)
+		y += h
+
+	# A couple of blown-out sync lines per frame.
+	for i in range(3):
+		if _rng.randf() > 0.55 * density:
+			continue
+		var sy: float = _rng.randf() * limit
+		draw_rect(Rect2(_snap(Vector2(0.0, sy)), Vector2(size.x, PIXEL)),
+			Color(1, 1, 1, 0.45 * density), true)
+
+	# Block noise scattered over the bands.
+	for i in range(int(240.0 * density)):
+		var p := Vector2(_rng.randf() * size.x, _rng.randf() * limit)
+		var g: float = 0.40 + _rng.randf() * 0.60
+		draw_rect(Rect2(_snap(p), Vector2(PIXEL * 2.0, PIXEL)),
+			Color(g, g, g, 0.5 * density), true)
 
 func _finish() -> void:
 	if _finished:
 		return
 	_finished = true
+	# Hand over the copy the background thread already loaded. If the player
+	# skipped early the load may still be in flight, in which case
+	# load_threaded_get blocks for the remainder -- the same wait as before, just
+	# shorter by however much of the descent had played.
+	if _preload_started:
+		var status := ResourceLoader.load_threaded_get_status(NEXT_SCENE)
+		if status == ResourceLoader.THREAD_LOAD_LOADED or status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			var packed := ResourceLoader.load_threaded_get(NEXT_SCENE)
+			if packed is PackedScene:
+				get_tree().change_scene_to_packed(packed)
+				return
 	get_tree().change_scene_to_file(NEXT_SCENE)
