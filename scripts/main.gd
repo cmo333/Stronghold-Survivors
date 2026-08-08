@@ -4295,6 +4295,9 @@ func spawn_pickup(position: Vector2, value: int, kind: String = "gold") -> void:
 	if kind == "essence":
 		_queue_essence_announcement(position, value)
 
+const SUMMON_SPIDER_FRAMES := 4
+const SUMMON_LIFETIME := 30.0
+
 func spawn_reaper_summon(origin: Vector2, config: Dictionary, cap: int) -> void:
 	"""Raise one zombie near the reaper, up to a standing cap.
 
@@ -4315,15 +4318,28 @@ func spawn_reaper_summon(origin: Vector2, config: Dictionary, cap: int) -> void:
 	var unit = ALLY_SCENE.instantiate()
 	var angle := randf() * TAU
 	unit.global_position = origin + Vector2(cos(angle), sin(angle)) * randf_range(26.0, 52.0)
+	# Swap in the spider art BEFORE the node enters the tree: the loader builds
+	# its SpriteFrames in _ready(), so anything assigned after add_child() is
+	# read too late and the summon comes up with no sprite at all.
+	var body_node := unit.get_node_or_null("Body")
+	if body_node != null and "frame_paths" in body_node:
+		var paths: Array[String] = []
+		for i in range(1, SUMMON_SPIDER_FRAMES + 1):
+			paths.append("res://assets/level1/level1_summons/summon_spider_28_f%03d_v001.png" % i)
+		body_node.frame_paths = paths
+		body_node.fps = 9.0
 	allies_root.add_child(unit)
 	if unit.has_method("setup"):
 		unit.setup(self, config)
 	unit.add_to_group("reaper_summons")
-	# Green tell, so a raise reads as necromancy rather than a unit wandering in.
-	if unit.has_node("Body"):
-		var b: Node = unit.get_node("Body")
-		if "modulate" in b:
-			b.modulate = Color(0.45, 1.0, 0.6)
+	# Temporary, not permanent: a raise is a burst of pressure that expires, so
+	# the reaper has to keep casting rather than accumulating a standing army.
+	var expiry := get_tree().create_timer(SUMMON_LIFETIME, false)
+	expiry.timeout.connect(func():
+		if is_instance_valid(unit):
+			spawn_fx("poison", unit.global_position)
+			unit.queue_free()
+	)
 	spawn_fx("poison", unit.global_position)
 	AudioManager.play_one_shot("summon", unit.global_position, AudioManager.DEFAULT_PRIORITY)
 
