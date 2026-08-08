@@ -19,8 +19,8 @@ const DIALOG_FRAME := "res://assets/ui/ui_dialog_frame_384x224_v001.png"
 const BTN_NORMAL := "res://assets/ui/ui_button_primary_normal_128x32_v001.png"
 const BTN_HOVER := "res://assets/ui/ui_button_primary_hover_128x32_v001.png"
 const BTN_PRESSED := "res://assets/ui/ui_button_primary_pressed_128x32_v001.png"
-const ICON_SKULL := "res://assets/ui/ui_icon_skull_32_v002.png"
-const ICON_CRYSTAL := "res://assets/ui/ui_icon_crystal_32_v002.png"
+const ICON_SKULL := "res://assets/ui/ui_icon_skull_32_v001.png"
+const ICON_CRYSTAL := "res://assets/ui/ui_icon_crystal_32_v001.png"
 
 # ---- Palette (gothic arcade) ----
 const COLOR_BG_TOP := Color(0.06, 0.04, 0.10, 1.0)

@@ -11,12 +11,12 @@ const TECH_CARD_TEXTURES = {
 	"diamond": "res://assets/ui/tech/ui_tech_card_diamond_420x74_v001.png"
 }
 const RARITY_FRAME_TEXTURES = {
-	"common": "res://assets/ui_build_icons/ui_rarity_common_frame_32_v002.png",
-	"rare": "res://assets/ui_build_icons/ui_rarity_rare_frame_32_v002.png",
-	"epic": "res://assets/ui_build_icons/ui_rarity_epic_frame_32_v002.png",
-	"legendary": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png",
-	"mythic": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png",
-	"diamond": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v002.png"
+	"common": "res://assets/ui_build_icons/ui_rarity_common_frame_32_v001.png",
+	"rare": "res://assets/ui_build_icons/ui_rarity_rare_frame_32_v001.png",
+	"epic": "res://assets/ui_build_icons/ui_rarity_epic_frame_32_v001.png",
+	"legendary": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
+	"mythic": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png",
+	"diamond": "res://assets/ui_build_icons/ui_rarity_legendary_frame_32_v001.png"
 }
 const UPGRADE_POPUP_TEX = "res://assets/ui/ui_tooltip_frame_256x96_v001.png"
 const TECH_PANEL_SIZE = Vector2(480, 320)

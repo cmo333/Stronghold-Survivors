@@ -741,7 +741,7 @@ var tech_defs = {
 		"name": "Arrow: Fanfire",
 		"desc": "Arrow turrets fire extra spread shots",
 		"max": 3,
-		"icon": "res://assets/ui/ui_icon_wood_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_wood_32_v001.png",
 		"rarity": "common",
 		"min_level": 1,
 		"category": "tower"
@@ -750,7 +750,7 @@ var tech_defs = {
 		"name": "Gun: Piercing",
 		"desc": "Shots pierce +1 enemy",
 		"max": 2,
-		"icon": "res://assets/ui/ui_icon_iron_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "common",
 		"min_level": 1,
 		"category": "engineer"
@@ -759,7 +759,7 @@ var tech_defs = {
 		"name": "Gun: Burst Volley",
 		"desc": "Every few shots fires a 3-shot spread",
 		"max": 3,
-		"icon": "res://assets/ui/ui_icon_fire_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2,
 		"category": "engineer"
@@ -768,7 +768,7 @@ var tech_defs = {
 		"name": "Gun: Cryo Rounds",
 		"desc": "Shots slow enemies briefly",
 		"max": 2,
-		"icon": "res://assets/ui/ui_icon_ice_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2,
 		"category": "engineer"
@@ -782,7 +782,7 @@ var tech_defs = {
 		"name": "Tesla: EMP",
 		"desc": "Tesla shocks slow and stun briefly",
 		"max": 3,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 6,
 		"requires_build": "tesla_tower",
@@ -792,7 +792,7 @@ var tech_defs = {
 		"name": "Towers: Long Range",
 		"desc": "+25% range to all towers",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_stone_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_stone_32_v001.png",
 		"rarity": "common",
 		"min_level": 2,
 		"category": "tower"
@@ -801,7 +801,7 @@ var tech_defs = {
 		"name": "Towers: Brutality",
 		"desc": "+6 damage to all towers",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_iron_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_iron_32_v001.png",
 		"rarity": "rare",
 		"min_level": 2,
 		"category": "tower"
@@ -810,7 +810,7 @@ var tech_defs = {
 		"name": "Towers: Overclock",
 		"desc": "+22% fire rate to all towers",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "epic",
 		"min_level": 4,
 		"category": "tower"
@@ -819,7 +819,7 @@ var tech_defs = {
 		"name": "Towers: Heavy Ordnance",
 		"desc": "+9 damage to all towers",
 		"max": 3,
-		"icon": "res://assets/ui/ui_icon_fire_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
 		"category": "tower"
@@ -828,7 +828,7 @@ var tech_defs = {
 		"name": "Tesla: Arc Relays",
 		"desc": "Tesla bolts chain to +1 more target",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
 		"requires_build": "tesla_tower",
@@ -838,7 +838,7 @@ var tech_defs = {
 		"name": "Towers: Blast Radius",
 		"desc": "+18% blast radius on AoE towers",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_fire_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "rare",
 		"min_level": 4,
 		"category": "tower"
@@ -847,7 +847,7 @@ var tech_defs = {
 		"name": "Relic: Orbital Overdrive",
 		"desc": "+40% fire rate, +16 damage, +20% range to all towers",
 		"max": 2,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 8,
 		"category": "tower"
@@ -856,7 +856,7 @@ var tech_defs = {
 		"name": "Supply Cache",
 		"desc": "Gain a burst of resources now",
 		"max": 8,
-		"icon": "res://assets/ui/ui_icon_gold_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_gold_32_v001.png",
 		"rarity": "common",
 		"min_level": 1,
 		"category": "economy"
@@ -865,7 +865,7 @@ var tech_defs = {
 		"name": "Field Repairs",
 		"desc": "Restore health immediately",
 		"max": 5,
-		"icon": "res://assets/ui/ui_icon_ice_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
 		"rarity": "common",
 		"min_level": 1,
 		"category": "economy"
@@ -874,7 +874,7 @@ var tech_defs = {
 		"name": "Engineer: Vitality Frame",
 		"desc": "Increase max health by +20% (up to +100%)",
 		"max": 5,
-		"icon": "res://assets/ui/ui_icon_ice_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_ice_32_v001.png",
 		"rarity": "rare",
 		"min_level": 1,
 		"category": "engineer"
@@ -883,7 +883,7 @@ var tech_defs = {
 		"name": "Essence Cache",
 		"desc": "Gain +2 Essence immediately",
 		"max": 4,
-		"icon": "res://assets/ui/ui_icon_crystal_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_crystal_32_v001.png",
 		"rarity": "rare",
 		"min_level": 3,
 		"category": "economy"
@@ -895,7 +895,7 @@ var tech_defs = {
 		"desc": "+60% tower damage, but -20% fire rate",
 		"max": 1,
 		"keystone": true,
-		"icon": "res://assets/ui/ui_icon_fire_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_fire_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 5,
 		"category": "tower"
@@ -905,7 +905,7 @@ var tech_defs = {
 		"desc": "+55% fire rate, but -15% range",
 		"max": 1,
 		"keystone": true,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 5,
 		"category": "tower"
@@ -915,7 +915,7 @@ var tech_defs = {
 		"desc": "+40% damage & +30% blast radius, but -10% fire rate",
 		"max": 1,
 		"keystone": true,
-		"icon": "res://assets/ui/ui_icon_stone_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_stone_32_v001.png",
 		"rarity": "epic",
 		"min_level": 5,
 		"category": "tower"
@@ -925,7 +925,7 @@ var tech_defs = {
 		"desc": "Tesla chains +2 targets and all towers gain +25% damage",
 		"max": 1,
 		"keystone": true,
-		"icon": "res://assets/ui/ui_icon_lightning_32_v002.png",
+		"icon": "res://assets/ui/ui_icon_lightning_32_v001.png",
 		"rarity": "legendary",
 		"min_level": 6,
 		"requires_build": "tesla_tower",

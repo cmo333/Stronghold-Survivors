@@ -37,7 +37,7 @@
         "pierce_count": 3
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_arrow_turret_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_arrow_turret_32_v001.png"
   },
   "cannon_tower": {
     "name": "Cannon Tower",
@@ -83,7 +83,7 @@
         "burn_effect": true
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_cannon_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_cannon_32_v001.png"
   },
   "tesla_tower": {
     "name": "Tesla Tower",
@@ -123,7 +123,7 @@
         "stun_chance": 0.25
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_tesla_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_tesla_32_v001.png"
   },
   "spike_burst_tower": {
     "name": "Spike Burst Tower",
@@ -166,7 +166,7 @@
         "projectile_pierce": 1
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_ice_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_ice_trap_32_v001.png"
   },
   "flamethrower_tower": {
     "name": "Flamethrower Tower",
@@ -212,7 +212,7 @@
         "max_targets": 12
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v001.png"
   },
   "mine_trap": {
     "name": "Mine Trap",
@@ -236,7 +236,7 @@
         "explosion_radius": 85
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_mine_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_mine_trap_32_v001.png"
   },
   "ice_trap": {
     "name": "Ice Trap",
@@ -258,7 +258,7 @@
         "slow_factor": 0.45
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_ice_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_ice_trap_32_v001.png"
   },
   "acid_trap": {
     "name": "Acid Burst",
@@ -284,7 +284,7 @@
         "siege_bonus": 2.3
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_acid_trap_32_v001.png"
   },
   "spike_trap": {
     "name": "Spike Trap",
@@ -310,7 +310,7 @@
         "stun_duration": 0.4
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_mine_trap_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_mine_trap_32_v001.png"
   },
   "wall": {
     "name": "Wall",
@@ -328,7 +328,7 @@
         "health": 140
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_wall_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_wall_32_v001.png"
   },
   "gate": {
     "name": "Gate",
@@ -346,7 +346,7 @@
         "health": 150
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_gate_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_gate_32_v001.png"
   },
   "resource_generator": {
     "name": "Resource Generator",
@@ -416,7 +416,7 @@
         "vulture_chance": 0.35
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_barracks_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_barracks_32_v001.png"
   },
   "armory": {
     "name": "Armory",
@@ -436,7 +436,7 @@
         "damage_bonus": 4.0
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_armory_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_armory_32_v001.png"
   },
   "tech_lab": {
     "name": "Tech Lab",
@@ -456,7 +456,7 @@
         "rate_bonus": 0.12
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_tech_lab_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_tech_lab_32_v001.png"
   },
   "shrine": {
     "name": "Stargate",
@@ -498,7 +498,7 @@
         "caster_aoe_damage": 68
       }
     ],
-    "preview": "res://assets/ui_build_icons/ui_build_stargate_32_v002.png"
+    "preview": "res://assets/ui_build_icons/ui_build_stargate_32_v001.png"
   },
   "stronghold_core": {
     "name": "Stronghold Core",
