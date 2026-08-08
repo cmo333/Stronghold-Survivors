@@ -233,6 +233,9 @@ func _physics_process(delta: float) -> void:
 	# is_local() is always true, so firing is unchanged.
 	if inert:
 		return
+	if character_id == "reaper":
+		_tick_reaper_summon(delta)
+		return
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if _attack_cooldown <= 0.0:
 		var target = _find_target()
@@ -259,6 +262,42 @@ func _physics_process(delta: float) -> void:
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 			# Audio: Gun fire sound
 			AudioManager.play_weapon_sound("gun", global_position)
+
+# --- Reaper: raise the dead instead of firing ---------------------------------
+#
+# Summons ride the existing ally system rather than a new unit type: allies
+# already chase and attack enemies, already sit on GameLayers.ALLY with
+# collision_mask 0, and -- checked, not assumed -- building placement only tests
+# GameLayers.BUILDING, so a summon can never block a tower going down. That is
+# the "don't give them collision so it doesn't mess with building" requirement,
+# already satisfied by the layer the allies use.
+var character_id: String = ""
+const REAPER_SUMMON_INTERVAL := 4.0
+const REAPER_SUMMON_CAP := 6          # under the game's max_allies of 16
+const REAPER_SUMMON := {
+	"max_health": 70.0,
+	"attack_damage": 11.0,
+	"attack_rate": 1.0,
+	"attack_range": 24.0,
+	"speed": 95.0,
+	"aggro_range": 420.0,
+	"leash_radius": 560.0,
+	"scale": 0.85,
+	"damage_type": "poison",
+	"attack_fx": "poison",
+	"spawn_fx": "summon_green",
+	"death_fx": "poison",
+}
+var _summon_timer: float = 0.0
+
+func _tick_reaper_summon(delta: float) -> void:
+	_summon_timer -= delta
+	if _summon_timer > 0.0:
+		return
+	_summon_timer = REAPER_SUMMON_INTERVAL
+	if _game == null or not _game.has_method("spawn_reaper_summon"):
+		return
+	_game.spawn_reaper_summon(global_position, REAPER_SUMMON, REAPER_SUMMON_CAP)
 
 func _find_target() -> Node2D:
 	var best: Node2D = null

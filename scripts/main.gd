@@ -286,6 +286,14 @@ var characters = [
 		"icon": "res://assets/level1/level1_player_anim_warlock/player_warlock_32_S_move_f001_v001.png"
 	},
 	{
+		"id": "reaper",
+		"name": "Reaper",
+		"desc": "Raises the dead instead of firing",
+		"base_path": "res://assets/level1/level1_player_anim_reaper",
+		"prefix": "player_reaper_32",
+		"icon": "res://assets/level1/level1_player_anim_reaper/player_reaper_32_S_move_f001_v001.png"
+	},
+	{
 		"id": "hunter",
 		"name": "OG Hunter",
 		"desc": "The one who came first",
@@ -3805,6 +3813,11 @@ func _apply_selected_character() -> void:
 	var base_path = str(data.get("base_path", ""))
 	var prefix = str(data.get("prefix", ""))
 	player.set_character(base_path, prefix)
+	# The reaper does not fire a gun at all -- it raises the dead instead. The
+	# id has to reach the player for that, since everything else about a
+	# character is art.
+	if "character_id" in player:
+		player.character_id = str(data.get("id", ""))
 
 func _apply_play_bounds() -> void:
 	# Derive play radius from Ground radius (tiles * tile_size)
@@ -4281,6 +4294,38 @@ func spawn_pickup(position: Vector2, value: int, kind: String = "gold") -> void:
 	pickups_root.call_deferred("add_child", pickup)
 	if kind == "essence":
 		_queue_essence_announcement(position, value)
+
+func spawn_reaper_summon(origin: Vector2, config: Dictionary, cap: int) -> void:
+	"""Raise one zombie near the reaper, up to a standing cap.
+
+	Rides the ally system rather than a bespoke unit: allies already chase and
+	attack enemies, and they sit on GameLayers.ALLY with collision_mask 0.
+	Building placement only tests GameLayers.BUILDING, so a summon standing on a
+	cell can never stop a tower going down there -- which is the point of using
+	this layer rather than inventing a new body.
+	"""
+	if allies_root == null or game_over:
+		return
+	var standing := 0
+	for a in allies_root.get_children():
+		if is_instance_valid(a) and a.is_in_group("reaper_summons"):
+			standing += 1
+	if standing >= cap or allies_root.get_child_count() >= max_allies:
+		return
+	var unit = ALLY_SCENE.instantiate()
+	var angle := randf() * TAU
+	unit.global_position = origin + Vector2(cos(angle), sin(angle)) * randf_range(26.0, 52.0)
+	allies_root.add_child(unit)
+	if unit.has_method("setup"):
+		unit.setup(self, config)
+	unit.add_to_group("reaper_summons")
+	# Green tell, so a raise reads as necromancy rather than a unit wandering in.
+	if unit.has_node("Body"):
+		var b: Node = unit.get_node("Body")
+		if "modulate" in b:
+			b.modulate = Color(0.45, 1.0, 0.6)
+	spawn_fx("poison", unit.global_position)
+	AudioManager.play_one_shot("summon", unit.global_position, AudioManager.DEFAULT_PRIORITY)
 
 func spawn_golden_coco() -> void:
 	"""Mythic chest pull: the golden coco joins the run for good.

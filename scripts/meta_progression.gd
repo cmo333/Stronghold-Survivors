@@ -24,6 +24,13 @@ const HERO_DEFS := [
 		"unlocked_by_default": true
 	},
 	{
+		"id": "reaper",
+		"name": "Reaper",
+		"desc": "Raises the dead instead of firing. They fight for you.",
+		"core_cost": 1000,
+		"unlocked_by_default": false
+	},
+	{
 		"id": "hunter",
 		"name": "OG Hunter",
 		"desc": "The one who came first. Prestige unlock.",
