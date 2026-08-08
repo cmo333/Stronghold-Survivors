@@ -29,8 +29,13 @@ const T_QUOTE := 3.5         # first character of the quote
 
 # The rest is derived from how long the text takes to type, so editing QUOTE
 # reflows the whole cinematic instead of desyncing it from hardcoded beats.
-const QUOTE_CPS := 34.0      # characters per second
-const QUOTE_HOLD := 0.9      # dwell on the finished line before it clears
+# +3s of quote on screen, split between a slower reveal and a longer dwell:
+# 34 -> 26 cps adds ~0.7s to the typing so it lands slightly slower, and the
+# dwell carries the remaining ~2.3s. Everything downstream is derived in
+# _build_timeline(), so the sign-off, warp, white and hand-off all shift with
+# it rather than needing to be re-timed by hand.
+const QUOTE_CPS := 26.0      # characters per second
+const QUOTE_HOLD := 3.2      # dwell on the finished line before it clears
 const SIGNOFF_GAP := 0.4     # dark beat between the quote and the sign-off
 const SIGNOFF_CPS := 8.0     # slower: two words landing one at a time
 const SIGNOFF_HOLD := 0.8
