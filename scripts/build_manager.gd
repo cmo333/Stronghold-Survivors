@@ -34,6 +34,11 @@ const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
 # realistic base. This runs only when the exact reachability test is
 # inconclusive, so the larger BFS is not on the common path.
 const PATH_ESCAPE_BOX_RADIUS = 900.0
+# How far the BFS may walk out of whatever is covering the player's own cell
+# before giving up. The widest footprint in the game is 18, so its config-space
+# square is 25px either side of centre - 4 cells clears it from any point inside
+# it, and stopping there keeps the search from stepping over a wall.
+const PATH_START_ESCAPE_CELLS = 4
 # The extractor/generator scene. Placing one has to be validated the same way as
 # walling one in: until it exists there is nothing in the scene to protect, so
 # dropping it into an already-sealed pocket would otherwise sail through.
@@ -1087,11 +1092,11 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float, propose
 	var start_cell = _world_to_path_cell(player_pos, origin, cell_size)
 	if start_cell.x < 0 or start_cell.y < 0 or start_cell.x >= grid_size or start_cell.y >= grid_size:
 		return true
-	var start_idx = start_cell.y * grid_size + start_cell.x
-	if blocked[start_idx] == 1 or (needs_clearance and clearance[start_idx] < required_cells):
+	var queue: Array = _path_start_cells(blocked, clearance, grid_size, start_cell, required_cells, needs_clearance)
+	if queue.is_empty():
 		return false
-	dist[start_idx] = 0
-	var queue: Array = [start_idx]
+	for seed_idx in queue:
+		dist[seed_idx] = 0
 	var head = 0
 	var dirs = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 	while head < queue.size():
@@ -1144,6 +1149,51 @@ func _check_path_validity(proposed_pos: Vector2, proposed_radius: float, propose
 		return false
 	var min_reachable_cells = max(PATH_MIN_REACHABLE_SPAWN_CELLS, int(ceil(float(total_spawn_cells) * PATH_MIN_REACHABLE_SPAWN_FRACTION)))
 	return reachable_spawn_cells >= min_reachable_cells
+
+func _path_start_cells(blocked: PackedByteArray, clearance: PackedInt32Array, grid_size: int, start_cell: Vector2i, required_cells: int, needs_clearance: bool) -> Array:
+	"""Where the reachability BFS starts: the player's own cell, or - when that
+	cell reads as blocked - the free cells immediately outside whatever is
+	covering them.
+
+	The player's cell is walkable by definition: they are standing on it. It
+	still reads as blocked in two ordinary cases, neither of which is a sealed
+	path. The building being placed is marked into the grid before the BFS runs,
+	so dropping the extractor at your own feet buries the start cell under the
+	proposal itself. And the grid marks a cell from its centre, which sits up to
+	11px from where the player actually is, so hugging a wall can bury it too.
+
+	Rejecting outright is what produced "Must leave path open!" on placements
+	that sealed nothing - it fired on an empty map with no buildings at all.
+	Walking out through the covering blob keeps the search local: the only cells
+	that can be reached are the ones bordering the thing the player is standing
+	inside, so a genuine enclosure still traps the BFS in its own pocket."""
+	var start_idx = start_cell.y * grid_size + start_cell.x
+	if blocked[start_idx] == 0 and not (needs_clearance and clearance[start_idx] < required_cells):
+		return [start_idx]
+	var seeds: Array = []
+	var seen := {}
+	var queue: Array = [start_cell]
+	seen[start_idx] = true
+	var head = 0
+	while head < queue.size():
+		var cell: Vector2i = queue[head]
+		head += 1
+		if abs(cell.x - start_cell.x) >= PATH_START_ESCAPE_CELLS or abs(cell.y - start_cell.y) >= PATH_START_ESCAPE_CELLS:
+			continue
+		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx = cell.x + dir.x
+			var ny = cell.y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if seen.has(nidx):
+				continue
+			seen[nidx] = true
+			if blocked[nidx] == 1 or (needs_clearance and clearance[nidx] < required_cells):
+				queue.append(Vector2i(nx, ny))  # keep walking through the blob
+			else:
+				seeds.append(nidx)
+	return seeds
 
 func _build_blocked_grid(origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float) -> PackedByteArray:
 	var blocked = PackedByteArray()
