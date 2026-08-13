@@ -24,7 +24,23 @@ var _intro_timer: float = 0.0
 # Bosses died off-screen to massed tower fire before they ever became a fight
 # worth noticing. Tripling the pool buys them enough time on the field to
 # actually reach the base and be dealt with deliberately.
-const BOSS_HEALTH_MULT := 3.0
+#
+# 2.5, not 3.0, because this is not the only factor in _scale_health_mult. It
+# multiplies main.gd's get_enemy_health_mult(), which is 1.2 at the reference
+# below (ENEMY_HEALTH_BASE_MULT 2.0 x the 0.60 early-game grace), and that
+# scaling was dead when the x3 was asked for -- setup() computed it and the
+# subclass _ready() threw it away. Repairing that made the two compound: a flat
+# 3.0 here measured x3.60 at difficulty 1.0, x5.22 at difficulty 2.0 and x8.61
+# at the 90% extraction milestone, against an authored colossus base of 2000.
+#
+# THE REFERENCE IS: difficulty 1.0, run start, no extraction milestone -- the
+# least-scaled state the game ever occupies. At that point a boss is now exactly
+# x3 its authored base (colossus 2000 -> 6000), measured in a running engine by
+# tools/boss_test.sh, not computed. x3 is therefore the FLOOR; difficulty, run
+# length and the milestone steps all still stack on top, which is the whole
+# point of having repaired the scaling. Anchoring x3 at some mid-run difficulty
+# instead would put a boss BELOW the requested x3 in the easy half of the run.
+const BOSS_HEALTH_MULT := 2.5
 
 # Boss AoE against structures, applied on top of each attack's own falloff.
 #
