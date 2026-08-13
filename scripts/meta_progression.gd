@@ -6,12 +6,23 @@ extends Node
 
 signal cores_changed(amount: int)
 signal meta_loaded
+# Emitted when the live save could not be read. `recovered` is true if the
+# backup stood in for it, false if the player is genuinely starting over.
+# Losing a hero you paid 10000 cores for should never be silent.
+signal save_recovered(recovered: bool)
+# Emitted when a write fails. Callers roll back on this; the UI can say so.
+signal save_failed
 
 const SAVE_PATH := "user://meta_progress.json"
+# Written first, then renamed over SAVE_PATH. FileAccess.WRITE truncates in
+# place, so a crash or a full disk part-way through store_string leaves a
+# half-written file -- which parses as garbage and, before this, was
+# indistinguishable from a fresh install.
+const SAVE_TMP_PATH := "user://meta_progress.json.tmp"
+# The last save known to have parsed. Restored when the live file is unreadable.
+const SAVE_BAK_PATH := "user://meta_progress.json.bak"
 
-# --- Prototype testing grant (remove before release) ---
-const PROTOTYPE_GRANT_ID := "proto_grant_v1"   # bump suffix to re-trigger
-const PROTOTYPE_MIN_CORES := 1000
+const SAVE_VERSION := 1
 
 # ---- Content definitions (kept in-script this pass; can externalize to JSON later) ----
 
@@ -162,6 +173,7 @@ const LEVEL_DEFS := [
 ]
 
 const DEFAULT_STATE := {
+	"version": SAVE_VERSION,
 	"cores": 0,
 	"lifetime_cores_earned": 0,
 	# Fresh saves start on the warlock. An existing save keeps whatever it
@@ -175,6 +187,10 @@ const DEFAULT_STATE := {
 const VICTORY_CORES_BONUS := 50
 
 var _state: Dictionary = {}
+# Set during load if the save was damaged. The autoload runs before any menu
+# exists, so the signal fires with nobody listening; the menu reads this on
+# creation instead.
+var _load_warning: String = ""
 
 # Transient selections chosen in the main menu (not persisted).
 var pending_hero: String = "warlock"
@@ -188,30 +204,13 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_state = _deep_copy(DEFAULT_STATE)
 	_load_from_disk()
-	_apply_prototype_grant()
 	meta_loaded.emit()
 
-func _apply_prototype_grant() -> void:
-	# One-time dev convenience: top cores up to a floor and unlock the space
-	# level so prototype features are testable. Guarded by a saved flag so it
-	# runs once and never re-grants (lets the user actually spend cores).
-	var grants: Dictionary = _state.get("_dev_grants", {})
-	if bool(grants.get(PROTOTYPE_GRANT_ID, false)):
-		return
-	var changed := false
-	if get_cores() < PROTOTYPE_MIN_CORES:
-		_state["cores"] = PROTOTYPE_MIN_CORES
-		changed = true
-	var levels: Dictionary = _state.get("unlocked_levels", {})
-	if not bool(levels.get("space", false)):
-		levels["space"] = true
-		_state["unlocked_levels"] = levels
-		changed = true
-	grants[PROTOTYPE_GRANT_ID] = true
-	_state["_dev_grants"] = grants
-	_save_to_disk()
-	if changed:
-		cores_changed.emit(get_cores())
+# The prototype grant that used to run here has been removed. It topped every
+# save up to 1000 cores and force-unlocked the space level -- and maxing the
+# entire permanent upgrade tree costs 947, so it handed a fresh install the
+# whole meta progression before the player had played a run. It was marked
+# "remove before release" and this is that.
 
 # ---- Persistence (mirrors settings_manager.gd) ----
 
@@ -239,43 +238,147 @@ func _merge_defaults(target: Dictionary, defaults: Dictionary) -> Dictionary:
 			merged[key] = src
 	return merged
 
-func _load_from_disk() -> void:
-	if not FileAccess.file_exists(SAVE_PATH):
-		return
-	var file = FileAccess.open(SAVE_PATH, FileAccess.READ)
+func _read_state(path: String) -> Dictionary:
+	"""Parse one save file. Returns an empty Dictionary for every failure --
+	missing, unopenable, empty, malformed, or the right JSON of the wrong shape
+	-- so the caller can tell "nothing here" from "something here"."""
+	if not FileAccess.file_exists(path):
+		return {}
+	var file = FileAccess.open(path, FileAccess.READ)
 	if file == null:
-		return
+		return {}
 	var text = file.get_as_text()
 	file.close()
-	if text == "":
-		return
+	if text.strip_edges() == "":
+		return {}
 	var json := JSON.new()
 	if json.parse(text) != OK:
-		return
-	if json.data is Dictionary:
-		_state = _merge_defaults(json.data, DEFAULT_STATE)
+		return {}
+	if not (json.data is Dictionary):
+		return {}
+	return json.data as Dictionary
 
-func _save_to_disk() -> void:
-	var file = FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	if file == null:
-		push_warning("MetaProgression: failed to open save file")
+func _load_from_disk() -> void:
+	"""Load the save, falling back to the backup, and say so either way.
+
+	The previous version returned silently on every failure path. A corrupt file
+	therefore looked exactly like a first launch: the player lost every core and
+	unlock with no message, and the next write stamped defaults over the corrupt
+	file, destroying the only copy that might have been recoverable."""
+	var had_file := FileAccess.file_exists(SAVE_PATH)
+	var data := _read_state(SAVE_PATH)
+	if not data.is_empty():
+		_state = _merge_defaults(data, DEFAULT_STATE)
+		_migrate_state()
 		return
-	file.store_string(JSON.stringify(_state, "\t"))
-	file.close()
+
+	var backup := _read_state(SAVE_BAK_PATH)
+	if not backup.is_empty():
+		_state = _merge_defaults(backup, DEFAULT_STATE)
+		_migrate_state()
+		push_warning("MetaProgression: save unreadable, restored from backup")
+		# Drop the corrupt file BEFORE re-saving. _save_to_disk rotates whatever
+		# is at SAVE_PATH into the backup slot, so leaving it there would
+		# overwrite the good backup we just recovered from with the garbage.
+		DirAccess.remove_absolute(SAVE_PATH)
+		# Put the recovered state back as the live save immediately, so a second
+		# failure does not fall through to defaults.
+		_save_to_disk()
+		_load_warning = "Save was damaged and restored from backup."
+		save_recovered.emit(true)
+		return
+
+	if had_file:
+		# There was a file and neither it nor the backup could be read. Keep the
+		# unreadable one on disk rather than overwriting it -- it is the player's
+		# only remaining artifact and support can look at it.
+		push_warning("MetaProgression: save unreadable and no usable backup")
+		_load_warning = "Save could not be read. Progress has been reset."
+		save_recovered.emit(false)
+
+func _migrate_state() -> void:
+	"""Move older saves onto newer defaults, same contract as
+	settings_manager._migrate_settings: only rewrite what the player never
+	deliberately set. Saves written before versioning existed have no version
+	key and read as 0."""
+	var version := int(_state.get("version", 0))
+	if version >= SAVE_VERSION:
+		return
+	# v0 -> v1 is the introduction of the version field itself. Pre-version saves
+	# are structurally identical, so there is nothing to rewrite; stamping the
+	# version is the whole migration.
+	_state["version"] = SAVE_VERSION
+	_save_to_disk()
+
+func _save_to_disk() -> bool:
+	"""Write atomically, keeping the last good file as a backup.
+
+	Returns false if the save did not reach disk. Callers must treat that as the
+	purchase not having happened -- the old code returned void and pushed a
+	warning, which is compiled out of release builds, so a player could spend
+	10000 cores, watch the hero unlock, and lose both on restart."""
+	var text := JSON.stringify(_state, "\t")
+	var tmp = FileAccess.open(SAVE_TMP_PATH, FileAccess.WRITE)
+	if tmp == null:
+		push_warning("MetaProgression: could not open temp save file")
+		save_failed.emit()
+		return false
+	tmp.store_string(text)
+	# Flush before the rename, or the rename can beat the bytes to disk.
+	tmp.flush()
+	tmp.close()
+
+	# Verify what actually landed before letting it replace the good copy.
+	if _read_state(SAVE_TMP_PATH).is_empty():
+		push_warning("MetaProgression: temp save did not read back, keeping previous save")
+		DirAccess.remove_absolute(SAVE_TMP_PATH)
+		save_failed.emit()
+		return false
+
+	var dir := DirAccess.open("user://")
+	if dir == null:
+		push_warning("MetaProgression: could not open user:// to commit save")
+		save_failed.emit()
+		return false
+	if dir.file_exists(SAVE_PATH.get_file()):
+		# Best-effort backup. A failure here is not fatal: the temp file is
+		# verified, so the commit below still leaves a good save.
+		dir.remove(SAVE_BAK_PATH.get_file())
+		dir.rename(SAVE_PATH.get_file(), SAVE_BAK_PATH.get_file())
+	if dir.rename(SAVE_TMP_PATH.get_file(), SAVE_PATH.get_file()) != OK:
+		push_warning("MetaProgression: could not commit save")
+		save_failed.emit()
+		return false
+	return true
 
 # ---- Currency ----
 
 func get_cores() -> int:
 	return int(_state.get("cores", 0))
 
-func add_cores(n: int) -> void:
+func _commit(snapshot: Dictionary) -> bool:
+	"""Persist the current state, or put it back the way it was.
+
+	Every mutation goes through here so that what the player sees on screen and
+	what is on disk cannot disagree. Showing someone a hero they did not keep is
+	worse than refusing the purchase."""
+	if _save_to_disk():
+		return true
+	_state = snapshot
+	return false
+
+func add_cores(n: int) -> bool:
 	if n == 0:
-		return
+		return true
+	var snapshot := _deep_copy(_state) as Dictionary
 	_state["cores"] = max(0, get_cores() + n)
 	if n > 0:
 		_state["lifetime_cores_earned"] = int(_state.get("lifetime_cores_earned", 0)) + n
-	_save_to_disk()
+	if not _commit(snapshot):
+		cores_changed.emit(get_cores())
+		return false
 	cores_changed.emit(get_cores())
+	return true
 
 func can_afford(n: int) -> bool:
 	return get_cores() >= n
@@ -285,8 +388,11 @@ func spend_cores(n: int) -> bool:
 		return true
 	if get_cores() < n:
 		return false
+	var snapshot := _deep_copy(_state) as Dictionary
 	_state["cores"] = get_cores() - n
-	_save_to_disk()
+	if not _commit(snapshot):
+		cores_changed.emit(get_cores())
+		return false
 	cores_changed.emit(get_cores())
 	return true
 
@@ -309,12 +415,18 @@ func unlock_hero(id: String) -> bool:
 	if is_hero_unlocked(id):
 		return true
 	var cost := int(def.get("core_cost", 0))
-	if not spend_cores(cost):
+	if get_cores() < cost:
 		return false
+	# Deduct and unlock as one write. Spending first and unlocking second meant a
+	# failure between the two took the cores and gave nothing back.
+	var snapshot := _deep_copy(_state) as Dictionary
+	_state["cores"] = get_cores() - cost
 	var heroes: Dictionary = _state.get("unlocked_heroes", {})
 	heroes[id] = true
 	_state["unlocked_heroes"] = heroes
-	_save_to_disk()
+	if not _commit(snapshot):
+		return false
+	cores_changed.emit(get_cores())
 	return true
 
 # ---- Levels ----
@@ -352,12 +464,17 @@ func buy_upgrade(id: String) -> bool:
 	var cost := get_upgrade_next_cost(id)
 	if cost < 0:
 		return false
-	if not spend_cores(cost):
+	if get_cores() < cost:
 		return false
+	# One write for the deduction and the level, same reason as unlock_hero.
+	var snapshot := _deep_copy(_state) as Dictionary
+	_state["cores"] = get_cores() - cost
 	var ups: Dictionary = _state.get("permanent_upgrades", {})
 	ups[id] = get_upgrade_level(id) + 1
 	_state["permanent_upgrades"] = ups
-	_save_to_disk()
+	if not _commit(snapshot):
+		return false
+	cores_changed.emit(get_cores())
 	return true
 
 # Aggregate permanent-upgrade effects into a flat dictionary for main.gd.
@@ -400,12 +517,20 @@ func get_modifier_cores_mult() -> float:
 
 # ---- Milestone unlocks ----
 
-func mark_victory_unlock() -> void:
+func mark_victory_unlock() -> bool:
 	var levels: Dictionary = _state.get("unlocked_levels", {})
+	if bool(levels.get("space", false)) and has_won():
+		return true
+	var snapshot := _deep_copy(_state) as Dictionary
 	levels["space"] = true
 	_state["unlocked_levels"] = levels
 	_state["first_victory"] = true
-	_save_to_disk()
+	return _commit(snapshot)
+
+func get_load_warning() -> String:
+	"""Non-empty if the last load hit a damaged save. Read by the main menu,
+	which is built after this autoload has already loaded and missed the signal."""
+	return _load_warning
 
 func has_won() -> bool:
 	return bool(_state.get("first_victory", false))
@@ -421,7 +546,10 @@ func award_run_cores(stats: Dictionary, won: bool = false) -> int:
 	if won:
 		earned += VICTORY_CORES_BONUS
 	earned = max(earned, 1)
-	add_cores(earned)
+	# A payout that did not reach disk is not a payout. Report 0 so the results
+	# screen does not congratulate the player on cores they will not have.
+	if not add_cores(earned):
+		return 0
 	return earned
 
 # FFA payout: a participation floor plus a score bonus, with a winner bonus on
@@ -437,5 +565,6 @@ func award_ffa_cores(placement: int, score: int, won: bool = false) -> int:
 		earned += 5
 	earned = int(round(float(earned) * get_modifier_cores_mult()))
 	earned = max(earned, 1)
-	add_cores(earned)
+	if not add_cores(earned):
+		return 0
 	return earned

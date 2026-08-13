@@ -36,6 +36,7 @@ const COLOR_GOOD := Color(0.55, 1.0, 0.55)
 
 var _font: FontFile = null
 var _cores_label: Label = null
+var _save_notice: Label = null
 var _content: VBoxContainer = null
 var _settings_menu: CanvasLayer = null
 var _selected_hero: String = "warlock"
@@ -277,6 +278,54 @@ func _build_header() -> void:
 	_cores_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	pill_row.add_child(_cores_label)
 	_refresh_cores()
+	_watch_save_health()
+
+func _watch_save_health() -> void:
+	"""Surface save trouble instead of letting it pass as a fresh start.
+
+	A corrupt save used to be indistinguishable from a first launch: cores and
+	unlocks simply vanished with no message. The player deserves to know which
+	of the two just happened."""
+	var meta := _meta()
+	if meta == null:
+		return
+	if meta.has_signal("save_recovered") and not meta.save_recovered.is_connected(_on_save_recovered):
+		meta.save_recovered.connect(_on_save_recovered)
+	if meta.has_signal("save_failed") and not meta.save_failed.is_connected(_on_save_failed):
+		meta.save_failed.connect(_on_save_failed)
+	# The autoload loads in _ready, before this menu exists, so a recovery that
+	# already happened has to be read rather than waited for.
+	if meta.has_method("get_load_warning"):
+		var warning := str(meta.get_load_warning())
+		if warning != "":
+			_show_save_notice(warning)
+
+func _on_save_recovered(recovered: bool) -> void:
+	if recovered:
+		_show_save_notice("Save was damaged and restored from backup.")
+	else:
+		_show_save_notice("Save could not be read. Progress has been reset.")
+
+func _on_save_failed() -> void:
+	_show_save_notice("Could not write save. Progress will not be kept.")
+
+func _show_save_notice(text: String) -> void:
+	if _save_notice != null and is_instance_valid(_save_notice):
+		_save_notice.text = text
+		_save_notice.visible = true
+		return
+	_save_notice = Label.new()
+	_save_notice.name = "SaveNotice"
+	_save_notice.text = text
+	_save_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_save_notice.autowrap_mode = TextServer.AUTOWRAP_WORD
+	_apply_font(_save_notice, 12, Color(1.0, 0.55, 0.35))
+	_save_notice.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_save_notice.offset_left = 24.0
+	_save_notice.offset_right = -24.0
+	_save_notice.offset_top = -34.0
+	_save_notice.offset_bottom = -10.0
+	add_child(_save_notice)
 
 func _make_pill_stylebox() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
