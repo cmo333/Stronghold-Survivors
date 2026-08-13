@@ -66,6 +66,42 @@ func _ready() -> void:
 	mat.shader = shader
 	_rect.material = mat
 	add_child(_rect)
+	apply_accessibility()
+
+# High contrast pushes past the restrained defaults in the shader above. The
+# grade is the only full-screen pass in the game, so it is the one place this
+# can be honoured without touching every sprite.
+const HIGH_CONTRAST_CONTRAST := 1.28
+const HIGH_CONTRAST_SATURATION := 1.30
+const BASE_CONTRAST := 1.06
+const BASE_SATURATION := 1.12
+
+func apply_accessibility() -> void:
+	"""Push the high-contrast setting into the grade shader.
+
+	It shipped as dead UI -- `is_high_contrast()` had zero call sites outside
+	the settings screen, so the player could tick it, press Apply, and watch
+	nothing happen.
+
+	Colourblind mode is deliberately NOT handled here. A daltonisation pass was
+	written and measured against red/green pairs the game actually uses (enemy
+	health, damage tints, rarity frames), and only deuteranopia improved:
+	protanopia came out 7-20% WORSE and tritanopia 15-36% worse, with the
+	tritanopia simulation leaving gamut entirely. Shipping a correction that
+	makes two of its three settings harder to read is worse than not shipping
+	one, so the dropdown is hidden until this is done against a validated
+	pipeline and checked on a real screen."""
+	if _rect == null or _rect.material == null:
+		return
+	var mat := _rect.material as ShaderMaterial
+	if mat == null:
+		return
+	var high_contrast := false
+	var settings := get_node_or_null("/root/SettingsManager")
+	if settings != null and settings.has_method("is_high_contrast"):
+		high_contrast = bool(settings.is_high_contrast())
+	mat.set_shader_parameter("contrast", HIGH_CONTRAST_CONTRAST if high_contrast else BASE_CONTRAST)
+	mat.set_shader_parameter("saturation", HIGH_CONTRAST_SATURATION if high_contrast else BASE_SATURATION)
 
 func set_enabled(on: bool) -> void:
 	if _rect != null:

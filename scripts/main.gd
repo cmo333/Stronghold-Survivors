@@ -2652,6 +2652,13 @@ func _on_settings_changed(category: String, key: String, value: Variant) -> void
 	if category == "graphics" and key == "render_fps_cap":
 		if ui != null and ui.has_method("show_announcement"):
 			ui.show_announcement("FPS CAP: %d" % int(value), Color(0.68, 0.95, 1.0), 18, 1.1)
+	# High contrast lands in the one full-screen grade pass, and has to take
+	# effect without a restart -- an accessibility option you cannot see the
+	# result of is one you cannot tune.
+	if category == "accessibility" and key == "high_contrast":
+		if _screen_grade != null and is_instance_valid(_screen_grade) \
+				and _screen_grade.has_method("apply_accessibility"):
+			_screen_grade.apply_accessibility()
 
 func _get_perf_quality_caps() -> Dictionary:
 	var quality = "high"

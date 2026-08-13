@@ -116,12 +116,7 @@ func _connect_signals() -> void:
 	)
 	
 	# Accessibility settings
-	colorblind_dropdown.item_selected.connect(func(i):
-		_on_colorblind_changed(i)
-	)
-	font_slider.value_changed.connect(func(v):
-		_on_font_size_changed(v)
-	)
+	_hide_unsupported_accessibility()
 	flash_slider.value_changed.connect(func(v):
 		_on_flash_reduction_changed(v)
 	)
@@ -229,14 +224,50 @@ func _on_screenshake_changed(value: float) -> void:
 	_pending_changes["gameplay:screenshake_intensity"] = value
 	screenshake_label.text = "%.1fx" % value
 
+# Kept, though nothing connects to it while the dropdown is hidden by
+# _hide_unsupported_accessibility. Re-enabling the feature is then a matter of
+# restoring the one connect() call, not rebuilding this.
 func _on_colorblind_changed(index: int) -> void:
 	var modes = ["none", "deuteranopia", "protanopia", "tritanopia"]
 	if index >= 0 and index < modes.size():
 		_pending_changes["accessibility:colorblind_mode"] = modes[index]
 
-func _on_font_size_changed(value: float) -> void:
-	_pending_changes["accessibility:font_size"] = int(value)
-	font_label.text = str(int(value))
+func _hide_unsupported_accessibility() -> void:
+	"""Take the two options that do nothing off the screen.
+
+	`font_size` and `colorblind_mode` both had zero call sites outside this
+	menu. The player set them, pressed Apply, and nothing changed. A control
+	that does nothing is worse than no control -- it costs the player the time
+	to find it and the belief that the game supports them.
+
+	Hidden rather than deleted, because both are worth having and the work is
+	known:
+
+	- **font_size**: every size in the UI is a bare integer passed to a
+	  per-script `_apply_font` helper (52 call sites), and the panels around
+	  them are fixed-size -- TechPanel is 480x320 with 420x74 cards. A Label
+	  does not clip to its rect, so scaling to the slider's 32px maximum runs
+	  text straight out of those panels. This needs a shared type scale and
+	  panels that grow, not a multiplier.
+	- **colorblind_mode**: a daltonisation pass was written and measured
+	  against the red/green pairs the game actually uses. Only deuteranopia
+	  improved (+13% to +60% separation); protanopia came out 7-20% worse and
+	  tritanopia 15-36% worse. It needs a validated pipeline and a real screen
+	  to check against, not a matrix copied out of a paper.
+
+	`high_contrast`, `reduced_motion` and `screen_flash_reduction` do work and
+	stay."""
+	# Addressed by group name rather than by walking up from the widget: the two
+	# sit at different depths (the dropdown's grandparent is the tab itself, the
+	# slider's is its own group), so a "hide the grandparent" rule would take the
+	# whole Accessibility tab with it.
+	var tab := get_node_or_null("Panel/TabContainer/Accessibility")
+	if tab == null:
+		return
+	for group_name in ["FontSize", "Colorblind"]:
+		var group := tab.get_node_or_null(group_name)
+		if group != null and group is CanvasItem:
+			(group as CanvasItem).visible = false
 
 func _on_flash_reduction_changed(value: float) -> void:
 	_pending_changes["accessibility:screen_flash_reduction"] = value
