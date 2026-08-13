@@ -2375,9 +2375,16 @@ func _dps_window_for(rate: float) -> float:
 	return clampf(DPS_SHOTS_PER_WINDOW / max(0.1, rate), DPS_WINDOW_MIN, DPS_WINDOW_MAX)
 
 # Advance the run clock by `seconds`; false if the clock stopped. No wait in
-# this harness may be able to hang a headless run with nothing printed, which
-# is why the stall is detected by frozen frames rather than a frame budget --
-# headless runs uncapped, so any frame budget would false-trigger.
+# this harness may be able to hang a headless run with nothing printed.
+#
+# The stall is detected by counting consecutive ZERO-delta frames rather than by
+# budgeting total frames, because zero delta is the actual failure (something
+# set Engine.time_scale to 0) and a frame budget only approximates it. An
+# earlier version of this comment justified the choice by claiming headless runs
+# uncapped -- it does not: _apply_runtime_frame_pacing sets Engine.max_fps
+# unconditionally, clamped to 30-240, headless included. The implementation was
+# right for the wrong reason; it is kept because it is exact and does not care
+# what the cap is.
 func _dps_wait(seconds: float) -> bool:
 	var t := 0.0
 	var frozen := 0
@@ -2420,8 +2427,8 @@ func _dps_measure(dummy_pos: Vector2, label: String, seconds: float, source) -> 
 	var stalled := false
 	# Guard against Engine.time_scale hitting 0, which would spin this loop
 	# forever with nothing printed. Counting frozen frames rather than total
-	# frames on purpose: headless runs uncapped, so an 8-second window can be
-	# thousands of frames and any frame budget would false-trigger.
+	# frames on purpose -- see _dps_wait for why a frame budget is the wrong
+	# instrument here.
 	var frozen := 0
 	while window < seconds:
 		await get_tree().process_frame
