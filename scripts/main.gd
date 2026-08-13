@@ -2180,6 +2180,11 @@ const DPS_DUMMY_HEALTH := 1.0e9
 const DPS_TOWER_OFFSET := Vector2(120.0, 0.0)
 const DPS_DUMMY_OFFSET := Vector2(120.0, -150.0)
 const DPS_TOWER_IDS := ["arrow_turret", "cannon_tower", "tesla_tower"]
+# The range probe. A tesla T1 reaches 187 raw, so x2 puts its effective reach at
+# 374 and a dummy at 280 sits in the gap where the multiplied range and the raw
+# member disagree -- the only place the bug is visible.
+const DPS_RANGE_PROBE_MULT := 2.0
+const DPS_RANGE_PROBE_DIST := 280.0
 
 func log_damage(amount: float) -> void:
 	_dps_damage_total += amount
@@ -2306,6 +2311,39 @@ func _run_dps_selftest() -> void:
 			probe.queue_free()
 			await get_tree().process_frame
 		keystone_damage_mult = saved_mult
+
+	# Same bug class as the damage multiplier, so it gets the same treatment:
+	# targeting honours get_tower_range_mult(), but several fire paths re-test
+	# distance against the raw `range` member instead. A tower then acquires a
+	# target, plays the windup, spends the cooldown, plays the sound -- and
+	# deals nothing. It is reachable in an ordinary run (the tower_range tech
+	# alone gives 1.25 per level), and the more range the player buys the more
+	# shots the tower wastes.
+	var saved_range: float = tower_range_mult
+	tower_range_mult = DPS_RANGE_PROBE_MULT
+	var tesla_def: Dictionary = StructureDB.get_def("tesla_tower")
+	if not tesla_def.is_empty():
+		var reach_tower = _dps_place_tower("tesla_tower", tesla_def, 0, tower_pos)
+		if reach_tower != null:
+			await get_tree().process_frame
+			# Beyond the tower's unmultiplied range, comfortably inside the
+			# multiplied one -- the window where the two disagree.
+			var far_pos: Vector2 = tower_pos + Vector2(0.0, -DPS_RANGE_PROBE_DIST)
+			var raw_reach: float = float(reach_tower.range)
+			var eff_reach: float = float(reach_tower.get_range())
+			var reach_rate: float = float(reach_tower.fire_rate) * get_tower_rate_mult()
+			var reach_row: Dictionary = await _dps_measure(far_pos, "tesla_tower T1 range=x2", _dps_window_for(reach_rate), reach_tower)
+			reach_row["rate"] = reach_rate
+			rows.append(reach_row)
+			print("[DPS-TEST] range probe: dummy at %.0fpx, raw range %.0f, effective %.0f, shots=%d hits=%d" % [
+				DPS_RANGE_PROBE_DIST, raw_reach, eff_reach,
+				int(reach_row.get("shots", 0)), int(reach_row.get("hits", 0))])
+			if int(reach_row.get("shots", 0)) > 0 and int(reach_row.get("hits", 0)) == 0:
+				print("[DPS-TEST] finding: the tower fires blanks past its unmultiplied range. It acquires the target and spends the shot, and the damage never lands.")
+			_dps_check_row(reach_row, failures)
+			reach_tower.queue_free()
+			await get_tree().process_frame
+	tower_range_mult = saved_range
 
 	_dps_print_table(rows)
 	for reason in failures:

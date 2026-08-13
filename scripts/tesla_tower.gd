@@ -51,7 +51,6 @@ var _current_dir_tier: int = 0
 var chain_count = 3
 var lightning_storm = false
 var stun_chance = 0.0
-var storm_radius = 120.0
 var _storm_timer = 0.0
 var _storm_interval = 0.5
 
@@ -492,7 +491,12 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	chain_count = int(tier_data.get("chain_count", chain_count))
 	lightning_storm = bool(tier_data.get("lightning_storm", false))
 	stun_chance = float(tier_data.get("stun_chance", 0.0))
-	storm_radius = range * 0.5  # Storm radius is half of tower range
+
+# Half the tower's CURRENT reach. Was assigned once in _apply_tier_stats from
+# the raw `range`, so a tower whose range the player later bought up kept a
+# storm sized for tier time.
+func get_storm_radius() -> float:
+	return get_range() * 0.5
 
 func _trigger_lightning_storm() -> void:
 	if _game == null:
@@ -505,7 +509,7 @@ func _trigger_lightning_storm() -> void:
 			continue
 		var enemy_pos = enemy.global_position
 		var dist = global_position.distance_to(enemy_pos)
-		if dist <= storm_radius:
+		if dist <= get_storm_radius():
 			# Random AOE lightning strike
 			var dmg_bonus = 0.0
 			if _game.has_method("get_tower_damage_bonus"):
@@ -572,6 +576,12 @@ func _fire_at(target: Node2D) -> void:
 	var last_pos = global_position
 	var line_points: PackedVector2Array = [Vector2.ZERO]  # Start at tower center
 	var hit_positions: Array[Vector2] = []
+	# get_range(), not the raw `range` member: targeting already honours
+	# get_tower_range_mult(), so gating the shot on the unmultiplied value made
+	# the tower acquire a target it then refused to damage -- windup, cooldown
+	# and sound spent on nothing. Measured before the fix at x2 range: 10 shots,
+	# 0 hits.
+	var reach: float = get_range()
 
 	for entry in enemy_entries:
 		var raw_enemy = entry.get("enemy", null)
@@ -581,7 +591,7 @@ func _fire_at(target: Node2D) -> void:
 		if enemy == null:
 			continue
 		var enemy_pos = enemy.global_position
-		if global_position.distance_squared_to(enemy_pos) > range * range:
+		if global_position.distance_squared_to(enemy_pos) > reach * reach:
 			continue
 
 		# Visual lightning arc to this enemy
@@ -619,9 +629,11 @@ func _fire_at(target: Node2D) -> void:
 
 func _fire_arc_conduit(target: Node2D) -> void:
 	var enemies = _get_enemies()
+	# Multiplied reach, for the same reason as the chain gate above.
+	var conduit_reach: float = get_range()
 	var in_range: Array = []
 	for e in enemies:
-		if e != null and is_instance_valid(e) and global_position.distance_squared_to(e.global_position) <= range * range:
+		if e != null and is_instance_valid(e) and global_position.distance_squared_to(e.global_position) <= conduit_reach * conduit_reach:
 			in_range.append(e)
 	if in_range.is_empty():
 		return
@@ -685,7 +697,7 @@ func _fire_arc_conduit(target: Node2D) -> void:
 				continue
 			var e_pos = e.global_position
 			var d = last_pos.distance_to(e_pos)
-			if d < best_dist and d < range * 0.7:
+			if d < best_dist and d < conduit_reach * 0.7:
 				best_dist = d
 				best = e
 		# If no other target, bounce back to any random one

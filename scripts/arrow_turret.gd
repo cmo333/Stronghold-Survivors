@@ -720,7 +720,10 @@ func _process(delta: float) -> void:
 	if is_evolved and evolution_id == "sniper" and _sniper_laser_line != null:
 		var enemies = _get_enemies()
 		var closest: Node2D = null
-		var closest_dist = range * range
+		# Multiplied reach: the laser sight has to agree with what the shot can
+		# actually hit, and _fire_sniper below has the same fix.
+		var sight_reach: float = get_range()
+		var closest_dist = sight_reach * sight_reach
 		for enemy in enemies:
 			if enemy == null or not is_instance_valid(enemy):
 				continue
@@ -730,7 +733,7 @@ func _process(delta: float) -> void:
 				closest = enemy
 		if closest != null:
 			var dir = (closest.global_position - global_position).normalized()
-			_sniper_laser_line.points = [Vector2.ZERO, dir * range]
+			_sniper_laser_line.points = [Vector2.ZERO, dir * sight_reach]
 			_sniper_laser_line.default_color.a = 0.2 + sin(Time.get_ticks_msec() * 0.005) * 0.1
 			_sniper_laser_line.visible = true
 		else:
@@ -827,6 +830,11 @@ func _fire_sniper(target: Node2D) -> void:
 	# Hitscan: damage ALL enemies in a line. This never goes near a projectile,
 	# so it needs the multiplier applied here the same as the arrow path above.
 	var total_dmg: float = (damage + dmg_bonus) * _tower_damage_mult()
+	# get_range(), not the raw `range` member. Targeting already honours
+	# get_tower_range_mult(), so cutting the hitscan line at the unmultiplied
+	# range meant the sniper locked on, fired, and passed straight through
+	# anything past its base reach.
+	var shot_reach: float = get_range()
 	var enemies = _get_enemies()
 	var hit_count = 0
 	for enemy in enemies:
@@ -835,7 +843,7 @@ func _fire_sniper(target: Node2D) -> void:
 		# Check if enemy is roughly on the line (within 20px perpendicular distance)
 		var to_enemy = enemy.global_position - global_position
 		var proj = to_enemy.dot(dir)
-		if proj < 0 or proj > range:
+		if proj < 0 or proj > shot_reach:
 			continue
 		var perp_dist = abs(to_enemy.cross(dir))
 		if perp_dist < 20.0:
@@ -847,7 +855,7 @@ func _fire_sniper(target: Node2D) -> void:
 	if _sniper_laser_line != null and is_inside_tree():
 		_sniper_laser_line.default_color = Color(1.0, 0.3, 0.2, 0.9)
 		_sniper_laser_line.width = 3.0
-		_sniper_laser_line.points = [Vector2.ZERO, dir * range]
+		_sniper_laser_line.points = [Vector2.ZERO, dir * shot_reach]
 		var tween = create_tween()
 		tween.tween_property(_sniper_laser_line, "default_color:a", 0.2, 0.15)
 		tween.parallel().tween_property(_sniper_laser_line, "width", 1.0, 0.15)
