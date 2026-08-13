@@ -35,6 +35,21 @@ var _projectile_tint_override: Color = Color.WHITE
 var _projectile_scale_override: float = 1.5
 var _projectile_static_frame_override: int = -1
 static var _sprite_frames_cache: Dictionary = {}
+
+# Bodies this shot has already damaged: instance ids for the damage guard, the
+# matching collider RIDs so the ray physically cannot re-acquire them.
+# _handle_hit used to only decrement remaining_pierce and clear _has_impacted,
+# keeping no record of what it had hit and leaving the projectile parked on the
+# collider surface, so the next frame's ray - cast from that same point into
+# that same body - landed again. Measured on one stationary enemy,
+# pierce_count = 1 dealt exactly 2 hits and pierce_count = 3 exactly 4: pierce
+# meant "hit the first enemy pierce_count + 1 times", not "pass through".
+var _hit_ids: Dictionary = {}
+var _excluded_rids: Array[RID] = []
+# A frame's step is ~12 px at arrow-turret speeds against a 9 px enemy radius,
+# so a handful of bodies per segment is already generous. The cap only exists
+# so a degenerate ray can never spin inside one physics frame.
+const MAX_HITS_PER_FRAME = 8
 @onready var sprite: AnimatedSprite2D = $Body
 
 func setup(game_ref: Node, dir: Vector2, proj_speed: float, dmg: float, range: float, explode_radius: float, pierce_count: int = 0, slow_factor_in: float = 1.0, slow_duration_in: float = 0.0, damage_type_in: String = "normal", visual_profile: Dictionary = {}) -> void:
@@ -157,16 +172,25 @@ func _physics_process(delta: float) -> void:
 		_spawn_trail()
 		_trail_timer = FeedbackConfig.PROJECTILE_TRAIL_INTERVAL * _trail_interval_scale
 	
-	var hit = _raycast_hit(from, to)
-	if hit:
-		var hit_pos = hit.position
-		_travelled += from.distance_to(hit_pos)
+	# Resolve every body standing on this frame's segment inside this frame.
+	# Stopping at the first collider and picking up next frame from its surface
+	# is what let a pierced enemy be hit over and over; each body the ray finds
+	# is excluded from the following cast, so the scan walks on to whatever is
+	# behind it and the projectile always finishes the step it started.
+	var scans = 0
+	while scans < MAX_HITS_PER_FRAME:
+		scans += 1
+		var hit = _raycast_hit(global_position, to)
+		if hit.is_empty():
+			break
+		var hit_pos: Vector2 = hit.position
+		_travelled += global_position.distance_to(hit_pos)
 		global_position = hit_pos
+		_exclude_hit(hit)
 		if not _handle_hit(hit.collider):
 			return
-	else:
-		global_position = to
-		_travelled += step
+	_travelled += global_position.distance_to(to)
+	global_position = to
 	if _travelled >= max_range:
 		_explode_if_needed()
 		queue_free()
@@ -223,10 +247,27 @@ func _update_trail_interval_scale() -> void:
 	if settings_manager != null and settings_manager.has_method("get_trail_interval_scale"):
 		_trail_interval_scale = clampf(float(settings_manager.get_trail_interval_scale()), 0.7, 3.0)
 
+# Drop a body out of this projectile's raycasts for good. Called for every
+# collider the ray reports, enemy or not, so the scan in _physics_process can
+# never re-report the same collider and stall on it.
+func _exclude_hit(hit: Dictionary) -> void:
+	var rid = hit.get("rid", null)
+	if rid is RID and (rid as RID).is_valid():
+		_excluded_rids.append(rid)
+
 func _handle_hit(body: Node) -> bool:
 	if body == null or not body.is_in_group("enemies"):
 		return true
-	
+
+	# One landing per body, forever. The RID exclusion above already keeps the
+	# ray off a pierced enemy; this is the backstop for any other route back
+	# into the same body (a second collider shape on it, a re-entrant overlap)
+	# so a single shot can never double-dip on one enemy again.
+	var body_id = body.get_instance_id()
+	if _hit_ids.has(body_id):
+		return true
+	_hit_ids[body_id] = true
+
 	_has_impacted = true
 	
 	# Impact flash
@@ -369,4 +410,9 @@ func _raycast_hit(from: Vector2, to: Vector2) -> Dictionary:
 	var params = PhysicsRayQueryParameters2D.create(from, to, collision_mask)
 	params.collide_with_areas = true
 	params.collide_with_bodies = true
+	# Already-pierced bodies are invisible to the ray. Without this the cast,
+	# which starts on the surface point where the last hit landed, re-acquires
+	# that same collider at distance zero and the shot never gets past it.
+	if not _excluded_rids.is_empty():
+		params.exclude = _excluded_rids
 	return space.intersect_ray(params)
