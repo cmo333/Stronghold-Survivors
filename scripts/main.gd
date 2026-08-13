@@ -2289,7 +2289,7 @@ func _run_dps_selftest() -> void:
 	# code says those upgrades are inert -- this measures it, because a code
 	# reading is what produced the last balance pass that had to be reverted.
 	if arrow_t1_per_shot > 0.0:
-		var saved_mult := keystone_damage_mult
+		var saved_mult: float = keystone_damage_mult
 		keystone_damage_mult = 2.0
 		var probe = _dps_place_tower("arrow_turret", StructureDB.get_def("arrow_turret"), 0, tower_pos)
 		if probe != null:
