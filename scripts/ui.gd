@@ -28,6 +28,10 @@ const TECH_CARD_POSITIONS = [
 ]
 const TECH_ICON_SIZE = Vector2(42, 42)
 const TECH_ICON_FRAME_SIZE = Vector2(32, 32)
+# Hover wash over a draft card. Kept low: it sits on top of the rarity art, which
+# is the thing carrying "this one is an epic".
+const TECH_ROW_HOVER_ON = Color(1.0, 1.0, 1.0, 0.12)
+const TECH_ROW_HOVER_OFF = Color(1.0, 1.0, 1.0, 0.0)
 
 @onready var resources_label: Label = $HUD/Resources
 @onready var time_label: Label = $HUD/Time
@@ -84,6 +88,10 @@ var palette_active_id: String = ""
 # Tech rarity frames (ColorRects behind each option icon)
 var tech_frames: Array = []
 var tech_icon_frames: Array = []
+var tech_hit_rows: Array = []
+# How many of the three rows this draft actually filled. Rows past it stay inert
+# rather than emitting a pick for a card that is not on screen.
+var _tech_option_count: int = 0
 var _ui_font: Font = null
 var _last_level: int = -1
 var _xp_tween: Tween = null
@@ -130,6 +138,9 @@ var _objective_bar: ProgressBar = null
 var _streak_fade_tween: Tween = null
 var _last_streak_shown: int = 0
 
+# Boss health bar + off-screen direction marker.
+var _boss_tracker: Control = null
+
 func _ready() -> void:
 	_ui_font = _build_bitmap_font(UI_FONT_PATH) if USE_CUSTOM_FONT else null
 	_apply_ui_fonts()
@@ -147,6 +158,19 @@ func _ready() -> void:
 	_build_build_focus_ui()
 	_build_streak_label()
 	_build_objective_ui()
+	_build_boss_tracker()
+
+func _build_boss_tracker() -> void:
+	if _boss_tracker != null and is_instance_valid(_boss_tracker):
+		return
+	var tracker_script := load("res://scripts/boss_tracker.gd")
+	if tracker_script == null:
+		return
+	_boss_tracker = Control.new()
+	_boss_tracker.set_script(tracker_script)
+	$HUD.add_child(_boss_tracker)
+	if _boss_tracker.has_method("setup"):
+		_boss_tracker.setup(_ui_font)
 
 # =========================================================
 # UPGRADE PANEL
@@ -548,6 +572,10 @@ func _get_next_tier_data(def: Dictionary, next_tier: int) -> Dictionary:
 # Emitted when a player clicks an evolution card. build_manager connects to this
 # so the choice is selectable by mouse/touch in addition to keyboard/controller.
 signal evolution_card_clicked(index: int)
+
+# Same idea for the level-up draft: main.gd connects this to _choose_tech, so a
+# click lands on exactly the path 1/2/3 and the gamepad already take.
+signal tech_option_clicked(index: int)
 
 var evolution_panel: PanelContainer = null
 var _evo_cards: Array[PanelContainer] = []
@@ -1282,7 +1310,70 @@ func _add_tech_rarity_frames() -> void:
 		tech_panel.add_child(frame)
 		tech_panel.move_child(frame, 0)
 		tech_frames.append(frame)
+	_add_tech_hit_rows()
 	_add_tech_icon_frames()
+
+func _add_tech_hit_rows() -> void:
+	"""Clickable hit areas over the three draft cards.
+
+	The draft used to be keyboard/gamepad only: its options are `Label`s, which
+	default to MOUSE_FILTER_IGNORE, and they were laid out with zero-size rects
+	anyway. Meanwhile the draft holds the game at `Engine.time_scale` 0, so a
+	player who reaches for the mouse - the first instinct, and the one the evolve
+	chooser already rewards - finds nothing to click and a game that has stopped.
+
+	Each row is a child of its card so it draws over the card art and under the
+	label and icon, which keeps the hover wash off the text."""
+	tech_hit_rows.clear()
+	for idx in range(tech_frames.size()):
+		var card = tech_frames[idx]
+		if card == null or not is_instance_valid(card):
+			continue
+		var row := ColorRect.new()
+		row.name = "TechRowHit_%d" % idx
+		row.color = TECH_ROW_HOVER_OFF
+		row.size = TECH_CARD_SIZE
+		row.position = Vector2.ZERO
+		row.mouse_filter = Control.MOUSE_FILTER_STOP
+		row.gui_input.connect(_on_tech_row_gui_input.bind(idx))
+		row.mouse_entered.connect(_on_tech_row_hover.bind(idx, true))
+		row.mouse_exited.connect(_on_tech_row_hover.bind(idx, false))
+		card.add_child(row)
+		tech_hit_rows.append(row)
+
+func _on_tech_row_gui_input(event: InputEvent, index: int) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if tech_panel == null or not tech_panel.visible:
+		return
+	if index >= _tech_option_count:
+		return
+	# Consume it, or the same click also reaches the world underneath and places
+	# or selects a building the moment the draft closes.
+	get_viewport().set_input_as_handled()
+	_play_ui_sound("click")
+	tech_option_clicked.emit(index)
+
+func _on_tech_row_hover(index: int, entered: bool) -> void:
+	if index < 0 or index >= tech_hit_rows.size():
+		return
+	var row = tech_hit_rows[index]
+	if row == null or not is_instance_valid(row):
+		return
+	if index >= _tech_option_count:
+		row.color = TECH_ROW_HOVER_OFF
+		return
+	row.color = TECH_ROW_HOVER_ON if entered else TECH_ROW_HOVER_OFF
+	if entered:
+		_play_ui_sound("hover")
+
+func _play_ui_sound(sound_name: String) -> void:
+	var am := get_node_or_null("/root/AudioManager")
+	if am != null and am.has_method("play_ui_sound"):
+		am.play_ui_sound(sound_name)
 
 func _add_tech_icon_frames() -> void:
 	for raw_frame in tech_icon_frames:
@@ -1707,6 +1798,8 @@ func _make_chest_card(item: Dictionary) -> Control:
 func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, meta: Dictionary = {}) -> void:
 	_modal_backdrop_for_tech = true
 	_refresh_modal_backdrop()
+	_tech_option_count = options.size()
+	_reset_tech_hit_rows()
 	tech_panel.visible = true
 	tech_panel.modulate = Color(1.0, 1.0, 1.0, 1.0)
 	tech_panel.scale = Vector2.ONE
@@ -1730,7 +1823,7 @@ func show_tech(options: Array, essence_amount: int = 0, reroll_cost: int = 0, me
 				reroll_hint = "R  Reroll (%d essence)" % reroll_cost
 			else:
 				reroll_hint = "R  Reroll (need %d essence)" % reroll_cost
-		tech_hint_label.text = "1 / 2 / 3 (or stick + A)  Pick        %s" % reroll_hint
+		tech_hint_label.text = "Click a card, 1 / 2 / 3, or stick + A        %s" % reroll_hint
 	# Start with no gamepad highlight; main.gd sets it when a controller is active.
 	set_tech_highlight(-1)
 
@@ -1763,9 +1856,20 @@ func set_tech_highlight(idx: int) -> void:
 			else:
 				ic.modulate = Color(0.75, 0.75, 0.8, 1.0)
 
+func _reset_tech_hit_rows() -> void:
+	for i in range(tech_hit_rows.size()):
+		var row = tech_hit_rows[i]
+		if row == null or not is_instance_valid(row):
+			continue
+		row.color = TECH_ROW_HOVER_OFF
+		# A row with no card behind it must not swallow clicks either.
+		row.mouse_filter = Control.MOUSE_FILTER_STOP if i < _tech_option_count else Control.MOUSE_FILTER_IGNORE
+
 func hide_tech() -> void:
 	tech_panel.visible = false
 	_modal_backdrop_for_tech = false
+	_tech_option_count = 0
+	_reset_tech_hit_rows()
 	set_tech_highlight(-1)
 	for frame in tech_icon_frames:
 		if frame != null and is_instance_valid(frame):
@@ -1774,7 +1878,7 @@ func hide_tech() -> void:
 	if tech_title_label != null:
 		tech_title_label.text = "Choose an Upgrade"
 	if tech_hint_label != null:
-		tech_hint_label.text = "1 / 2 / 3  Pick"
+		tech_hint_label.text = "Click a card, or 1 / 2 / 3"
 
 func _build_tech_ledger() -> void:
 	if _tech_ledger_panel != null and is_instance_valid(_tech_ledger_panel):

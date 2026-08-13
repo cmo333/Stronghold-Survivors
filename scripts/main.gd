@@ -1831,6 +1831,10 @@ func _ready() -> void:
 	_apply_base_time_scale()
 	if build_manager.has_method("setup"):
 		build_manager.setup(self, buildings_root, ui)
+	# Clicking a draft card runs the same pick as 1/2/3 and the gamepad.
+	if ui != null and ui.has_signal("tech_option_clicked"):
+		if not ui.tech_option_clicked.is_connected(_on_tech_option_clicked):
+			ui.tech_option_clicked.connect(_on_tech_option_clicked)
 	wave_manager = WaveManager.new()
 	add_child(wave_manager)
 	if wave_manager.has_method("setup"):
@@ -5095,6 +5099,13 @@ func _open_tech_menu(is_reroll: bool = false) -> void:
 	if ui.has_method("show_tech"):
 		ui.show_tech(tech_choices, essence, _get_tech_reroll_cost(), _build_tech_ui_meta(forced_category_for_roll))
 	_apply_base_time_scale()
+
+func _on_tech_option_clicked(index: int) -> void:
+	"""A draft card was clicked. Gated on the draft actually being up so a stray
+	click cannot spend a pick that is not being offered."""
+	if not tech_open:
+		return
+	_choose_tech(index)
 
 func _choose_tech(index: int, infused: bool = false) -> void:
 	if index < 0 or index >= tech_choices.size():
