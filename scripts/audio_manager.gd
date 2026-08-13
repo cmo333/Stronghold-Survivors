@@ -183,10 +183,11 @@ func _cache_sounds() -> void:
 	_cache_sound("wave_start", "res://assets/audio/ui/wave_start.wav", "ui")
 	_cache_sound("level_up", "res://assets/audio/ui/level_up.wav", "ui")
 	
-	# Ambient sounds
-	_cache_sound("generator_hum", "res://assets/audio/ambient/generator_hum.wav", "ambient")
-	_cache_sound("wind", "res://assets/audio/ambient/wind.wav", "ambient")
-	_cache_sound("distant_battle", "res://assets/audio/ambient/distant_battle.wav", "ambient")
+	# No ambient sounds. The three declared here pointed at
+	# res://assets/audio/ambient/, a directory that does not exist, so they
+	# were dropped by the exists() guard in _cache_sound and the "ambient"
+	# category was always empty. Declaring assets that are not there hides
+	# the gap instead of filling it.
 	
 	# Special sounds
 	_cache_sound("chest_open", "res://assets/audio/special/chest_open.wav", "special")
@@ -206,6 +207,44 @@ func _cache_sounds() -> void:
 	_cache_sound("reveal_diamond", "res://assets/audio/special/reveal_diamond.wav", "special")
 	_cache_sound("jackpot_fanfare", "res://assets/audio/special/jackpot_fanfare.wav", "special")
 	_cache_sound("coin_cascade", "res://assets/audio/special/coin_cascade.wav", "special")
+
+	_cache_stand_ins()
+
+# Sounds the game asks for that have no file of their own yet. Every one of
+# these was being played by gameplay code and silently dropped: play_one_shot
+# warns and returns when a name is not cached, so *every boss mechanic in the
+# game was mute* -- warnings, phase changes, mortar fire, the lich's teleports
+# and nova, the siegebreaker's shield, all explosions.
+#
+# Pointing them at the nearest sound that does exist is not sound design, it is
+# audibility. When real audio arrives this table is the one place to change: give
+# the name its own file and delete the row.
+const SOUND_STAND_INS := {
+	# name: [path of the stand-in, category]
+	"boss_warning": ["res://assets/audio/ui/wave_start.wav", "special"],
+	"boss_phase": ["res://assets/audio/special/berserk_activate.wav", "special"],
+	"explosion": ["res://assets/audio/sfx/cannon_boom.wav", "impact"],
+	"explosion_large": ["res://assets/audio/special/generator_destroyed.wav", "impact"],
+	"heavy_hit": ["res://assets/audio/sfx/crit_hit.wav", "impact"],
+	"mortar_fire": ["res://assets/audio/sfx/cannon_boom.wav", "weapon"],
+	"nova_charge": ["res://assets/audio/special/chest_charge.wav", "special"],
+	"nova_explosion": ["res://assets/audio/special/generator_destroyed.wav", "impact"],
+	"poison_hit": ["res://assets/audio/sfx/enemy_hit_02.wav", "impact"],
+	"shield_break": ["res://assets/audio/sfx/shield_hit.wav", "impact"],
+	"shield_restore": ["res://assets/audio/ui/upgrade.wav", "special"],
+	"summon": ["res://assets/audio/special/powerup_spawn.wav", "special"],
+	"summon_army": ["res://assets/audio/special/berserk_activate.wav", "special"],
+	"teleport": ["res://assets/audio/special/powerup_pickup.wav", "special"],
+	"teleport_arrive": ["res://assets/audio/special/powerup_spawn.wav", "special"],
+	"button_click": ["res://assets/audio/ui/click.wav", "ui"]
+}
+
+func _cache_stand_ins() -> void:
+	for sound_name in SOUND_STAND_INS.keys():
+		if _sound_cache.has(sound_name):
+			continue  # a real file was registered above; leave it alone
+		var entry: Array = SOUND_STAND_INS[sound_name]
+		_cache_sound(sound_name, str(entry[0]), str(entry[1]))
 
 func _cache_sound(sound_name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
