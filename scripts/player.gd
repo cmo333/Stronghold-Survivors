@@ -246,6 +246,10 @@ func _physics_process(delta: float) -> void:
 			else:
 				dir = _vector_from_dir(_facing_dir)
 			_shot_counter += 1
+			# Shot tap for the DPS harness (see main.gd:_run_dps_selftest). One
+			# fire event, however many projectiles a burst puts into the air.
+			if _game.dps_logging:
+				_game.log_shot()
 			# Body fire kick (juice): brief punch along shot direction.
 			if _juice_scale > 0.0:
 				_body_fire_impulse = max(_body_fire_impulse, 0.5)

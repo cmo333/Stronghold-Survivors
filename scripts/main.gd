@@ -1781,6 +1781,19 @@ func _ready() -> void:
 	_setup_players()
 	if is_ffa() and is_host() and OS.get_cmdline_user_args().has("--ffa-econ-test"):
 		call_deferred("_run_econ_selftest")
+	if OS.get_cmdline_user_args().has("--dps-test"):
+		_dps_test_active = true
+		# The horde must not exist: a tower shoots whatever is closest, so a real
+		# spawn stream makes the dummy unmeasurable. This is what all four
+		# previous attempts at this measurement got wrong. The _base is the one
+		# that matters -- _update_dynamic_caps recomputes max_enemies_cap from it
+		# every frame, so writing the derived value would last exactly one frame.
+		max_enemies_cap_base = 0
+		# And the run must be past its spawn delay before the first frame, or
+		# _process returns before it reaches _refresh_cached_enemies and no tower
+		# can see a target at all. See the note on _run_dps_selftest.
+		spawn_delay = 0.0
+		call_deferred("_run_dps_selftest")
 
 	# Initialize audio system
 	if camera != null:
@@ -2117,6 +2130,428 @@ func _run_econ_selftest() -> void:
 		" treasure_isolation=", ok4)
 	print("[ECON-TEST] ", "PASS" if pass_ok else "FAIL")
 
+# --- Live-DPS harness (cmdline: --dps-test) -----------------------------------
+#
+# Answers one question the design docs cannot: how much damage does each source
+# in this game actually deal, measured on an enemy that was really hit.
+# `structures.json` is not that answer -- tower.gd multiplies the sheet damage by
+# a per-tier essence-infusion factor the table knows nothing about, and the last
+# balance pass had to be reverted in full because it was tuned off the table.
+#
+# Four earlier attempts all printed 0.0 and none could say which precondition
+# had broken. Both causes are handled here and asserted rather than assumed:
+#
+#   1. The real horde was left on the field. A tower fires at whatever is
+#      closest, so the pinned dummy was never the target. Everything that can
+#      put a body on the field is gated on _dps_test_active (see _process).
+#   2. The clock read `elapsed`, which does not advance until `spawn_delay`
+#      (10s) has passed -- and worse, the same early return sits above
+#      _refresh_cached_enemies, so for those 10 seconds no tower can see any
+#      target at all. spawn_delay is zeroed at boot and the window here
+#      accumulates get_process_delta_time().
+#
+# A run that prints zero for anything is a broken harness, not a measured zero,
+# so every pass carries its own assertions and the failures print by name.
+var _dps_test_active: bool = false
+# Gate for the damage tap in enemy.gd:take_damage -- the single point every
+# damage source in the game funnels through. False in normal play; the bool test
+# is the entire cost of the instrumentation.
+var dps_logging: bool = false
+var _dps_damage_total: float = 0.0
+var _dps_hits: int = 0
+var _dps_shots: int = 0
+
+# Enough shots per window that quantisation stays small, bounded so a slow
+# cannon does not stretch the run to nothing.
+const DPS_SHOTS_PER_WINDOW := 10.0
+const DPS_WINDOW_MIN := 6.0
+const DPS_WINDOW_MAX := 18.0
+# A source starts its window with a zero cooldown, so an unwarmed window always
+# catches one extra shot. A second of throwaway firing randomises the phase.
+const DPS_WARMUP := 1.0
+# Long enough for the slowest projectile in the game to cross the gap below.
+const DPS_DRAIN := 0.8
+const DPS_DUMMY_HEALTH := 1.0e9
+# Relative to the player. 150px apart: inside every tier-1 tower's range (the
+# tightest is the tesla at 187) and inside every projectile_range (the shortest
+# is the cannon at 320). The dummy is also 192px from the player, well inside
+# the player's 520 attack_range, and the tower is offset from the player so its
+# collider never shoves the body it is meant to ignore.
+const DPS_TOWER_OFFSET := Vector2(120.0, 0.0)
+const DPS_DUMMY_OFFSET := Vector2(120.0, -150.0)
+const DPS_TOWER_IDS := ["arrow_turret", "cannon_tower", "tesla_tower"]
+
+func log_damage(amount: float) -> void:
+	_dps_damage_total += amount
+	_dps_hits += 1
+
+func log_shot() -> void:
+	_dps_shots += 1
+
+func _run_dps_selftest() -> void:
+	for _i in range(3):
+		await get_tree().process_frame
+	if player == null or not is_instance_valid(player):
+		_dps_bail("no player in the scene")
+		return
+	if enemies_root == null or buildings_root == null:
+		_dps_bail("missing World/Enemies or World/Buildings")
+		return
+	if not game_started:
+		_dps_bail("run never started (game_started=false)")
+		return
+
+	var origin: Vector2 = player.global_position
+	var tower_pos: Vector2 = origin + DPS_TOWER_OFFSET
+	var dummy_pos: Vector2 = origin + DPS_DUMMY_OFFSET
+	# Anything already on the field would be attributed to whichever source is
+	# being measured. That is precisely the class of silent error this exists to
+	# rule out, so clear it and say how much was cleared.
+	var cleared_enemies := _dps_clear_enemies()
+	var cleared_towers := _dps_clear_towers()
+	print("[DPS-TEST] character=", _dps_character_id(),
+		" origin=", origin,
+		" cleared_enemies=", cleared_enemies,
+		" cleared_towers=", cleared_towers)
+	print("[DPS-TEST] multipliers tower_damage=", get_tower_damage_mult(),
+		" tower_damage_bonus=", get_tower_damage_bonus(),
+		" tower_rate=", get_tower_rate_mult(),
+		" tower_range=", get_tower_range_mult(),
+		" player_damage_bonus=", player_damage_bonus)
+
+	var rows: Array = []
+	var failures: Array = []
+
+	# Control pass. Nothing is firing, so this must be exactly zero -- if it is
+	# not, something else on the field is hitting the dummy and every number
+	# below it is contaminated. This is the check the earlier attempts lacked.
+	_dps_set_inert(player, true)
+	var silence: Dictionary = await _dps_measure(dummy_pos, "silence (control)", 3.0, null)
+	rows.append(silence)
+	if float(silence["damage"]) > 0.0:
+		failures.append("control pass took %.1f damage from an unidentified source" % float(silence["damage"]))
+	if int(silence.get("enemies", -1)) != 1:
+		failures.append("control pass: %d enemies on the field, expected exactly 1" % int(silence.get("enemies", -1)))
+
+	# The player, alone, with nothing built.
+	_dps_set_inert(player, false)
+	var player_rate := 1.0
+	if "attack_rate" in player:
+		player_rate = float(player.attack_rate)
+	var player_row: Dictionary = await _dps_measure(dummy_pos, "player " + _dps_character_id(), _dps_window_for(player_rate), player)
+	player_row["rate"] = player_rate
+	rows.append(player_row)
+	# The reaper is the one character that never pulls a trigger -- it raises
+	# allies, and their damage arrives through the same tap with no shot behind
+	# it. Asserting "it never fired" would be true and useless.
+	_dps_check_row(player_row, failures, _dps_character_id() != "reaper")
+
+	# One tower at a time, player silenced. Only one source is ever live, so the
+	# total damage in the window IS that source's DPS -- no per-source
+	# attribution parameter has to be threaded through every call site.
+	_dps_set_inert(player, true)
+	var arrow_t1_per_shot := -1.0
+	for tower_id in DPS_TOWER_IDS:
+		var def: Dictionary = StructureDB.get_def(tower_id)
+		if def.is_empty():
+			failures.append("%s is missing from structures.json" % tower_id)
+			continue
+		var tier_list: Array = def.get("tiers", [])
+		for tier in range(tier_list.size()):
+			var tower = _dps_place_tower(tower_id, def, tier, tower_pos)
+			if tower == null:
+				failures.append("%s T%d could not be instantiated" % [tower_id, tier + 1])
+				continue
+			await get_tree().process_frame
+			var label := "%s T%d" % [tower_id, tier + 1]
+			var gap: float = tower.global_position.distance_to(dummy_pos)
+			var reach: float = float(tower.get_range())
+			var rate: float = float(tower.fire_rate) * get_tower_rate_mult()
+			var row: Dictionary = await _dps_measure(dummy_pos, label, _dps_window_for(rate), tower)
+			row["rate"] = rate
+			var sheet: Dictionary = StructureDB.get_tier(def, tier)
+			row["sheet_damage"] = float(sheet.get("damage", 0.0))
+			row["sheet_rate"] = float(sheet.get("fire_rate", 0.0))
+			row["code_damage"] = float(tower.damage)
+			rows.append(row)
+			if gap > reach:
+				failures.append("%s: dummy is %.0fpx away, tower reaches %.0fpx" % [label, gap, reach])
+			_dps_check_row(row, failures)
+			if tower_id == "arrow_turret" and tier == 0:
+				arrow_t1_per_shot = float(row["per_shot"])
+			tower.queue_free()
+			await get_tree().process_frame
+			await get_tree().process_frame
+
+	# Both the meta "tower damage" upgrade and the keystone multiplier arrive
+	# through get_tower_damage_mult(), which is read in exactly one place:
+	# tower.gd's base _fire_at. All three towers override _fire_at. Reading the
+	# code says those upgrades are inert -- this measures it, because a code
+	# reading is what produced the last balance pass that had to be reverted.
+	if arrow_t1_per_shot > 0.0:
+		var saved_mult := keystone_damage_mult
+		keystone_damage_mult = 2.0
+		var probe = _dps_place_tower("arrow_turret", StructureDB.get_def("arrow_turret"), 0, tower_pos)
+		if probe != null:
+			await get_tree().process_frame
+			var probe_rate: float = float(probe.fire_rate) * get_tower_rate_mult()
+			var probe_row: Dictionary = await _dps_measure(dummy_pos, "arrow_turret T1 mult=x2", _dps_window_for(probe_rate), probe)
+			probe_row["rate"] = probe_rate
+			rows.append(probe_row)
+			_dps_check_row(probe_row, failures)
+			var ratio := float(probe_row["per_shot"]) / arrow_t1_per_shot
+			print("[DPS-TEST] finding: doubling get_tower_damage_mult() moved per-shot damage by %.2fx (2.00x if it is wired up)" % ratio)
+			if ratio < 1.9:
+				print("[DPS-TEST] finding: the tower-damage multiplier never reaches a tower -- meta 'tower damage' and the keystone are paid for and do nothing. Only tower.gd's base _fire_at reads it, and arrow/cannon/tesla all override _fire_at.")
+			probe.queue_free()
+			await get_tree().process_frame
+		keystone_damage_mult = saved_mult
+
+	_dps_print_table(rows)
+	for reason in failures:
+		print("[DPS-TEST] failed_check: ", reason)
+	print("[DPS-TEST] ", "PASS" if failures.is_empty() else "FAIL")
+	get_tree().quit(0 if failures.is_empty() else 1)
+
+# The preconditions a measurement is only meaningful under. Checked per row, so
+# a failure names the source it happened on instead of leaving a bare zero in
+# the table for someone to guess at.
+func _dps_check_row(row: Dictionary, failures: Array, expect_shots: bool = true) -> void:
+	var label := str(row.get("label", "?"))
+	if bool(row.get("stalled", false)):
+		failures.append("%s: the window never filled -- the run clock stopped (Engine.time_scale 0, i.e. a modal opened mid-measurement)" % label)
+	if not bool(row.get("dummy_ok", false)):
+		failures.append("%s: no dummy on the field" % label)
+	if int(row.get("enemies", -1)) != 1:
+		failures.append("%s: %d enemies alive during the window, expected exactly 1" % [label, int(row.get("enemies", -1))])
+	if not bool(row.get("alive", false)):
+		failures.append("%s: the dummy died mid-window -- measured against a corpse" % label)
+	if expect_shots and int(row.get("shots", 0)) <= 0:
+		failures.append("%s: the source never fired (configured? in range? off cooldown?)" % label)
+	if int(row.get("hits", 0)) <= 0:
+		failures.append("%s: it fired but nothing landed" % label)
+	if float(row.get("damage", 0.0)) <= 0.0:
+		failures.append("%s: total damage was zero" % label)
+
+func _dps_window_for(rate: float) -> float:
+	return clampf(DPS_SHOTS_PER_WINDOW / max(0.1, rate), DPS_WINDOW_MIN, DPS_WINDOW_MAX)
+
+# Advance the run clock by `seconds`; false if the clock stopped. No wait in
+# this harness may be able to hang a headless run with nothing printed, which
+# is why the stall is detected by frozen frames rather than a frame budget --
+# headless runs uncapped, so any frame budget would false-trigger.
+func _dps_wait(seconds: float) -> bool:
+	var t := 0.0
+	var frozen := 0
+	while t < seconds:
+		await get_tree().process_frame
+		var step := get_process_delta_time()
+		t += step
+		if step <= 0.0:
+			frozen += 1
+			if frozen > 600:
+				return false
+		else:
+			frozen = 0
+	return true
+
+func _dps_measure(dummy_pos: Vector2, label: String, seconds: float, source) -> Dictionary:
+	# A fresh dummy every pass. Slows, stuns and splash leftovers persist on an
+	# enemy past the shot that applied them, and a long window would chip the
+	# health pin -- a new body costs one frame and rules all of that out.
+	_dps_clear_enemies()
+	await get_tree().process_frame
+	var dummy = _dps_spawn_dummy(dummy_pos)
+	# Neither can be reached with nothing dying, but a banked pick would set
+	# Engine.time_scale to 0 and stall the harness with no explanation at all.
+	pending_picks = 0
+	tech_open = false
+	if source != null and is_instance_valid(source):
+		await _dps_wait(DPS_WARMUP)
+	# Nothing may be in the air when the window opens. A shot fired during the
+	# warm-up would land inside the window and be counted as damage with no shot
+	# to attribute it to, which is exactly the error the drain fixes at the far
+	# end -- per_shot has to be honest at both edges.
+	_dps_clear_projectiles()
+	_dps_damage_total = 0.0
+	_dps_hits = 0
+	_dps_shots = 0
+	dps_logging = true
+	var window := 0.0
+	var alive := true
+	var stalled := false
+	# Guard against Engine.time_scale hitting 0, which would spin this loop
+	# forever with nothing printed. Counting frozen frames rather than total
+	# frames on purpose: headless runs uncapped, so an 8-second window can be
+	# thousands of frames and any frame budget would false-trigger.
+	var frozen := 0
+	while window < seconds:
+		await get_tree().process_frame
+		# The run clock, not wall time and not `elapsed`. `elapsed` is gated
+		# behind spawn_delay and reads zero for the first ten seconds.
+		var step := get_process_delta_time()
+		window += step
+		if step <= 0.0:
+			frozen += 1
+			if frozen > 600:
+				stalled = true
+				break
+		else:
+			frozen = 0
+		if dummy == null or not is_instance_valid(dummy):
+			alive = false
+			break
+	# Silence the source first, then keep counting while whatever it already
+	# fired lands. Those shots were paid for by this window, so their damage
+	# belongs to it; nothing new can be added, because the source is off.
+	_dps_set_inert(source, true)
+	await _dps_wait(DPS_DRAIN)
+	dps_logging = false
+	var damage := _dps_damage_total
+	var hits := _dps_hits
+	var shots := _dps_shots
+	return {
+		"label": label,
+		"damage": damage,
+		"hits": hits,
+		"shots": shots,
+		"window": window,
+		"dps": (damage / window) if window > 0.0 else 0.0,
+		"per_hit": (damage / float(hits)) if hits > 0 else 0.0,
+		"per_shot": (damage / float(shots)) if shots > 0 else 0.0,
+		"alive": alive and dummy != null and is_instance_valid(dummy),
+		"dummy_ok": dummy != null and is_instance_valid(dummy),
+		"stalled": stalled,
+		"enemies": enemies_root.get_child_count() if enemies_root != null else -1,
+		"rate": 0.0,
+	}
+
+func _dps_spawn_dummy(pos: Vector2):
+	var dummy = ENEMY_SCENE.instantiate()
+	dummy.global_position = pos
+	# setup() is deliberately skipped -- it scales health and speed off the run
+	# difficulty, and the point of a dummy is that it is a fixed target. _game is
+	# assigned directly instead, because the damage tap in take_damage needs it.
+	dummy._game = self
+	dummy.max_health = DPS_DUMMY_HEALTH
+	dummy.health = DPS_DUMMY_HEALTH
+	dummy.speed = 0.0
+	dummy.attack_damage = 0.0
+	# Parented to World/Enemies, not merely added to the "enemies" group:
+	# _refresh_cached_enemies walks that node's children, and every tower's
+	# target search reads the cache it fills. A dummy parented anywhere else is
+	# invisible to every tower in the game.
+	enemies_root.add_child(dummy)
+	# Holds its mark instead of walking out of range. (An enemy with no _game
+	# also stands still, but then the damage tap never fires.)
+	dummy.set_physics_process(false)
+	return dummy
+
+func _dps_place_tower(tower_id: String, def: Dictionary, tier: int, pos: Vector2):
+	var scene_path := str(def.get("scene", ""))
+	if scene_path == "":
+		return null
+	var scene: PackedScene = load(scene_path)
+	if scene == null:
+		return null
+	var tower = scene.instantiate()
+	tower.global_position = pos
+	# Straight instantiate + configure rather than build_manager: placement also
+	# charges gold, snaps to the grid and runs the path check, none of which
+	# changes what a tower shoots for.
+	buildings_root.add_child(tower)
+	if tower.has_method("configure"):
+		tower.configure(tower_id, def, tier)
+	return tower
+
+func _dps_clear_enemies() -> int:
+	if enemies_root == null:
+		return 0
+	var count := 0
+	for child in enemies_root.get_children():
+		enemies_root.remove_child(child)
+		child.queue_free()
+		count += 1
+	cached_enemies.clear()
+	return count
+
+func _dps_clear_projectiles() -> int:
+	if projectiles_root == null:
+		return 0
+	var count := 0
+	for child in projectiles_root.get_children():
+		projectiles_root.remove_child(child)
+		child.queue_free()
+		count += 1
+	return count
+
+func _dps_clear_towers() -> int:
+	if buildings_root == null:
+		return 0
+	var count := 0
+	for child in buildings_root.get_children():
+		if child is Tower:
+			buildings_root.remove_child(child)
+			child.queue_free()
+			count += 1
+	return count
+
+func _dps_set_inert(node, value: bool) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	if "inert" in node:
+		node.inert = value
+
+func _dps_character_id() -> String:
+	if selected_character < 0 or selected_character >= characters.size():
+		return "?"
+	return str((characters[selected_character] as Dictionary).get("id", "?"))
+
+func _dps_bail(reason: String) -> void:
+	print("[DPS-TEST] failed_check: ", reason)
+	print("[DPS-TEST] FAIL")
+	get_tree().quit(1)
+
+func _dps_print_table(rows: Array) -> void:
+	print("[DPS-TEST] ---- measured on a real enemy, one source at a time ----")
+	print("[DPS-TEST] %-24s %9s %6s %6s %9s %8s %9s %9s" % [
+		"source", "damage", "shots", "hits", "per_shot", "window", "dps_meas", "dps_calc"])
+	for raw_row in rows:
+		var row: Dictionary = raw_row
+		# dps_meas divides by the window, so it carries the quantisation of a
+		# whole number of shots -- at 0.6 shots/sec that is worth up to 20%.
+		# dps_calc is per-shot damage times the source's own fire rate: the same
+		# figure without that error. They should agree to within one shot.
+		# hits > shots means one shot lands more than once (cannon splash plus
+		# its burn, tesla chain), which is why per_shot is the honest unit.
+		print("[DPS-TEST] %-24s %9.1f %6d %6d %9.2f %8.2f %9.2f %9.2f" % [
+			str(row.get("label", "?")),
+			float(row.get("damage", 0.0)),
+			int(row.get("shots", 0)),
+			int(row.get("hits", 0)),
+			float(row.get("per_shot", 0.0)),
+			float(row.get("window", 0.0)),
+			float(row.get("dps", 0.0)),
+			float(row.get("per_shot", 0.0)) * float(row.get("rate", 0.0))])
+	print("[DPS-TEST] ---- sheet vs reality: what structures.json does not say ----")
+	for raw_row in rows:
+		var row: Dictionary = raw_row
+		if not row.has("sheet_damage"):
+			continue
+		var sheet_damage := float(row["sheet_damage"])
+		var sheet_rate := float(row["sheet_rate"])
+		var per_shot := float(row.get("per_shot", 0.0))
+		var sheet_dps := sheet_damage * sheet_rate
+		var real_dps := per_shot * float(row.get("rate", 0.0))
+		print("[DPS-TEST] %-24s sheet_dmg=%.1f code_dmg=%.2f landed_per_shot=%.2f sheet_dps=%.2f real_dps=%.2f inflation=%.2fx" % [
+			str(row.get("label", "?")),
+			sheet_damage,
+			float(row.get("code_damage", 0.0)),
+			per_shot,
+			sheet_dps,
+			real_dps,
+			(real_dps / sheet_dps) if sheet_dps > 0.0 else 0.0])
+
 # Read-only owner-aware score accessors used by the scoreboard (Phase 4).
 func get_score_currency(owner_id: int) -> int:
 	if is_solo():
@@ -2223,11 +2658,14 @@ func _process(delta: float) -> void:
 	_refresh_target_caches(delta)
 	_update_flow_field(delta)
 	_update_breach_state(delta)
-	if wave_manager != null and wave_manager.has_method("update"):
+	# Every source that can put a body on the field is gated on the DPS harness,
+	# because a tower shoots whatever is closest: one stray spawn and the pinned
+	# dummy stops being the thing being measured.
+	if wave_manager != null and wave_manager.has_method("update") and not _dps_test_active:
 		wave_manager.update(delta, elapsed)
 	# Host owns the shared horde; clients receive enemies via replication and do
 	# not run the spawn pipeline. Solo always simulates locally.
-	if _is_sim_authority():
+	if _is_sim_authority() and not _dps_test_active:
 		_handle_boss_spawning(delta)
 		_handle_spawning(delta)
 	# Enemy replication: host streams positions; clients interpolate proxies.
@@ -2236,7 +2674,10 @@ func _process(delta: float) -> void:
 		_update_ffa_clock(delta)
 		_update_ffa_lastman(delta)
 	_maintain_breakables()
-	_handle_powerup_spawning(delta)  # Power-up spawn logic
+	# Power-ups grant x3 player damage for 15s. Under the harness that would land
+	# in the middle of a window and read as a measurement.
+	if not _dps_test_active:
+		_handle_powerup_spawning(delta)  # Power-up spawn logic
 	_update_essence_announcement(delta)
 	_update_ui()
 	_update_debug_flow(delta)

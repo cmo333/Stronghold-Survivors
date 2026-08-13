@@ -531,6 +531,12 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			_last_damage_number_ms = now_ms
 
 	health -= amount
+	# Damage tap for the DPS harness. This is the only place an enemy loses
+	# health -- every source, projectile or aura or slam or DoT, arrives here --
+	# so one gated call measures all of them. Off in normal play; the bool test
+	# is the whole cost.
+	if _game != null and _game.dps_logging:
+		_game.log_damage(amount)
 	_update_health_bar()
 
 	# Trigger hitstop on crit

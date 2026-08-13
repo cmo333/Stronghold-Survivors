@@ -95,6 +95,12 @@ var _signoff_stung := false
 var _warp_stung := false
 
 func _ready() -> void:
+	# The DPS harness lives in main.tscn, but the boot scene is this cinematic
+	# and the only way past it is an input a headless run can never supply.
+	# Without this, `--dps-test` would sit on the star field forever.
+	if OS.get_cmdline_user_args().has("--dps-test"):
+		call_deferred("_skip_to_game")
+		return
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_build_timeline()
@@ -448,6 +454,14 @@ func _finish() -> void:
 
 func _go_to_menu() -> void:
 	get_tree().change_scene_to_file(NEXT_SCENE)
+
+const GAME_SCENE := "res://scenes/main.tscn"
+
+# Straight into the run, skipping the cinematic and the menu. Only reachable
+# from the --dps-test switch; see the note in _ready.
+func _skip_to_game() -> void:
+	_finished = true
+	get_tree().change_scene_to_file(GAME_SCENE)
 
 # ---- Planet ----
 

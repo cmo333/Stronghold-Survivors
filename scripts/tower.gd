@@ -651,6 +651,13 @@ func _advance_fire_state(delta: float, target) -> void:
 			if _fire_phase_timer <= 0.0:
 				var fire_target := _resolve_fire_target()
 				if fire_target != null:
+					# Shot tap for the DPS harness. Every tower overrides _fire_at,
+					# but they all get called from here, so one gated line counts
+					# shots for all of them. Damage/shots is then exact -- which
+					# damage/hits is not, because a cannon shell hits once by
+					# splash and again per burn tick. Off in normal play.
+					if _game != null and _game.dps_logging:
+						_game.log_shot()
 					_fire_at(fire_target)
 					_last_fire_dir = (fire_target.global_position - global_position).normalized()
 				_fire_phase = FirePhase.RECOVER
