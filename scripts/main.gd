@@ -6785,15 +6785,23 @@ func get_zone_at(world_pos: Vector2):
 	return null
 
 func on_zone_depleted(zone: Node) -> void:
-	if ui != null and ui.has_method("show_announcement"):
-		ui.show_announcement("ZONE DEPLETED - RELOCATE!", Color(1.0, 0.5, 0.0), 22, 4.0)
-	var active = 0
-	for z in resource_zones:
-		if z != null and is_instance_valid(z) and not z._is_depleted:
-			active += 1
-	if active == 0:
-		if ui != null and ui.has_method("show_announcement"):
-			ui.show_announcement("ALL ZONES EXHAUSTED!", Color(1.0, 0.2, 0.2), 26, 5.0)
+	"""A resource zone has run dry.
+
+	This used to shout "ZONE DEPLETED - RELOCATE!" at the player. There is no
+	relocation: the extractor is one per run and the run is a single hold, so
+	the game was instructing an action it does not implement. A zone drying up
+	only matters if the extractor was standing on it, in which case the news is
+	that the income multiplier is gone -- and a zone the player is not using
+	drying up on the far side of the map is not news at all.
+	"""
+	if ui == null or not ui.has_method("show_announcement"):
+		return
+	var hit_extractor := false
+	if extractor is Node2D and is_instance_valid(extractor) and zone != null and is_instance_valid(zone):
+		if zone.has_method("is_point_inside"):
+			hit_extractor = bool(zone.is_point_inside((extractor as Node2D).global_position))
+	if hit_extractor:
+		ui.show_announcement("SEAM DEPLETED - INCOME DOWN", Color(1.0, 0.5, 0.0), 22, 3.0)
 
 # Hitstop - freeze frame effect for critical hits
 func trigger_hitstop() -> void:
