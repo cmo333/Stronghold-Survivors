@@ -445,6 +445,17 @@ func _process(delta: float) -> void:
 			var pulse = 0.8 + sin(Time.get_ticks_msec() * 0.003) * 0.2
 			_storm_field_circle.modulate.a = pulse
 
+# See the note in arrow_turret.gd. get_tower_damage_mult() (the meta "Siege
+# Doctrine" upgrade times any damage keystones) was read only by tower.gd's base
+# _fire_at, which this tower overrides, so none of the tesla's four damage paths
+# applied it -- only the additive get_tower_damage_bonus() got through. Measured
+# on the arrow turret before the fix: doubling the multiplier moved per-shot
+# damage 1.00x.
+func _tower_damage_mult() -> float:
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		return float(_game.get_tower_damage_mult())
+	return 1.0
+
 func _tick_storm_field() -> void:
 	if _game == null:
 		return
@@ -455,6 +466,10 @@ func _tick_storm_field() -> void:
 	var dmg_bonus = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = _game.get_tower_damage_bonus()
+	# Storm Spire's aura runs on its own timer rather than through _fire_at, but
+	# it is still this tower dealing damage, and it already takes the additive
+	# bonus -- the multiplier belongs on it for the same reason.
+	var tick_damage: float = (field_dmg + dmg_bonus) * _tower_damage_mult()
 	var enemies = _get_enemies()
 	var hits = 0
 	for enemy in enemies:
@@ -462,7 +477,7 @@ func _tick_storm_field() -> void:
 			continue
 		if global_position.distance_to(enemy.global_position) <= _storm_field_radius:
 			if enemy.has_method("take_damage"):
-				enemy.take_damage(field_dmg + dmg_bonus, enemy.global_position, false, true)
+				enemy.take_damage(tick_damage, enemy.global_position, false, true)
 			hits += 1
 			if hits >= 8:  # Cap per tick
 				break
@@ -496,8 +511,11 @@ func _trigger_lightning_storm() -> void:
 			if _game.has_method("get_tower_damage_bonus"):
 				dmg_bonus = _game.get_tower_damage_bonus()
 			
+			# T3's storm runs off its own _storm_timer, not through _fire_at, but
+			# it is derived from this tower's own `damage` and so scales with the
+			# tower-damage multiplier like every other shot the tesla fires.
 			if enemy.has_method("take_damage"):
-				enemy.take_damage((damage + dmg_bonus) * 0.5, enemy_pos, false, true)
+				enemy.take_damage((damage + dmg_bonus) * 0.5 * _tower_damage_mult(), enemy_pos, false, true)
 			
 			# Stun chance
 			if stun_chance > 0 and randf() < stun_chance and enemy.has_method("stun"):
@@ -547,6 +565,8 @@ func _fire_at(target: Node2D) -> void:
 	if _game != null and _game.has_method("get_tower_chain_bonus"):
 		chain_bonus = int(_game.get_tower_chain_bonus())
 	var effective_chain_count = max(1, chain_count + chain_bonus)
+	# Every link in the chain takes the same figure, so scale it once.
+	var link_damage: float = (damage + dmg_bonus) * _tower_damage_mult()
 
 	var hits = 0
 	var last_pos = global_position
@@ -570,7 +590,7 @@ func _fire_at(target: Node2D) -> void:
 			line_points.append(pt - global_position)
 
 		if enemy.has_method("take_damage"):
-			enemy.take_damage(damage + dmg_bonus, enemy_pos, false, true)
+			enemy.take_damage(link_damage, enemy_pos, false, true)
 
 		# Stun chance for T3
 		if stun_chance > 0 and randf() < stun_chance and enemy.has_method("stun"):
@@ -618,7 +638,10 @@ func _fire_arc_conduit(target: Node2D) -> void:
 	var effective_chain_count = max(1, chain_count + chain_bonus)
 
 	var hits = 0
-	var current_dmg = damage + dmg_bonus
+	# Arc Conduit's bounce escalation multiplies this as it goes, so applying the
+	# tower-damage multiplier to the starting figure carries it through every
+	# bounce at the right proportion.
+	var current_dmg: float = (damage + dmg_bonus) * _tower_damage_mult()
 	var last_pos = global_position
 	var line_points: PackedVector2Array = [Vector2.ZERO]
 	var hit_positions: Array[Vector2] = []

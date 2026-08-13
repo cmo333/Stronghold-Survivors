@@ -108,6 +108,16 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	flame_cone_deg = float(tier_data.get("flame_cone_deg", flame_cone_deg))
 	max_targets = int(tier_data.get("max_targets", max_targets))
 
+# See the note in arrow_turret.gd. get_tower_damage_mult() (the meta "Siege
+# Doctrine" upgrade times any damage keystones) was read only by tower.gd's base
+# _fire_at, which this tower overrides, so the flamethrower never applied it --
+# only the additive get_tower_damage_bonus() got through. Measured on the arrow
+# turret before the fix: doubling the multiplier moved per-shot damage 1.00x.
+func _tower_damage_mult() -> float:
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		return float(_game.get_tower_damage_mult())
+	return 1.0
+
 func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
@@ -119,7 +129,9 @@ func _fire_at(target: Node2D) -> void:
 	var dmg_bonus: float = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = float(_game.get_tower_damage_bonus())
-	var total_hits = _apply_cone_damage(fire_dir, damage + dmg_bonus)
+	# _apply_cone_damage applies its own distance falloff on top of this, so the
+	# multiplier goes on the base figure it is handed.
+	var total_hits = _apply_cone_damage(fire_dir, (damage + dmg_bonus) * _tower_damage_mult())
 	if total_hits > 0 and _game.has_method("spawn_fx"):
 		var fx_kind = "fire_burst"
 		if is_evolved and evolution_id == "ice_flame":

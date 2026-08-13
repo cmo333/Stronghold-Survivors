@@ -737,6 +737,25 @@ func _process(delta: float) -> void:
 			_sniper_laser_line.points = PackedVector2Array()
 			_sniper_laser_line.visible = false
 
+# The multiplicative half of the tower-damage meta, which this tower used to
+# drop on the floor.
+#
+# main.gd's get_tower_damage_mult() is meta_tower_damage_mult ("Siege Doctrine",
+# +4%/level to 1.20x) times keystone_damage_mult (Glass Cannon 1.60x, Siege
+# Doctrine 1.40x, Overcharged Arc 1.25x). It was read in exactly one place --
+# tower.gd's base _fire_at -- and every tower in the game overrides _fire_at, so
+# nothing ever read it. Measured by tools/dps_test.sh before this fix: doubling
+# get_tower_damage_mult() moved arrow_turret T1 per-shot damage by 1.00x, and
+# the two rows were identical at 16.00 per shot. Cores spent on that upgrade
+# bought nothing.
+#
+# The additive half, get_tower_damage_bonus(), was always applied. Mirror what
+# the base class does with both: (damage + bonus) * mult.
+func _tower_damage_mult() -> float:
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		return float(_game.get_tower_damage_mult())
+	return 1.0
+
 func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
@@ -758,6 +777,9 @@ func _fire_at(target: Node2D) -> void:
 	var dmg_bonus = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = _game.get_tower_damage_bonus()
+	# Every arrow this shot spawns -- the main one and each fan bolt -- carries
+	# the same figure, so scale it once here.
+	var shot_damage: float = (damage + dmg_bonus) * _tower_damage_mult()
 
 	# Get multishot level and angles
 	var level = 0
@@ -778,11 +800,11 @@ func _fire_at(target: Node2D) -> void:
 
 	# Spawn main projectile with pierce capability
 	var projectile_profile = get_projectile_visual_profile()
-	_game.spawn_projectile(global_position, dir, projectile_speed, damage + dmg_bonus, projectile_range, explosion_radius, pierce_count, 1.0, 0.0, "normal", projectile_profile)
+	_game.spawn_projectile(global_position, dir, projectile_speed, shot_damage, projectile_range, explosion_radius, pierce_count, 1.0, 0.0, "normal", projectile_profile)
 
 	# Spawn extra projectiles
 	for angle in extra_angles:
-		_game.spawn_projectile(global_position, dir.rotated(angle), projectile_speed, damage + dmg_bonus, projectile_range, explosion_radius, pierce_count, 1.0, 0.0, "normal", projectile_profile)
+		_game.spawn_projectile(global_position, dir.rotated(angle), projectile_speed, shot_damage, projectile_range, explosion_radius, pierce_count, 1.0, 0.0, "normal", projectile_profile)
 	AudioManager.play_weapon_sound(tower_type, global_position)
 
 	# Directional base art: pop an oriented muzzle flare from the ballista mouth so
@@ -802,8 +824,9 @@ func _fire_sniper(target: Node2D) -> void:
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = _game.get_tower_damage_bonus()
 
-	# Hitscan: damage ALL enemies in a line
-	var total_dmg = damage + dmg_bonus
+	# Hitscan: damage ALL enemies in a line. This never goes near a projectile,
+	# so it needs the multiplier applied here the same as the arrow path above.
+	var total_dmg: float = (damage + dmg_bonus) * _tower_damage_mult()
 	var enemies = _get_enemies()
 	var hit_count = 0
 	for enemy in enemies:

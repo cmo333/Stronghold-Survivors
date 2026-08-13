@@ -133,6 +133,16 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	burst_count = int(tier_data.get("burst_count", burst_count))
 	projectile_pierce = int(tier_data.get("projectile_pierce", projectile_pierce))
 
+# See the note in arrow_turret.gd. get_tower_damage_mult() (the meta "Siege
+# Doctrine" upgrade times any damage keystones) was read only by tower.gd's base
+# _fire_at, which this tower overrides, so the spike burst never applied it --
+# only the additive get_tower_damage_bonus() got through. Measured on the arrow
+# turret before the fix: doubling the multiplier moved per-shot damage 1.00x.
+func _tower_damage_mult() -> float:
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		return float(_game.get_tower_damage_mult())
+	return 1.0
+
 func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
@@ -144,6 +154,8 @@ func _fire_at(target: Node2D) -> void:
 	var dmg_bonus: float = 0.0
 	if _game.has_method("get_tower_damage_bonus"):
 		dmg_bonus = float(_game.get_tower_damage_bonus())
+	# Every spike in the radial burst carries the same figure, so scale it once.
+	var shot_damage: float = (damage + dmg_bonus) * _tower_damage_mult()
 	var radial_count = max(6, burst_count)
 	var damage_type = "ice" if (is_evolved and evolution_id == "frostburst") else "normal"
 	var profile = get_projectile_visual_profile()
@@ -155,7 +167,7 @@ func _fire_at(target: Node2D) -> void:
 			global_position,
 			dir,
 			projectile_speed,
-			damage + dmg_bonus,
+			shot_damage,
 			projectile_range,
 			0.0,
 			projectile_pierce,

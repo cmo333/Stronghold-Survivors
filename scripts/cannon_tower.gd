@@ -484,6 +484,16 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	cluster_bombs = bool(tier_data.get("cluster_bombs", false))
 	burn_effect = bool(tier_data.get("burn_effect", false))
 
+# See the note in arrow_turret.gd. get_tower_damage_mult() (the meta "Siege
+# Doctrine" upgrade times any damage keystones) was read only by tower.gd's base
+# _fire_at, which this tower overrides, so the cannon never applied it -- only
+# the additive get_tower_damage_bonus() got through. Measured on the arrow
+# turret before the fix: doubling the multiplier moved per-shot damage 1.00x.
+func _tower_damage_mult() -> float:
+	if _game != null and _game.has_method("get_tower_damage_mult"):
+		return float(_game.get_tower_damage_mult())
+	return 1.0
+
 func _fire_at(target: Node2D) -> void:
 	if _game == null:
 		return
@@ -506,13 +516,18 @@ func _fire_at(target: Node2D) -> void:
 	if _game != null and _game.has_method("get_tower_aoe_mult"):
 		aoe_mult = float(_game.get_tower_aoe_mult())
 	var effective_explosion_radius = explosion_radius * aoe_mult
-	
+	# The shell carries this figure into projectile.gd, where the blast reads it
+	# straight and each of the three cluster bomblets takes 0.6 of it, so scaling
+	# it once here covers the whole cannonball. (The burn DoT does not come from
+	# here -- see the note on _spawn_fire_pool.)
+	var shot_damage: float = (damage + dmg_bonus) * _tower_damage_mult()
+
 	# Spawn main cannonball with cluster and burn capability
 	_game.spawn_cannonball(
 		global_position,
 		dir,
 		projectile_speed,
-		damage + dmg_bonus,
+		shot_damage,
 		projectile_range,
 		effective_explosion_radius,
 		cluster_bombs,
@@ -590,6 +605,15 @@ func _apply_shockwave_at(pos: Vector2, blast_radius: float) -> void:
 func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 	if not is_inside_tree():
 		return
+	# Hellfire's pool is this tower's damage, dealt on a timer instead of by a
+	# shell, so the tower-damage multiplier belongs on it too -- otherwise the
+	# evolution that turns the cannon into a damage-over-time tower is the one
+	# build the meta upgrade cannot touch.
+	#
+	# Snapshot it now rather than reading it per tick: the pool outlives the
+	# tower (that is why game_ref is captured below), so _game may be freed by
+	# the time these ticks run.
+	var pool_damage: float = hellfire_pool_damage * _tower_damage_mult()
 	await get_tree().create_timer(0.3).timeout  # Delay for projectile travel
 	if not is_inside_tree() or _game == null:
 		return
@@ -652,7 +676,7 @@ func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 				continue
 			if pool.global_position.distance_to(enemy.global_position) <= blast_radius * 0.8:
 				if enemy.has_method("take_damage"):
-					enemy.take_damage(hellfire_pool_damage, enemy.global_position, false, false)
+					enemy.take_damage(pool_damage, enemy.global_position, false, false)
 		# Fade out near end
 		if tick_count > fade_start_tick and is_instance_valid(sprite):
 			sprite.modulate.a = lerpf(sprite.modulate.a, 0.0, 0.3)
