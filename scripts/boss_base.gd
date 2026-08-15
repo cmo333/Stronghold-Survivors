@@ -64,9 +64,12 @@ var _scale_speed_mult: float = 1.0
 
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
+	# WITHOUT the run-length ramp -- see get_enemy_health_mult() in main.gd for
+	# why bosses opt out of it. They still scale with run length through
+	# `difficulty` below; the ramp would be the third count of the same axis.
 	var global_health_mult = 1.0
 	if _game != null and _game.has_method("get_enemy_health_mult"):
-		global_health_mult = float(_game.get_enemy_health_mult())
+		global_health_mult = float(_game.get_enemy_health_mult(false))
 	var milestone_speed_mult = 1.0
 	if _game != null and _game.has_method("get_enemy_speed_mult"):
 		milestone_speed_mult = float(_game.get_enemy_speed_mult())

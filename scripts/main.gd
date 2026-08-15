@@ -6022,9 +6022,28 @@ func get_heal_drop_amount(is_elite: bool = false, is_siege: bool = false, source
 	var amount = int(round(target_max_hp * (base_pct + heal_drop_pct_missing_health_bonus * urgency)))
 	return clampi(amount, min_amount, max_amount)
 
-func get_enemy_health_mult() -> float:
+# `include_run_ramp` exists for bosses, and it is not a convenience.
+#
+# The horde gets tougher as the run goes on via the per-30s growth term below.
+# Bosses ALSO get tougher as the run goes on twice over: they are scheduled by
+# run time with authored health that already climbs 2000 -> 5000 -> 10000 ->
+# 20000, and the `difficulty` they are spawned with is itself a function of run
+# time. Multiplying the horde's run-length ramp on top of that counted the same
+# axis a third time, and it compounded: measured at their real spawn times the
+# bosses landed at x22.6 / x47.8 / x106.4 / x197.3 their authored base, putting
+# the lich at 3,945,797 HP -- 45 to 107 minutes of sustained fire against a run
+# that reaches it at minute 20.
+#
+# Bosses therefore ask for the multiplier WITHOUT the run-length term. They keep
+# the base multiplier, the early-game grace and the extraction milestones, and
+# they still scale with run length through `difficulty` -- once, which is the
+# point. The x3-at-reference calibration in boss_base.gd is unaffected, because
+# growth is 1.0 at elapsed 0 where that reference is taken.
+func get_enemy_health_mult(include_run_ramp: bool = true) -> float:
 	var ramp_elapsed = max(elapsed, 0.0) * run_ramp_speed_mult
-	var growth = 1.0 + (ramp_elapsed / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
+	var growth = 1.0
+	if include_run_ramp:
+		growth = 1.0 + (ramp_elapsed / 30.0) * ENEMY_HEALTH_GROWTH_PER_30S
 	var mult = ENEMY_HEALTH_BASE_MULT * growth
 	if ramp_elapsed < EARLY_GAME_HORDE_RAMP_TIME:
 		var t = clampf(ramp_elapsed / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)

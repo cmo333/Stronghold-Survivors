@@ -207,7 +207,10 @@ func _run_health() -> void:
 				if is_equal_approx(float(d), 1.0) and progress < 0.0:
 					if abs(float(r["ratio"]) - 3.0) > 0.01:
 						_fail("%s at the reference (difficulty 1.0, run start, no milestone) is x%.4f, not x3" % [boss_name, r["ratio"]])
-	_report_run_ramp()
+	# await, not a bare call: _report_run_ramp spawns real bosses now, so it is a
+	# coroutine. Calling it without await returns at its first suspend and the
+	# table silently prints its header and nothing else.
+	await _report_run_ramp()
 
 func _set_stage(progress: float) -> void:
 	if progress < 0.0:
@@ -222,8 +225,8 @@ func _horde_mult_at(elapsed: float, progress: float) -> float:
 	_set_stage(progress)
 	return float(_game.get_enemy_health_mult())
 
-func _measure_health(script_path: String, difficulty: float, progress: float) -> Dictionary:
-	_game.elapsed = 0.0
+func _measure_health(script_path: String, difficulty: float, progress: float, at_elapsed: float = 0.0) -> Dictionary:
+	_game.elapsed = at_elapsed
 	_set_stage(progress)
 	# The authored base, read off a boss that ran _ready() with every multiplier
 	# neutralised, so the ratio below divides by the real number rather than one
@@ -261,15 +264,24 @@ func _report_run_ramp() -> void:
 	(+0.25 of ENEMY_HEALTH_BASE_MULT per 30s), and bosses are scheduled by run
 	time, so the ramp compounds with authored health that already grows per boss."""
 	_say("run-length ramp: horde health mult and spawn difficulty at each scheduled boss")
-	var sched := [[300.0, "colossus", 2000.0], [600.0, "plague", 5000.0],
-		[900.0, "siegebreaker", 10000.0], [1200.0, "lich", 20000.0]]
+	var sched := [[300.0, 0], [600.0, 1], [900.0, 2], [1200.0, 3]]
 	for row in sched:
 		var t: float = row[0]
+		var entry: Array = BOSSES[int(row[1])]
 		var horde := _horde_mult_at(t, 0.0)
 		var diff := float(_game._get_spawn_settings(t).get("difficulty", 1.0))
-		var at_spawn: float = float(row[2]) * horde * (1.0 + (diff - 1.0) * 0.45) * 2.5
+		# Spawned for real at that run time and read off the instance. An earlier
+		# version of this block recomputed the formula inline
+		# (base * horde * (1 + (diff-1)*0.45) * 2.5) and so reported the same
+		# numbers after the scaling changed underneath it -- a model of the code
+		# rather than a measurement of it, which is the exact failure this file
+		# exists to avoid.
+		var r := await _measure_health(str(entry[1]), diff, 0.0, t)
+		if r.is_empty():
+			_fail("%s: could not instantiate at t=%.0fs" % [str(entry[0]), t])
+			continue
 		_say("  t=%6.0fs %-13s horde x%5.2f  difficulty %5.2f  -> health %10.0f (x%.1f base)" % [
-			t, str(row[1]), horde, diff, at_spawn, at_spawn / float(row[2])])
+			t, str(entry[0]), horde, diff, float(r["health"]), float(r["ratio"])])
 	_game.elapsed = 0.0
 	_set_stage(-1.0)
 
