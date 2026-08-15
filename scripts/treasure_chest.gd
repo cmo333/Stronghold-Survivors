@@ -40,10 +40,51 @@ const MYTHIC_UPGRADES = {
 		"rarity": "mythic",
 		"desc": "She hunts chests, gathers loot, and burns what she passes",
 	},
+	"rainbow_coco": {
+		"name": "\U0001F308 RAINBOW COCO",
+		"rarity": "mythic",
+		"desc": "Everything the golden does, and every tower you own hits harder and faster",
+	},
 }
 # Rolled before anything else and independently of the diamond slot, so a
 # mythic run can also carry a diamond -- the jackpot should be able to stack.
 const MYTHIC_CHANCE := 0.02
+
+
+# Which mythic this chest may offer, given what the player already has.
+#
+# THE BUG THIS EXISTS TO FIX. The roll used to pick blindly from
+# MYTHIC_UPGRADES, which held only the golden coco, while spawn_golden_coco()
+# returns early if a companion is already out. So a second mythic pull printed
+# the rarest card in the game, played the jackpot fanfare, consumed a slot from
+# the chest's own budget (`count -= 1`) and then did NOTHING. A duplicate mythic
+# was strictly worse than a common.
+#
+# It was not a rare edge case either: at 2% a chest, a run that opens 83 chests
+# expects 1.66 mythics, so a second pull is the normal outcome of a long run and
+# was reported from the first serious one.
+#
+# Order is fixed rather than random: golden first, rainbow second. The rainbow
+# is an escalation of the golden and reads as one only if it arrives after her.
+# Once both are out there is no third mythic, and returning "" makes the roll
+# skip the mythic slot entirely so the chest spends it on a normal upgrade
+# instead of burning it.
+func _pick_mythic() -> String:
+	var g = _game
+	if g == null and is_inside_tree():
+		g = get_tree().get_first_node_in_group("game")
+	# No game reference is not the same as "nothing spawned yet". Falling back to
+	# the golden would hand out a second inert one, which is the bug; falling
+	# back to "" costs at most one mythic slot in a state that should not happen.
+	if g == null or not is_instance_valid(g):
+		return ""
+	if not g.has_method("has_golden_coco") or not g.has_method("has_rainbow_coco"):
+		return ""
+	if not bool(g.has_golden_coco()):
+		return "golden_coco"
+	if not bool(g.has_rainbow_coco()):
+		return "rainbow_coco"
+	return ""
 
 const RARITY_COLORS = {
 	"common": Color(0.4, 0.9, 0.4),
@@ -565,13 +606,16 @@ func _roll_upgrades() -> Array:
 	
 	# Mythic first: it takes a slot from the same budget, so a mythic pull is
 	# genuinely rarer loot rather than a free extra on top.
+	#
+	# Which mythic depends on what is already on the field, and that is the whole
+	# point -- see _pick_mythic.
 	if randf() < MYTHIC_CHANCE:
-		var mythic_keys = MYTHIC_UPGRADES.keys()
-		var mythic_key = mythic_keys[randi_range(0, mythic_keys.size() - 1)]
-		var mythic_upgrade = MYTHIC_UPGRADES[mythic_key].duplicate()
-		mythic_upgrade["id"] = mythic_key
-		result.append(mythic_upgrade)
-		count -= 1
+		var mythic_key := _pick_mythic()
+		if mythic_key != "":
+			var mythic_upgrade = MYTHIC_UPGRADES[mythic_key].duplicate()
+			mythic_upgrade["id"] = mythic_key
+			result.append(mythic_upgrade)
+			count -= 1
 
 	var has_diamond = randf() < 0.10
 	if has_diamond:

@@ -9,6 +9,10 @@ var demon_attack_range: float = 34.0
 var caster_chance: float = 0.35
 var caster_aoe_radius: float = 96.0
 var caster_aoe_damage: float = 54.0
+# Tier 3 ("greater") demons. The tier data turns this on; everything below reads
+# it rather than testing `tier == 2`, so the flag stays the single source of
+# truth if tiers are ever reordered.
+var greater: bool = false
 var _timer: float = 0.0
 var _game: Node = null
 var _spawned_once: bool = false
@@ -42,6 +46,7 @@ func _apply_tier_stats(tier_data: Dictionary) -> void:
 	caster_chance = float(tier_data.get("caster_chance", caster_chance))
 	caster_aoe_radius = float(tier_data.get("caster_aoe_radius", caster_aoe_radius))
 	caster_aoe_damage = float(tier_data.get("caster_aoe_damage", caster_aoe_damage))
+	greater = bool(tier_data.get("greater", false))
 
 func _process(delta: float) -> void:
 	if _game == null:
@@ -77,6 +82,14 @@ func _summon_demon() -> void:
 	var dmg_mult = 1.55 if is_overlord else 1.25
 	var scale_mult = 1.95 if is_overlord else 1.65
 	var aoe_mult = 1.5 if is_overlord else 1.2
+	# Tier 3 sets caster_chance to 1.0, so every greater demon is already an
+	# overlord and takes the branches above; this is what makes it read as a
+	# different creature rather than a bigger number. Splash is doubled again on
+	# top of the overlord multiplier because "splash" is the stated point of the
+	# tier -- a greater demon should be clearing the pack, not duelling.
+	if greater:
+		scale_mult *= 1.45
+		aoe_mult *= 2.0
 	var config: Dictionary = {
 		"frame_paths": frames,
 		"fps": 8.5,
@@ -100,6 +113,17 @@ func _summon_demon() -> void:
 		"aoe_damage": caster_aoe_damage * aoe_mult,
 		"aoe_fx": "hero_energy_impact"
 	}
+	if greater:
+		# Red, and read as red: the source frames are a cold void purple, so a
+		# plain multiply leaves them muddy. Lifting red above 1.0 pushes the
+		# tint through the existing pixels instead of just darkening the other
+		# two channels.
+		config["tint"] = Color(1.6, 0.32, 0.28)
+		config["hit_radius"] = 22.0
+		config["damage_type"] = "fire"
+		config["attack_fx"] = "explosion"
+		config["aoe_fx"] = "explosion"
+		config["z"] = 5
 	var spawn_pos = global_position + Vector2(randf_range(-22.0, 22.0), randf_range(-22.0, 22.0))
 	if _game.has_method("spawn_setpiece_fx"):
 		_game.spawn_setpiece_fx("energy_impact", spawn_pos, 1.2 if is_overlord else 1.0, "lightning")

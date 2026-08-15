@@ -496,6 +496,24 @@
         "caster_chance": 0.48,
         "caster_aoe_radius": 118,
         "caster_aoe_damage": 68
+      },
+      {
+        "cost": 1500,
+        "essence_cost": 100,
+        "health": 260,
+        "heal_amount": 9,
+        "heal_radius": 210,
+        "interval": 2.8,
+        "summon_interval": 15.0,
+        "demon_health": 900,
+        "demon_damage": 118,
+        "demon_speed": 128,
+        "demon_attack_rate": 1.9,
+        "demon_attack_range": 46,
+        "caster_chance": 1.0,
+        "caster_aoe_radius": 190,
+        "caster_aoe_damage": 160,
+        "greater": true
       }
     ],
     "preview": "res://assets/ui_build_icons/ui_build_stargate_32_v001.png"

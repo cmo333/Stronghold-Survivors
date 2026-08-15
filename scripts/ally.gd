@@ -70,6 +70,11 @@ func setup(game_ref: Node, config: Dictionary) -> void:
 		var scale = float(config.get("scale", 1.0))
 		body.scale = Vector2.ONE * scale
 		body.z_index = int(config.get("z", 1))
+		# Optional tint, so a summoner can reskin its units without a second
+		# sprite set. Applied to the Body rather than the node so it does not
+		# also stain the health bar or any child FX.
+		if config.has("tint"):
+			body.modulate = config.get("tint")
 	if collision_shape != null and collision_shape.shape is CircleShape2D:
 		var shape: CircleShape2D = collision_shape.shape
 		shape.radius = max(6.0, float(config.get("hit_radius", shape.radius)))

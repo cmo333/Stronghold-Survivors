@@ -72,6 +72,19 @@ func get_upgrade_cost() -> int:
 	var next_tier = StructureDB.get_tier(definition, tier + 1)
 	return int(next_tier.get("cost", 0))
 
+# Essence price of the NEXT tier, if that tier declares one.
+#
+# build_manager and ui already look for this method on any selected building and
+# already gate the purchase on it (build_manager.gd:501, ui.gd:527) -- until now
+# only tower.gd answered, so essence was effectively tower-only. Reading it off
+# the tier data means any structure can charge essence by adding one key, and
+# every structure that does not declare one is unchanged at 0.
+func get_upgrade_essence_cost() -> int:
+	if not can_upgrade():
+		return 0
+	var next_tier = StructureDB.get_tier(definition, tier + 1)
+	return int(next_tier.get("essence_cost", 0))
+
 func upgrade() -> void:
 	if not can_upgrade():
 		return

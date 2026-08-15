@@ -36,6 +36,27 @@ const ROAM_REPICK := 2.5
 const FRAME_COUNT := 4
 const FRAME_TIME := 0.09
 
+# --- rainbow variant ---------------------------------------------------------
+# The SECOND mythic pull. Before this existed a duplicate golden pull was worse
+# than a common: spawn_golden_coco() returns early when a companion is already
+# out, so the rarest card in the game consumed a chest slot and did nothing,
+# with the full jackpot fanfare playing over it. At 2% a chest and 83 chests in
+# a long run, expected mythic pulls is 1.66 -- so seeing two was routine and
+# seeing the second do nothing was the actual bug.
+#
+# She keeps every golden behaviour (hunt, vacuum, burn) and adds the tower buff.
+const RAINBOW_TOWER_DAMAGE_MULT := 1.6
+const RAINBOW_TOWER_RATE_MULT := 1.75
+const RAINBOW_AURA_RADIUS := 420.0
+const RAINBOW_BURN_MULT := 1.8
+# Mandala: petals per ring, and the rings themselves.
+const MANDALA_PETALS := 12
+const MANDALA_RINGS := [0.38, 0.62, 0.86, 1.0]
+const MANDALA_SPIN := 0.35
+
+var is_rainbow: bool = false
+var _mandala_phase: float = 0.0
+
 var _game: Node = null
 var _target: Node2D = null
 var _roam_point: Vector2 = Vector2.ZERO
@@ -49,12 +70,19 @@ var _retarget_timer: float = 0.0
 @onready var aura: Node2D = $Aura
 
 
-func setup(game_ref: Node) -> void:
+func setup(game_ref: Node, rainbow: bool = false) -> void:
 	_game = game_ref
+	is_rainbow = rainbow
 
 
 func _ready() -> void:
 	add_to_group("companions")
+	# A second group, so main.gd can ask "is a RAINBOW already out" without
+	# walking every companion and reading a field off it. The golden one is not
+	# in this group, which is what lets the chest roll offer rainbow exactly
+	# once.
+	if is_rainbow:
+		add_to_group("rainbow_companions")
 	z_index = 6
 	_roam_point = global_position
 	if _game == null:
@@ -71,6 +99,10 @@ func _process(delta: float) -> void:
 	_tick_vacuum(delta)
 	_tick_aura(delta)
 	_tick_anim(delta)
+	# Driven off delta, not Time.get_ticks_msec(): the mandala must stop turning
+	# when the game is paused or a modal has frozen the clock, or it keeps
+	# spinning behind the chest reveal and reads as a rendering fault.
+	_mandala_phase += delta
 	queue_redraw()
 
 
@@ -207,7 +239,7 @@ func _tick_aura(delta: float) -> void:
 	if _aura_timer > 0.0:
 		return
 	_aura_timer = AURA_TICK
-	var dmg := AURA_DPS * AURA_TICK
+	var dmg := AURA_DPS * AURA_TICK * (RAINBOW_BURN_MULT if is_rainbow else 1.0)
 	# Straight off the group, not through `get_enemies_near()`. That query reads
 	# a spatial grid rebuilt from a cache on an interval, so a freshly spawned
 	# enemy standing right on top of her is invisible to it for a beat -- an
@@ -215,7 +247,8 @@ func _tick_aura(delta: float) -> void:
 	# second even a 300-body horde is ~1200 distance checks per second, which is
 	# nothing next to what the horde already costs.
 	var enemies: Array = get_tree().get_nodes_in_group("enemies")
-	var r2 := AURA_RADIUS * AURA_RADIUS
+	var reach := _aura_radius()
+	var r2 := reach * reach
 	for e in enemies:
 		if e == null or not is_instance_valid(e) or not (e is Node2D):
 			continue
@@ -228,6 +261,10 @@ func _tick_aura(delta: float) -> void:
 
 
 # --- presentation ------------------------------------------------------------
+
+func _aura_radius() -> float:
+	return RAINBOW_AURA_RADIUS if is_rainbow else AURA_RADIUS
+
 
 func _tick_anim(delta: float) -> void:
 	_anim_timer -= delta
@@ -243,9 +280,48 @@ func _draw() -> void:
 	# sit under her and over the ground, and one draw call beats a pooled node.
 	var t := float(Time.get_ticks_msec()) * 0.004
 	var pulse := 1.0 + sin(t) * 0.06
+	if is_rainbow:
+		_draw_mandala(pulse)
+		return
 	for i in range(3):
 		var f := 1.0 - float(i) * 0.3
 		var col := Color(1.0, 0.55 + 0.15 * f, 0.12, 0.10 * f)
 		draw_circle(Vector2.ZERO, AURA_RADIUS * pulse * f, col)
 	draw_arc(Vector2.ZERO, AURA_RADIUS * pulse, 0.0, TAU, 40,
 			Color(1.0, 0.72, 0.25, 0.35), 2.0, true)
+
+
+# The rainbow aura: concentric rings of petals on a slow counter-rotation.
+#
+# Geometry rather than a texture, for the same reason the flame aura is drawn:
+# the radius is 420 and a sprite that large is either a big texture or a blurry
+# small one, and this is a handful of arcs. Alpha is kept deliberately low --
+# this thing covers most of the screen, it blends over a fight, and a late fort
+# already has an additive-saturation problem it must not contribute to.
+func _draw_mandala(pulse: float) -> void:
+	var r := RAINBOW_AURA_RADIUS * pulse
+	# Counter-rotating rings read as a mandala; all rings spinning the same way
+	# reads as one disc that is simply turning.
+	for ring_i in range(MANDALA_RINGS.size()):
+		var rr: float = r * float(MANDALA_RINGS[ring_i])
+		var dir := 1.0 if ring_i % 2 == 0 else -1.0
+		var spin := _mandala_phase * MANDALA_SPIN * dir + float(ring_i) * 0.26
+		# Hue walks with the ring and with time, which is the "rainbow".
+		var hue: float = fposmod(_mandala_phase * 0.06 + float(ring_i) * 0.17, 1.0)
+		var col := Color.from_hsv(hue, 0.75, 1.0, 0.13)
+		draw_arc(Vector2.ZERO, rr, 0.0, TAU, 48, Color(col.r, col.g, col.b, 0.10), 1.5, true)
+		var petals: int = MANDALA_PETALS + ring_i * 4
+		for p in range(petals):
+			var a := spin + TAU * float(p) / float(petals)
+			var inner := Vector2.RIGHT.rotated(a) * (rr * 0.82)
+			var outer := Vector2.RIGHT.rotated(a) * rr
+			draw_line(inner, outer, col, 2.0, true)
+			# The petal tip, which is what makes it read as a mandala rather
+			# than a wheel of spokes.
+			draw_arc(outer, rr * 0.055, a - PI, a + PI, 10, col, 1.5, true)
+	# A soft filled core so the buff has a centre and she is not lost inside it.
+	for i in range(3):
+		var f := 1.0 - float(i) * 0.3
+		var hue2: float = fposmod(_mandala_phase * 0.06 + float(i) * 0.3, 1.0)
+		var c := Color.from_hsv(hue2, 0.6, 1.0, 0.055 * f)
+		draw_circle(Vector2.ZERO, AURA_RADIUS * pulse * f, c)

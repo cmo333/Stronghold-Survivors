@@ -21,6 +21,12 @@ const PICKUP_SCENE = preload("res://scenes/pickup.tscn")
 const BREAKABLE_SCENE = preload("res://scenes/breakable.tscn")
 const TREASURE_CHEST_SCENE = preload("res://scenes/treasure_chest.tscn")
 const COMPANION_COCO_SCENE = preload("res://scenes/companion_coco.tscn")
+# The script as well as the scene, so the rainbow tuning constants are read from
+# one source of truth rather than restated where they are applied. Preloaded
+# rather than reached through a class_name: global class names resolve via
+# .godot/global_script_class_cache.cfg, which is gitignored, so a fresh clone
+# would fail to parse this file until something re-imported the project.
+const COMPANION_COCO_SCRIPT = preload("res://scripts/companion_coco.gd")
 const POWER_UP_SCENE = preload("res://scenes/power_up.tscn")
 const DEATH_STATS_SCENE = preload("res://scenes/death_stats_screen.tscn")
 const ALLY_SCENE = preload("res://scenes/allies/ally_unit.tscn")
@@ -4980,6 +4986,40 @@ func spawn_golden_coco() -> void:
 	shake_camera(10.0, 0.5)
 	flash_screen(Color(1.0, 0.85, 0.35, 0.30), 0.5)
 
+func spawn_rainbow_coco() -> void:
+	"""The second mythic pull: the rainbow coco, who buffs every tower you own.
+
+	One only, same as the golden. A third mythic finds both taken and the chest
+	roll falls back to a diamond rather than printing a card that does nothing --
+	which is exactly what a duplicate golden pull used to do.
+	"""
+	if has_rainbow_coco():
+		return
+	var coco = COMPANION_COCO_SCENE.instantiate()
+	var anchor: Vector2 = player.global_position if player != null and is_instance_valid(player) else Vector2.ZERO
+	coco.global_position = anchor + Vector2(randf_range(-40.0, 40.0), -40.0)
+	if coco.has_method("setup"):
+		# setup() before add_child: _ready() is what joins the rainbow group, so
+		# a flag set afterwards would leave her in the golden group forever and
+		# the tower buff would never switch on. Same ordering trap the reaper's
+		# summons hit with frame_paths.
+		coco.setup(self, true)
+	var host: Node = pickups_root if pickups_root != null else self
+	host.add_child(coco)
+	if ui != null and ui.has_method("show_announcement"):
+		ui.show_announcement("RAINBOW COCO ASCENDS!", Color(0.75, 0.45, 1.0), 46, 3.2)
+	shake_camera(14.0, 0.6)
+	flash_screen(Color(0.7, 0.5, 1.0, 0.32), 0.6)
+
+func has_golden_coco() -> bool:
+	for c in get_tree().get_nodes_in_group("companions"):
+		if c != null and is_instance_valid(c) and not c.is_in_group("rainbow_companions"):
+			return true
+	return false
+
+func has_rainbow_coco() -> bool:
+	return _rainbow_active()
+
 func spawn_treasure_chest(position: Vector2) -> void:
 	if pickups_root == null:
 		return
@@ -5914,6 +5954,8 @@ func apply_chest_upgrade(id: String, upgrade: Dictionary = {}) -> void:
 		# Mythic
 		"golden_coco":
 			spawn_golden_coco()
+		"rainbow_coco":
+			spawn_rainbow_coco()
 
 	if player != null:
 		match rarity:
@@ -5968,14 +6010,42 @@ func _apply_player_max_health_bonuses() -> void:
 	if player != null and player.has_method("apply_max_health_bonus"):
 		player.apply_max_health_bonus(chest_max_hp_bonus + tech_max_hp_bonus)
 
+# The rainbow coco's tower buff, folded into the two multipliers EVERY damage
+# and fire-rate path already routes through.
+#
+# Deliberately not a radius-gated buff pushed onto individual towers, which is
+# what "aura" would suggest. Twice now a tower multiplier has been added and
+# reached nothing -- get_tower_damage_mult was inert against five towers that
+# override _fire_at (6adb3ee), and eight firing sites re-tested raw range
+# against the unmultiplied member (ae7b959). Both were invisible until measured.
+# A per-tower buff would need position threaded through all sixteen call sites
+# and would be the third instance of that same bug. Folding it in here means it
+# cannot miss a path, and the DPS harness's existing multiplier probes cover it
+# for free.
+#
+# So the mandala is the fiction and the buff is global while she lives. She
+# roams the whole map anyway, so a radius that followed her would be close to
+# global in practice.
+func _rainbow_active() -> bool:
+	for c in get_tree().get_nodes_in_group("rainbow_companions"):
+		if c != null and is_instance_valid(c):
+			return true
+	return false
+
 func get_tower_rate_mult() -> float:
-	return tower_rate_mult * keystone_rate_mult
+	var m: float = tower_rate_mult * keystone_rate_mult
+	if _rainbow_active():
+		m *= COMPANION_COCO_SCRIPT.RAINBOW_TOWER_RATE_MULT
+	return m
 
 func get_tower_damage_bonus() -> float:
 	return tower_damage_bonus
 
 func get_tower_damage_mult() -> float:
-	return meta_tower_damage_mult * keystone_damage_mult
+	var m: float = meta_tower_damage_mult * keystone_damage_mult
+	if _rainbow_active():
+		m *= COMPANION_COCO_SCRIPT.RAINBOW_TOWER_DAMAGE_MULT
+	return m
 
 func get_tower_range_mult() -> float:
 	return tower_range_mult * chest_tower_range_mult * keystone_range_mult
