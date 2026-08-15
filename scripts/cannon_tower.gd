@@ -70,6 +70,36 @@ var hellfire_pool_damage: float = 8.0
 var hellfire_pool_duration: float = 3.0
 const HELLFIRE_POOL_ALPHA := 0.25   # halved from 0.5; see _spawn_fire_pool
 
+# --- Hellfire stacking budget ------------------------------------------------
+# HELLFIRE_POOL_ALPHA governs how ONE pool reads. This governs what happens when
+# many overlap, which is a different problem and the one that actually reached
+# the player: at 22:26 with a full fort the screen was a flat sheet and the
+# towers, the horde and the player had all vanished under it.
+#
+# Pools blend additively and one is spawned per shot with no ceiling, so the
+# stacked total scaled with the size of the fort. The 0.25 above was tuned
+# against "four or five upgraded cannons" (3b047ab); a late fort sustains
+# dozens, and twenty cannons holding four pools each sums to ~20x over white.
+# Anything past 1.0 is already white, so at 20x even the thin gaps between
+# pools blow out -- which is why nothing was legible rather than just the core.
+#
+# Dropping HELLFIRE_POOL_ALPHA again would fix the pile-up by making a single
+# pool worse, and the doomsday read is WANTED. So one pool is left exactly as it
+# is and the budget only bites once pools are genuinely stacking.
+#
+# NOTHING IS EVER FREED EARLY. These pools deal damage on a tick timer, so
+# recycling the oldest to cap the count would quietly cut cannon DPS in exactly
+# the late-game forts that trigger it -- a balance change wearing a visual
+# change's clothes. Only the sprite alpha is scaled; every pool lives its full
+# duration and deals its full damage.
+const HELLFIRE_POOL_SOFT_COUNT := 8
+# Exponent on the falloff. 1.0 would pin the stacked total to a hard constant
+# and make a huge fort look identical to a medium one; 0.75 lets the total keep
+# climbing (2.0 -> 2.5 -> 3.6 at 8 -> 20 -> 80 pools) so more fire still reads
+# as more fire, while never approaching the ~20 that caused this.
+const HELLFIRE_POOL_FALLOFF := 0.75
+static var _live_pools: Array = []
+
 # Shared fire pool texture
 static var _shared_fire_pool_tex: ImageTexture = null
 
@@ -654,6 +684,10 @@ func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 	sprite.material = mat
 	sprite.scale = Vector2.ONE * (blast_radius / 32.0)
 	pool.add_child(sprite)
+	# After add_child: _restyle_hellfire_pools reaches the sprite through the
+	# pool's first child, so it has to be parented before it is registered.
+	pool.set_meta("fading", false)
+	_register_hellfire_pool(pool)
 
 	# Damage tick timer — use pool's tree since pool outlives the tower
 	var tick_count = 0
@@ -679,6 +713,44 @@ func _spawn_fire_pool(pos: Vector2, blast_radius: float) -> void:
 					enemy.take_damage(pool_damage, enemy.global_position, false, false)
 		# Fade out near end
 		if tick_count > fade_start_tick and is_instance_valid(sprite):
+			# Flagged so the density restyle leaves it alone. Both write
+			# modulate.a, and a fading pool that got restyled would jump back to
+			# full brightness on the next shot fired anywhere on the map.
+			if is_instance_valid(pool):
+				pool.set_meta("fading", true)
 			sprite.modulate.a = lerpf(sprite.modulate.a, 0.0, 0.3)
 	if is_instance_valid(pool):
 		pool.queue_free()
+	_restyle_hellfire_pools()
+
+# How much of its own alpha each pool is allowed, given how many are burning.
+static func _hellfire_density_scale() -> float:
+	var n := _live_pools.size()
+	if n <= HELLFIRE_POOL_SOFT_COUNT:
+		return 1.0
+	return pow(float(HELLFIRE_POOL_SOFT_COUNT) / float(n), HELLFIRE_POOL_FALLOFF)
+
+static func _register_hellfire_pool(pool: Node2D) -> void:
+	var kept: Array = []
+	for p in _live_pools:
+		if p != null and is_instance_valid(p):
+			kept.append(p)
+	_live_pools = kept
+	_live_pools.append(pool)
+	_restyle_hellfire_pools()
+
+static func _restyle_hellfire_pools() -> void:
+	var kept: Array = []
+	for p in _live_pools:
+		if p != null and is_instance_valid(p):
+			kept.append(p)
+	_live_pools = kept
+	var scale := _hellfire_density_scale()
+	for p in _live_pools:
+		if bool(p.get_meta("fading", false)):
+			continue
+		if p.get_child_count() == 0:
+			continue
+		var spr = p.get_child(0)
+		if spr is Sprite2D:
+			spr.modulate.a = scale
