@@ -67,7 +67,10 @@ const XP_GAIN_MULT = 1.5
 const ENEMY_HEALTH_BASE_MULT = 2.0
 const ENEMY_HEALTH_GROWTH_PER_30S = 0.25
 const ENGINEER_VITALITY_HP_PER_LEVEL = 20.0
-const EARLY_GAME_HORDE_RAMP_TIME = 300.0
+# Was 300.0, which lerped the per-minute step in over five minutes and left the
+# 22%/min ramp delivering about 4% at the one-minute mark. A winning run is 12
+# minutes; a five-minute warm-up was most of it.
+const EARLY_GAME_HORDE_RAMP_TIME = 75.0
 const EARLY_GAME_ENEMY_HEALTH_GRACE_MIN = 0.60
 const BUILD_FOCUS_TIME_SCALE = 0.78
 # Master switch for gameplay slow-motion (kill slow, streak accents, crit
@@ -480,13 +483,21 @@ var _income_decay_notice_stage = 0
 const CONTROLS_HINT_FADE_TIME = 25.0
 var _controls_hint_faded = false
 
-var spawn_radius_min = 500.0
-var spawn_radius_max = 750.0
-var max_enemies_cap_base = 210
-var max_enemies_cap = 210
+# The camera shows a 640x360 world rect: 320 to the edge, 367 to the corner. A
+# 500-750 ring meant EVERY enemy spawned off-screen with a multi-second walk
+# before it was visible, which is most of why the horde read as thin. 400 keeps
+# them just past the corner -- close enough to be on screen in about a second,
+# far enough that nothing pops into view.
+var spawn_radius_min = 400.0
+var spawn_radius_max = 580.0
+var max_enemies_cap_base = 340
+var max_enemies_cap = 340
 const HORDE_MINUTE_MULT_STEP = 0.22
 const HORDE_MULT_MAX = 3.0
-const HORDE_CAP_HARD_LIMIT = 520
+# Raised with the density pass. FIRST KNOB TO PULL BACK if frames drop: the
+# adaptive scaler trims FX, particles and projectiles but it does NOT trim
+# enemy count, so nothing downstream rescues a cap set too high.
+const HORDE_CAP_HARD_LIMIT = 680
 # FFA spawns more aggressively than solo so every player faces a denser horde.
 # These are the *base* (2-player) multipliers; the live values scale further with
 # the live player count via _ffa_participant_count() so a full lobby (lots of
@@ -595,17 +606,17 @@ var max_powerups: int = 3
 
 # Data-driven pacing curve (interpolated between points).
 const SPAWN_CURVE = [
-	{"time": 0.0, "interval": 1.0, "max_enemies": 15, "difficulty": 1.0, "elite": 0.01, "siege": 0.0},
-	{"time": 30.0, "interval": 0.8, "max_enemies": 25, "difficulty": 1.08, "elite": 0.02, "siege": 0.0},
-	{"time": 60.0, "interval": 0.65, "max_enemies": 40, "difficulty": 1.2, "elite": 0.03, "siege": 0.04},
-	{"time": 120.0, "interval": 0.5, "max_enemies": 60, "difficulty": 1.4, "elite": 0.04, "siege": 0.08},
-	{"time": 180.0, "interval": 0.42, "max_enemies": 85, "difficulty": 1.6, "elite": 0.055, "siege": 0.14},
-	{"time": 240.0, "interval": 0.36, "max_enemies": 110, "difficulty": 1.85, "elite": 0.07, "siege": 0.2},
-	{"time": 300.0, "interval": 0.32, "max_enemies": 140, "difficulty": 2.1, "elite": 0.085, "siege": 0.26},
-	{"time": 420.0, "interval": 0.28, "max_enemies": 180, "difficulty": 2.45, "elite": 0.1, "siege": 0.32},
-	{"time": 540.0, "interval": 0.25, "max_enemies": 220, "difficulty": 2.8, "elite": 0.13, "siege": 0.36},
-	{"time": 660.0, "interval": 0.23, "max_enemies": 260, "difficulty": 3.1, "elite": 0.14, "siege": 0.38},
-	{"time": 900.0, "interval": 0.2, "max_enemies": 300, "difficulty": 3.45, "elite": 0.15, "siege": 0.4},
+	{"time": 0.0, "interval": 1.0, "max_enemies": 24, "difficulty": 1.0, "elite": 0.01, "siege": 0.0},
+	{"time": 30.0, "interval": 0.8, "max_enemies": 45, "difficulty": 1.08, "elite": 0.02, "siege": 0.0},
+	{"time": 60.0, "interval": 0.65, "max_enemies": 85, "difficulty": 1.2, "elite": 0.03, "siege": 0.04},
+	{"time": 120.0, "interval": 0.5, "max_enemies": 135, "difficulty": 1.4, "elite": 0.04, "siege": 0.08},
+	{"time": 180.0, "interval": 0.42, "max_enemies": 185, "difficulty": 1.6, "elite": 0.055, "siege": 0.14},
+	{"time": 240.0, "interval": 0.36, "max_enemies": 225, "difficulty": 1.85, "elite": 0.07, "siege": 0.2},
+	{"time": 300.0, "interval": 0.32, "max_enemies": 265, "difficulty": 2.1, "elite": 0.085, "siege": 0.26},
+	{"time": 420.0, "interval": 0.28, "max_enemies": 305, "difficulty": 2.45, "elite": 0.1, "siege": 0.32},
+	{"time": 540.0, "interval": 0.25, "max_enemies": 340, "difficulty": 2.8, "elite": 0.13, "siege": 0.36},
+	{"time": 660.0, "interval": 0.23, "max_enemies": 375, "difficulty": 3.1, "elite": 0.14, "siege": 0.38},
+	{"time": 900.0, "interval": 0.2, "max_enemies": 410, "difficulty": 3.45, "elite": 0.15, "siege": 0.4},
 	{"time": 1200.0, "interval": 0.18, "max_enemies": 350, "difficulty": 3.9, "elite": 0.16, "siege": 0.42},
 	{"time": 1500.0, "interval": 0.16, "max_enemies": 380, "difficulty": 4.4, "elite": 0.17, "siege": 0.44},
 	{"time": 1800.0, "interval": 0.15, "max_enemies": 400, "difficulty": 4.9, "elite": 0.18, "siege": 0.46},
@@ -3447,12 +3458,16 @@ func _extraction_count_multiplier() -> float:
 	strength) so the siege reads as an actual horde, not just tankier singles."""
 	match extraction_phase:
 		ExtractionPhase.SCOUT:
-			return 0.4
+			# Was 0.4. SCOUT is the first two minutes, so this was cutting the
+			# horde to 40% over exactly the stretch reported as too empty. The
+			# opening is still the lightest phase; the pack ramp carries the
+			# escalation now instead of a suppressor.
+			return 0.9
 		ExtractionPhase.SIEGE:
 			# Same back-loaded shape as threat: a manageable opening that builds
 			# into a wall by the final minutes.
 			var t := clampf(siege_elapsed() / EXTRACTION_DURATION, 0.0, 1.0)
-			return 0.85 + pow(t, 1.9) * 1.6
+			return 0.95 + pow(t, 1.9) * 1.8
 		ExtractionPhase.OVERRUN:
 			return 3.0
 	return 1.0
@@ -3638,15 +3653,32 @@ func _handle_spawning(delta: float) -> void:
 	if ffa:
 		horde_mult *= _ffa_spawn_rate_mult()
 	var interval = max(0.1, base_interval / max(1.0, horde_mult))
+	# Packs stretch the gap by their own size and then divide it by the rate
+	# gain, so the horde arrives in waves AND arrives faster overall. Without the
+	# stretch, eight-at-a-time on the old interval saturates the cap in about
+	# three seconds and every wave after it is a no-op against a full field.
+	var pack := _pack_size(elapsed)
+	if pack > 1:
+		interval = max(0.1, interval * float(pack) / PACK_RATE_GAIN)
 	spawn_accumulator += delta
 	while spawn_accumulator >= interval:
 		spawn_accumulator -= interval
 		var max_enemies = min(max_enemies_cap, int(settings.get("max_enemies", max_enemies_cap)))
 		if ffa:
 			max_enemies = int(min(float(max_enemies_cap), float(max_enemies) * _ffa_max_enemy_mult()))
-		if enemies_root.get_child_count() >= max_enemies:
+		# Explicitly typed, not `:=`: max_enemies comes out of min() and is
+		# therefore Variant, so inference has nothing to work from and the file
+		# fails to load in the engine while passing gdparse. Lesson 28.
+		var room: int = max_enemies - enemies_root.get_child_count()
+		if room <= 0:
 			break
-		spawn_enemy(settings)
+		if pack <= 1:
+			spawn_enemy(settings)
+			continue
+		# Never spill past the cap mid-pack: a half-placed wave leaves bodies
+		# stacked on one bearing with nothing behind them.
+		for pos in _pick_pack_positions(min(pack, room)):
+			spawn_enemy(settings, pos)
 
 func _handle_boss_spawning(_delta: float) -> void:
 	if BOSS_SCHEDULE.is_empty():
@@ -3754,7 +3786,85 @@ func _apply_final_boss_tuning(boss: Node, entry: Dictionary) -> void:
 	if boss.has_method("flash"):
 		boss.flash()
 
-func spawn_enemy(settings: Dictionary = {}) -> void:
+# ---- Horde density ----------------------------------------------------------
+# THIS BLOCK IS THE "MORE ENEMIES" DIAL. Every number here is safe to move.
+#
+# The problem it exists to fix: the camera shows a 640x360 world rect (zoom 2.0
+# on a 1280x720 viewport, so 320 half-width and 367 to the corner), while
+# enemies were placed on a 500-750 ring and released ONE AT A TIME on a random
+# bearing. Every enemy in the game therefore spawned off-screen -- at minimum
+# 133 units past the nearest corner -- and walked in alone. A field of 108 read
+# as a dozen, and raising the cap alone would have bought a heavier horde that
+# still looked empty. Measured with tools/density_test.sh, which reports the
+# on-SCREEN count next to the field count precisely because they are not the
+# same number.
+#
+# Two halves: how close they arrive (the ring, below in _ready) and how many
+# arrive together (packs).
+
+# Packs begin here. Before it, singles -- the opening should still read as a
+# trickle so the first real cluster lands as an escalation rather than as the
+# baseline.
+const PACK_START_TIME := 60.0
+# Bodies in that first pack, compounding per minute afterwards. 20%/min was the
+# asked-for rate; the base is set so three minutes is a visibly bigger wave and
+# not a rounding difference: 8 at 1:00, 12 at 3:00, 17 at 5:00, cap by 10:00.
+const PACK_BASE_SIZE := 8.0
+const PACK_GROWTH_PER_MIN := 1.20
+const PACK_MAX_SIZE := 30
+# Deliberately NOT multiplied by _get_horde_count_multiplier(). That already
+# carries the run-length ramp and the extraction phase, and it already drives
+# both the cap and the interval -- folding it in here too would be a third
+# expression of run length on top of two, which is the exact shape of the boss
+# health bug (fca9ca6). Pack size is a distribution axis, not a second count.
+
+# A pack arrives as an arc off ONE bearing, not scattered around the player.
+# This is the whole visual point: the same bodies spread over 360 degrees read
+# as background noise, and arriving from somewhere reads as a horde.
+const PACK_ARC := 0.6
+const PACK_DEPTH := 130.0
+# Total spawn rate multiplier once packs are on. The interval is stretched by
+# the pack size and divided by this, so arrivals get lumpy AND more frequent
+# rather than lumpy at the old rate.
+const PACK_RATE_GAIN := 2.6
+
+func _pack_size(time_sec: float) -> int:
+	if time_sec < PACK_START_TIME:
+		return 1
+	var minutes := (time_sec - PACK_START_TIME) / 60.0
+	var size := PACK_BASE_SIZE * pow(PACK_GROWTH_PER_MIN, minutes)
+	return clampi(int(round(size)), 1, PACK_MAX_SIZE)
+
+# One bearing, one arc, one band of depth -- a wall walking in from a direction.
+func _pick_pack_positions(count: int) -> Array:
+	var anchor := _spawn_anchor_player()
+	if anchor == null:
+		return []
+	var origin: Vector2 = anchor.global_position
+	var bearing := randf() * TAU
+	var out: Array = []
+	for i in range(count):
+		var pos := Vector2.ZERO
+		var placed := false
+		# A few tries per body: an arc can straddle terrain the flow field
+		# cannot reach, and a pack that silently drops half its members is a
+		# quieter horde than the one before the change.
+		for _attempt in range(8):
+			var a := bearing + randf_range(-PACK_ARC, PACK_ARC) * 0.5
+			var d := randf_range(spawn_radius_min, spawn_radius_max) + randf_range(0.0, PACK_DEPTH)
+			var p := origin + Vector2.RIGHT.rotated(a) * d
+			if is_flow_reachable(p):
+				pos = p
+				placed = true
+				break
+		if not placed:
+			# Fall back to the general picker rather than dropping the body, so
+			# the pack still delivers its count even against awkward terrain.
+			pos = _pick_reachable_spawn_position()
+		out.append(pos)
+	return out
+
+func spawn_enemy(settings: Dictionary = {}, forced_position = null) -> void:
 	if player == null:
 		return
 	var spawn_settings = settings
@@ -3765,7 +3875,7 @@ func spawn_enemy(settings: Dictionary = {}) -> void:
 	if randf() < siege_chance:
 		scene = SIEGE_ENEMY_SCENE
 	var enemy = scene.instantiate()
-	var spawn_pos = _pick_reachable_spawn_position()
+	var spawn_pos: Vector2 = forced_position if forced_position != null else _pick_reachable_spawn_position()
 	enemy.global_position = spawn_pos
 	var difficulty = float(spawn_settings.get("difficulty", 1.0))
 	if enemy.has_method("setup"):
