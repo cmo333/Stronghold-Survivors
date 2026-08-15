@@ -1485,7 +1485,15 @@ const CHEST_FRAME_OPEN := 3
 const CHEST_SPRITE_SIZE := 192.0
 # How far above the viewport centre the chest sits, so it clears the prize
 # cards that stack from the centre down.
+#
+# THE RAY BURST READS ITS CENTRE FROM THIS TOO, and must. The rays used to be
+# pinned to the viewport centre while the chest was pinned 150px above it, so
+# the burst did not originate at the chest -- it originated a chest-and-a-half
+# below one, and the lid opened above the circle instead of out of it. Two
+# separately-centred things that are meant to look like one event will drift
+# apart the moment either is nudged, so they are derived from one number.
 const CHEST_SPRITE_RISE := 150.0
+const CHEST_RAYS_SIZE := 760.0
 
 
 func _place_chest_sprite() -> void:
@@ -1504,6 +1512,29 @@ func _place_chest_sprite() -> void:
 	_chest_sprite.offset_right = half
 	_chest_sprite.offset_top = -half - CHEST_SPRITE_RISE
 	_chest_sprite.offset_bottom = half - CHEST_SPRITE_RISE
+
+
+func _place_chest_rays() -> void:
+	"""Centre the ray burst on the CHEST, not on the viewport.
+
+	Same offset mechanism as the chest and lifted by the same
+	CHEST_SPRITE_RISE, so the burst originates exactly where the lid is. Set
+	through offsets rather than `position` for the reason recorded above: with
+	PRESET_CENTER anchors `position` is still parent-relative, which is what put
+	the chest off the top-left corner for the whole life of the feature.
+
+	pivot_offset stays at the burst's own centre so the rotation in the reveal
+	still spins about the chest rather than swinging it around an off-centre
+	point.
+	"""
+	if _chest_rays == null or not is_instance_valid(_chest_rays):
+		return
+	var half := CHEST_RAYS_SIZE * 0.5
+	_chest_rays.offset_left = -half
+	_chest_rays.offset_right = half
+	_chest_rays.offset_top = -half - CHEST_SPRITE_RISE
+	_chest_rays.offset_bottom = half - CHEST_SPRITE_RISE
+	_chest_rays.pivot_offset = Vector2(CHEST_RAYS_SIZE, CHEST_RAYS_SIZE) * 0.5
 
 
 func _set_chest_frame(index: int) -> void:
@@ -1557,10 +1588,9 @@ func _build_chest_reveal() -> void:
 	_chest_rays.texture = _get_rays_texture()
 	_chest_rays.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	_chest_rays.set_anchors_preset(Control.PRESET_CENTER)
-	_chest_rays.custom_minimum_size = Vector2(760, 760)
-	_chest_rays.size = Vector2(760, 760)
-	_chest_rays.position = -_chest_rays.size * 0.5
-	_chest_rays.pivot_offset = _chest_rays.size * 0.5
+	_chest_rays.custom_minimum_size = Vector2(CHEST_RAYS_SIZE, CHEST_RAYS_SIZE)
+	_chest_rays.size = Vector2(CHEST_RAYS_SIZE, CHEST_RAYS_SIZE)
+	_place_chest_rays()
 	_chest_rays.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_chest_rays.modulate = Color(1.0, 0.9, 0.5, 0.0)
 	var ray_mat := CanvasItemMaterial.new()
@@ -1645,7 +1675,11 @@ func play_chest_reveal(items: Array, best_rarity: String) -> void:
 	_chest_rays.rotation = 0.0
 	_chest_sprite.scale = Vector2.ZERO
 	_chest_sprite.modulate = Color.WHITE
+	# Both re-placed every reveal, not just at build time: the panel is built
+	# once and outlives any number of resolution changes, and a burst that has
+	# drifted off its chest is the bug this pair exists to prevent.
 	_place_chest_sprite()
+	_place_chest_rays()
 	_set_chest_frame(CHEST_FRAME_SHUT)
 
 	# 1. Chest slams in from nothing and overshoots — physical arrival.
