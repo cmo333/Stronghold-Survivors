@@ -11,8 +11,10 @@
 # and walks in. Tuning the spawn cap without watching the screen column is how
 # you end up with a heavier horde that still looks empty.
 #
-# Headless, so it runs the real simulation without a window. It is not fast --
-# 360s of game time takes a few minutes of wall clock.
+# Headless, so it runs the real simulation without a window, and it is SLOW: a
+# few hundred enemies simulate well below real time, so budget several minutes
+# per game-minute and prefer short runs. Rows print as they are measured, so an
+# interrupted run still gives you everything up to the point it was killed.
 
 set -uo pipefail
 
@@ -39,5 +41,5 @@ GODOT_BIN="$(find_godot)"
 [ -n "$GODOT_BIN" ] || { echo "Could not find Godot. Set GODOT=/path/to/Godot (must be 4.7.1)." >&2; exit 2; }
 
 "$GODOT_BIN" --headless --path . --script tools/density_test.gd -- "--until=$UNTIL" 2>&1 \
-	| grep -E "^\[DENSITY\]|SCRIPT ERROR|Parse Error"
+	| grep --line-buffered -E "^\[DENSITY\]|SCRIPT ERROR|Parse Error"
 exit "${PIPESTATUS[0]}"

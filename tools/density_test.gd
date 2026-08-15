@@ -21,11 +21,20 @@ extends SceneTree
 ## Samples the real scene rather than a fixture: the counts depend on the
 ## extraction phase, the flow field, terrain reachability and enemies dying to
 ## towers, none of which a synthetic loop reproduces.
+##
+## ROWS PRINT AS THEY ARE MEASURED, and the header prints before the first one.
+## The first version accumulated everything and printed at the end, so a run cut
+## short -- by a timeout, by Ctrl-C, by anything -- produced ZERO output and
+## said nothing about the time it HAD simulated. Several hundred enemies
+## simulate far below real time headless, so being interrupted is the common
+## case here, not the exceptional one: two 240s runs were killed at their
+## timeout having printed not one row between them.
 
 const DEFAULT_UNTIL := 360.0
 const SAMPLE_EVERY := 1.0
-## Report rows on the minute; the per-second samples feed the peaks.
-const REPORT_EVERY := 30.0
+## Report rows every 15s; the per-second samples feed the peaks. Short, because
+## a row you have beats a tidier row you get killed before seeing.
+const REPORT_EVERY := 15.0
 
 var _main: Node = null
 var _frames := 0
@@ -93,12 +102,30 @@ func _boot() -> void:
 		_failed = "main.tscn instantiated with NO SCRIPT"
 		return
 	root.add_child(_main)
+	_print_header()
 	# The run clock does not start until spawn_delay has passed, and every
 	# reading below is keyed to it, so zero it rather than measuring ten seconds
 	# of a clock that says 0.0. Same fix the DPS harness needed.
 	if "spawn_delay" in _main:
 		_main.spawn_delay = 0.0
 	_bucket_start = 0.0
+
+func _print_header() -> void:
+	var cam = _main.get("camera") if "camera" in _main else null
+	var zoom = cam.zoom if cam != null and is_instance_valid(cam) else Vector2.ONE
+	print("[DENSITY] viewport %s, camera zoom %s" % [
+		str(root.get_viewport().get_visible_rect().size), str(zoom)])
+	print("[DENSITY] spawn ring %.0f-%.0f units from the player" % [
+		float(_main.spawn_radius_min), float(_main.spawn_radius_max)])
+	print("[DENSITY]")
+	print("[DENSITY]  t(s)  phase     field_avg  field_pk  SCREEN_avg  SCREEN_pk   cap  interval  horde")
+
+
+func _print_row(r: Dictionary) -> void:
+	print("[DENSITY] %5.0f  %-8s  %9.1f  %8d  %10.1f  %9d  %4d  %8.3f  %5.2f" % [
+		r.t, r.phase, r.field_avg, r.field_peak, r.screen_avg, r.screen_peak,
+		r.cap, r.interval, r.horde])
+
 
 func _elapsed() -> float:
 	if _main != null and "elapsed" in _main:
@@ -147,7 +174,7 @@ func _flush_bucket(t: float) -> void:
 	var settings: Dictionary = {}
 	if _main.has_method("_get_spawn_settings"):
 		settings = _main._get_spawn_settings(_elapsed())
-	_rows.append({
+	var row := {
 		"t": t,
 		"field_avg": _avg(_bucket_field),
 		"field_peak": _peak(_bucket_field),
@@ -157,7 +184,10 @@ func _flush_bucket(t: float) -> void:
 		"interval": float(settings.get("interval", 0.0)),
 		"horde": float(settings.get("horde_mult", 0.0)),
 		"phase": _phase_name()
-	})
+	}
+	_rows.append(row)
+	# Printed here, not banked for the end. See the note at the top.
+	_print_row(row)
 	_bucket_field.clear()
 	_bucket_screen.clear()
 	_bucket_start = t
@@ -195,18 +225,7 @@ func _report() -> bool:
 		return _fail(_failed)
 	if _rows.is_empty():
 		return _fail("no samples taken")
-	print("[DENSITY] viewport %s, camera zoom %s -> visible world rect %s" % [
-		str(root.get_viewport().get_visible_rect().size),
-		str(_main.camera.zoom if "camera" in _main and _main.camera != null else Vector2.ONE),
-		str(_screen_rect().size)])
-	print("[DENSITY] spawn ring %.0f-%.0f units from the player" % [
-		float(_main.spawn_radius_min), float(_main.spawn_radius_max)])
-	print("[DENSITY]")
-	print("[DENSITY]  t(s)  phase     field_avg  field_pk  SCREEN_avg  SCREEN_pk   cap  interval  horde")
-	for r in _rows:
-		print("[DENSITY] %5.0f  %-8s  %9.1f  %8d  %10.1f  %9d  %4d  %8.3f  %5.2f" % [
-			r.t, r.phase, r.field_avg, r.field_peak, r.screen_avg, r.screen_peak,
-			r.cap, r.interval, r.horde])
+	print("[DENSITY] visible world rect %s" % str(_screen_rect().size))
 	# Assertions, so a broken harness cannot pass as a measured result.
 	var last = _rows[_rows.size() - 1]
 	if last.field_peak <= 0:
