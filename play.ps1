@@ -117,19 +117,29 @@ function Find-InDir {
 if (-not $godotBin) { $godotBin = Test-Bin $Godot }
 if (-not $godotBin -and $env:GODOT) { $godotBin = Test-Bin $env:GODOT }
 if (-not $godotBin -and (Test-Path -LiteralPath $GodotPathFile)) {
-	$godotBin = Test-Bin ((Get-Content -LiteralPath $GodotPathFile -Raw).Trim())
+	$remembered_raw = Get-Content -LiteralPath $GodotPathFile -Raw
+	# An empty remembered file would make .Trim() throw on $null and take the
+	# whole run down AFTER the pull had already succeeded, which is the worst
+	# possible place to fall over.
+	if ($remembered_raw) { $godotBin = Test-Bin $remembered_raw.Trim() }
 }
 if (-not $godotBin) {
-	foreach ($dir in @(
-		$RepoDir,
-		'C:\Godot',
-		(Join-Path $env:LOCALAPPDATA 'Programs\Godot'),
-		(Join-Path $env:ProgramFiles 'Godot'),
-		(Join-Path $HOME 'Downloads'),
-		(Join-Path $HOME 'Desktop'),
-		(Join-Path $HOME 'scoop\apps\godot\current'),
-		'C:\Program Files (x86)\Steam\steamapps\common\Godot Engine'
+	# Built with an explicit null guard per entry rather than inline Join-Path:
+	# Join-Path throws on a null first argument, and a machine missing any one of
+	# these environment variables would take the search down instead of simply
+	# skipping that directory.
+	$searchDirs = @($RepoDir, 'C:\Godot')
+	foreach ($pair in @(
+		@($env:LOCALAPPDATA, 'Programs\Godot'),
+		@($env:ProgramFiles, 'Godot'),
+		@($HOME, 'Downloads'),
+		@($HOME, 'Desktop'),
+		@($HOME, 'scoop\apps\godot\current')
 	)) {
+		if ($pair[0]) { $searchDirs += (Join-Path $pair[0] $pair[1]) }
+	}
+	$searchDirs += 'C:\Program Files (x86)\Steam\steamapps\common\Godot Engine'
+	foreach ($dir in $searchDirs) {
 		$godotBin = Find-InDir $dir
 		if ($godotBin) { break }
 	}
@@ -152,6 +162,9 @@ if (-not $godotBin) {
 	Warn "  .\play.ps1 -Godot 'C:\Godot\Godot_v4.7.1-stable_win64_console.exe'"
 	Warn ''
 	Warn 'It gets remembered after that, so plain .\play.ps1 works from then on.'
+	Warn ''
+	Warn 'THE PULL ALREADY SUCCEEDED. The repo is up to date either way -- switch'
+	Warn 'to the Godot editor and press F5 if you would rather not bother with this.'
 	exit 0
 }
 
