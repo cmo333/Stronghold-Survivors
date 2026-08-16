@@ -99,6 +99,20 @@ $godotBin = ''
 
 function Test-Bin { param($p) if ($p -and (Test-Path -LiteralPath $p -PathType Leaf)) { return $p } return '' }
 
+# The remembered engine path, or '' if there is not one.
+#
+# A FUNCTION, not two inline reads. Get-Content -Raw returns $null for a
+# zero-byte file and .Trim() on $null throws, and this file is read in two
+# places -- the lookup below and the write-back after it. 03e18ab guarded the
+# first and left the second, in a commit whose entire subject was that bug. Two
+# copies of a fix is one copy too many.
+function Get-RememberedGodot {
+	if (-not (Test-Path -LiteralPath $GodotPathFile)) { return '' }
+	$raw = Get-Content -LiteralPath $GodotPathFile -Raw
+	if (-not $raw) { return '' }
+	return $raw.Trim()
+}
+
 # Within one directory, the console build wins over the plain one.
 function Find-InDir {
 	param($dir)
@@ -116,13 +130,7 @@ function Find-InDir {
 
 if (-not $godotBin) { $godotBin = Test-Bin $Godot }
 if (-not $godotBin -and $env:GODOT) { $godotBin = Test-Bin $env:GODOT }
-if (-not $godotBin -and (Test-Path -LiteralPath $GodotPathFile)) {
-	$remembered_raw = Get-Content -LiteralPath $GodotPathFile -Raw
-	# An empty remembered file would make .Trim() throw on $null and take the
-	# whole run down AFTER the pull had already succeeded, which is the worst
-	# possible place to fall over.
-	if ($remembered_raw) { $godotBin = Test-Bin $remembered_raw.Trim() }
-}
+if (-not $godotBin) { $godotBin = Test-Bin (Get-RememberedGodot) }
 if (-not $godotBin) {
 	# Built with an explicit null guard per entry rather than inline Join-Path:
 	# Join-Path throws on a null first argument, and a machine missing any one of
@@ -168,9 +176,7 @@ if (-not $godotBin) {
 	exit 0
 }
 
-$remembered = ''
-if (Test-Path -LiteralPath $GodotPathFile) { $remembered = (Get-Content -LiteralPath $GodotPathFile -Raw).Trim() }
-if ($remembered -ne $godotBin) {
+if ((Get-RememberedGodot) -ne $godotBin) {
 	Set-Content -LiteralPath $GodotPathFile -Value $godotBin -NoNewline
 	Write-Host "engine: $godotBin (remembered)"
 }
@@ -186,7 +192,11 @@ if ($ver -notmatch '^4\.7') { Warn "  project.godot declares 4.7 -- this is $ver
 # editor is left alone. PIDs get recycled, so the name is confirmed before
 # anything is signalled.
 if (Test-Path -LiteralPath $PidFile) {
-	$oldPid = (Get-Content -LiteralPath $PidFile -Raw).Trim()
+	# Same $null-Trim trap as the remembered engine path: an interrupted write
+	# leaves a zero-byte .play.pid, Get-Content -Raw returns $null for it, and
+	# .Trim() on $null throws. Third instance of this pattern in one file.
+	$pidRaw = Get-Content -LiteralPath $PidFile -Raw
+	$oldPid = if ($pidRaw) { $pidRaw.Trim() } else { '' }
 	if ($oldPid -match '^\d+$') {
 		$proc = Get-Process -Id ([int]$oldPid) -ErrorAction SilentlyContinue
 		if ($proc) {
