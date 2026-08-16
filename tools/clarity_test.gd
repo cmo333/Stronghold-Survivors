@@ -26,7 +26,8 @@ func _run() -> bool:
 	var ok := true
 
 	print("[CLARITY] ===== 1. PANEL NUMBERS vs CONFIGURED TOWER =====")
-	print("[CLARITY] The panel prints tier_data['damage'/'range'/'fire_rate'] verbatim.")
+	print("[CLARITY] dmg_shown is the SHEET. dmg_real is the configured tower.")
+	print("[CLARITY] panel_dmg is what the upgrade panel now prints -- it must equal dmg_real.")
 	print("[CLARITY]")
 	print("[CLARITY] %-18s %-4s %8s %8s %7s   %8s %8s %7s" % [
 		"tower", "tier", "dmg_shown", "dmg_real", "ratio", "rng_shown", "rng_real", "ratio"])
@@ -56,9 +57,28 @@ func _run() -> bool:
 			var rd: float = real_d / maxf(shown_d, 0.0001)
 			var rr: float = real_r / maxf(shown_r, 0.0001)
 			worst_dmg = maxf(worst_dmg, rd)
-			print("[CLARITY] %-18s %-4d %8.1f %8.1f %6.2fx   %8.1f %8.1f %6.2fx" % [
-				id, t + 1, shown_d, real_d, rd, shown_r, real_r, rr])
-			if absf(rd - 1.0) > 0.01 and t > 0:
+			# What the PANEL now prints, straight off the building. This is the
+			# assertion that matters: the sheet is allowed to disagree with the
+			# tower, the panel is not.
+			var panel_d := 0.0
+			var panel_r := 0.0
+			var panel_f := 0.0
+			if inst.has_method("get_upgrade_preview"):
+				var pv: Dictionary = inst.get_upgrade_preview()
+				var c: Dictionary = pv.get("current", {})
+				panel_d = float(c.get("damage", 0.0))
+				panel_r = float(c.get("range", 0.0))
+				panel_f = float(c.get("fire_rate", 0.0))
+			print("[CLARITY] %-18s %-4d %8.1f %8.1f %6.2fx   %8.1f %8.1f %6.2fx  panel_dmg=%.1f" % [
+				id, t + 1, shown_d, real_d, rd, shown_r, real_r, rr, panel_d])
+			if absf(panel_d - real_d) > 0.05:
+				print("[CLARITY] FAIL: %s T%d panel shows %.2f damage, tower has %.2f" % [id, t + 1, panel_d, real_d])
+				ok = false
+			if absf(panel_r - real_r) > 0.05:
+				print("[CLARITY] FAIL: %s T%d panel shows %.2f range, tower has %.2f" % [id, t + 1, panel_r, real_r])
+				ok = false
+			if absf(panel_f - real_f) > 0.005:
+				print("[CLARITY] FAIL: %s T%d panel shows %.3f rate, tower has %.3f" % [id, t + 1, panel_f, real_f])
 				ok = false
 			inst.queue_free()
 
@@ -118,6 +138,6 @@ func _run() -> bool:
 
 	print("[CLARITY]")
 	print("[CLARITY] worst shown-vs-real damage ratio: %.2fx" % worst_dmg)
-	print("[CLARITY] RESULT: %s" % ("panel matches tower" if ok else "PANEL DISAGREES WITH THE TOWER"))
-	quit(0)
+	print("[CLARITY] RESULT: %s" % ("PASS - panel matches the tower at every tier" if ok else "FAIL - PANEL DISAGREES WITH THE TOWER"))
+	quit(0 if ok else 1)
 	return true

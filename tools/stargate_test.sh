@@ -41,5 +41,5 @@ GODOT_BIN="$(find_godot)"
 [ -n "$GODOT_BIN" ] || { echo "Could not find Godot. Set GODOT=/path/to/Godot (must be 4.7.1)." >&2; exit 2; }
 
 "$GODOT_BIN" --headless --path . --script tools/stargate_test.gd 2>&1 \
-	| grep -E "^\[MYTHIC\]|SCRIPT ERROR|Parse Error"
+	| grep -E "^\[STARGATE\]|SCRIPT ERROR|Parse Error"
 exit "${PIPESTATUS[0]}"

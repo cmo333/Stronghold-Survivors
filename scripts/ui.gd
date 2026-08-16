@@ -488,22 +488,39 @@ func show_upgrade_panel(building: Node) -> void:
 		panel_copy.border_color = tier_colors[next_tier]
 		upgrade_panel.add_theme_stylebox_override("panel", panel_copy)
 	
-	# Build stats description with comparison
+	# Build stats description with comparison.
+	#
+	# Numbers come from the BUILDING, not from structures.json. The sheet is the
+	# pre-transformation value: a tower multiplies damage, range and fire rate by
+	# its infusion table afterwards, so printing the sheet advertised every T3
+	# upgrade at 1/1.65 of the damage it actually delivers. See
+	# building.gd:get_upgrade_preview and tools/clarity_test.sh.
+	#
+	# And it is now genuinely a comparison. The old code computed
+	# `current_tier_data` under this same comment and then never used it, so the
+	# panel showed absolute next-tier figures with nothing to judge them against
+	# -- the player could not tell a +5% upgrade from a +65% one.
 	var stats_text = ""
 	if not def.is_empty():
 		var tier_data = _get_next_tier_data(def, next_tier)
+		var preview: Dictionary = {}
+		if building.has_method("get_upgrade_preview"):
+			preview = building.get_upgrade_preview()
+		var cur: Dictionary = preview.get("current", {})
+		var nxt: Dictionary = preview.get("next", {})
+		if not nxt.is_empty():
+			stats_text += _stat_line("Damage", cur.get("damage", 0.0), nxt.get("damage", 0.0), 0)
+			stats_text += _stat_line("Range", cur.get("range", 0.0), nxt.get("range", 0.0), 0)
+			stats_text += _stat_line("Fire Rate", cur.get("fire_rate", 0.0), nxt.get("fire_rate", 0.0), 1)
+			var dps_now: float = float(cur.get("damage", 0.0)) * float(cur.get("fire_rate", 0.0))
+			var dps_next: float = float(nxt.get("damage", 0.0)) * float(nxt.get("fire_rate", 0.0))
+			# DPS explicitly, because damage and fire rate both move and nobody
+			# multiplies two changing numbers in their head mid-siege. This is
+			# the tower's own output and excludes the global multipliers, which
+			# apply to every tower equally and so cannot inform this decision.
+			stats_text += _stat_line("DPS", dps_now, dps_next, 1)
 		if not tier_data.is_empty():
-			# Get current tier for comparison
-			var current_tier_data = _get_next_tier_data(def, tier) if tier > 0 else tier_data
-			
-			var range_val = int(tier_data.get("range", 0))
-			var damage_val = int(tier_data.get("damage", 0))
-			var rate_val = tier_data.get("fire_rate", 0)
-			
-			stats_text += "Range: %d\n" % range_val
-			stats_text += "Damage: %d\n" % damage_val
-			stats_text += "Fire Rate: %.1f/s\n" % rate_val
-			
+
 			# Special abilities with icons
 			if tier_data.has("pierce_count") and tier_data.get("pierce_count", 1) > 1:
 				stats_text += "★ Pierce %d enemies\n" % tier_data.get("pierce_count")
@@ -545,6 +562,21 @@ func show_upgrade_panel(building: Node) -> void:
 	tween.set_parallel(true)
 	tween.tween_property(upgrade_panel, "scale", Vector2(1, 1), 0.2).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_BACK)
 	tween.tween_property(upgrade_panel, "modulate", Color(1, 1, 1, 1), 0.15)
+
+# "Damage: 14 -> 23  (+65%)". The percentage is the point: an absolute pair
+# still makes the player do the arithmetic, and the whole complaint was that
+# there was no way to tell a good upgrade from a bad one at a glance.
+func _stat_line(label: String, now: float, next_val: float, decimals: int) -> String:
+	var fmt := "%%.%df" % decimals
+	var a := fmt % now
+	var b := fmt % next_val
+	if now <= 0.0001:
+		return "%s: %s\n" % [label, b]
+	var pct: float = (next_val / now - 1.0) * 100.0
+	if absf(pct) < 0.5:
+		return "%s: %s\n" % [label, b]
+	return "%s: %s → %s  (%+.0f%%)\n" % [label, a, b, pct]
+
 
 func hide_upgrade_panel() -> void:
 	if upgrade_panel != null and upgrade_panel.visible:

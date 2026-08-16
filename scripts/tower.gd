@@ -1334,13 +1334,33 @@ func _set_anim_active(active: bool, delta: float) -> void:
 			body_sprite.stop()
 			body_sprite.frame = 0
 
+# The infusion multipliers the panel has to show, applied with the SAME table
+# and the SAME index arithmetic as _apply_tier_stats. infusion_index there is
+# clampi(upgrade_level - 1, 0, 2), and upgrade_level is tier + 1, so the index
+# is the tier -- measured and confirmed by tools/clarity_test.sh, not assumed.
+func _preview_stats(tier_data: Dictionary, tier_index: int) -> Dictionary:
+	var s := super._preview_stats(tier_data, tier_index)
+	var i := clampi(tier_index, 0, 2)
+	s["damage"] = float(s["damage"]) * float(ESSENCE_INFUSION_DAMAGE_MULT[i])
+	s["range"] = float(s["range"]) * float(ESSENCE_INFUSION_RANGE_MULT[i])
+	s["fire_rate"] = float(s["fire_rate"]) * float(ESSENCE_INFUSION_RATE_MULT[i])
+	return s
+
+# Price of the next tier, whenever a next tier EXISTS.
+#
+# This used to return 0 when can_upgrade() was false, and can_upgrade() is false
+# during the 0.5s post-upgrade cooldown -- so a panel refresh inside that window
+# advertised the next infusion as costing nothing. Gating the ACTION on the
+# cooldown is right; gating the displayed PRICE on it is not. build_manager
+# already checks can_upgrade() before it reads either of these
+# (build_manager.gd:494), so the cooldown still blocks the purchase.
 func get_upgrade_cost() -> int:
-	if not can_upgrade():
+	if tier + 1 > _max_tier():
 		return 0
 	return ESSENCE_INFUSION_GOLD_COST
 
 func get_upgrade_essence_cost() -> int:
-	if not can_upgrade():
+	if tier + 1 > _max_tier():
 		return 0
 	return ESSENCE_INFUSION_ESSENCE_COST
 

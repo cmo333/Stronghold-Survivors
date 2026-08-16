@@ -85,6 +85,38 @@ func get_upgrade_essence_cost() -> int:
 	var next_tier = StructureDB.get_tier(definition, tier + 1)
 	return int(next_tier.get("essence_cost", 0))
 
+
+# What the player HAS and what they WOULD GET, as the building will actually
+# have them.
+#
+# The upgrade panel used to read tier_data["damage"] straight out of
+# structures.json and print it. For every structure but a tower that is correct.
+# For a tower it is not: _apply_tier_stats multiplies damage, range and fire
+# rate by ESSENCE_INFUSION_*_MULT afterwards, so the panel advertised a T3
+# upgrade at 1/1.65 of the damage it delivers and a 500-gold purchase read as a
+# worse deal than it was.
+#
+# The fix is this method rather than the same multiply repeated in ui.gd. A UI
+# that re-derives a transformation the model owns is a second copy of it, and
+# the two drift the moment one changes -- which is precisely how the panel got
+# out of step to begin with. The UI asks; the building answers.
+func get_upgrade_preview() -> Dictionary:
+	var out := {"current": {}, "next": {}}
+	out["current"] = _preview_stats(StructureDB.get_tier(definition, tier), tier)
+	if can_upgrade():
+		out["next"] = _preview_stats(StructureDB.get_tier(definition, tier + 1), tier + 1)
+	return out
+
+
+# Base implementation is the tier data verbatim, which is right for every
+# structure that does not transform it. tower.gd overrides.
+func _preview_stats(tier_data: Dictionary, _tier_index: int) -> Dictionary:
+	return {
+		"damage": float(tier_data.get("damage", 0.0)),
+		"range": float(tier_data.get("range", 0.0)),
+		"fire_rate": float(tier_data.get("fire_rate", 0.0)),
+	}
+
 func upgrade() -> void:
 	if not can_upgrade():
 		return
