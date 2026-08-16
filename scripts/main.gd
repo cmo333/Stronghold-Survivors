@@ -499,11 +499,28 @@ var spawn_radius_max = 580.0
 var max_enemies_cap_base = 340
 var max_enemies_cap = 340
 const HORDE_MINUTE_MULT_STEP = 0.22
+# A flat step on top of the per-minute ramp, one per five minutes elapsed:
+# +10% at 5:00, +20% at 10:00, +30% at 15:00. Additive rather than compounding,
+# because "a flat 10% every five minutes" is what it says -- compounding would
+# reach 1.61 by 25:00 instead of 1.50 and drift further the longer a run goes.
+#
+# Capped so an indefinite overrun cannot walk it to infinity; HORDE_MULT_MAX
+# already bounds the per-minute term and this needs the same treatment.
+const HORDE_FIVE_MIN_STEP = 0.10
+const HORDE_FIVE_MIN_MAX = 2.0
 const HORDE_MULT_MAX = 3.0
-# Raised with the density pass. FIRST KNOB TO PULL BACK if frames drop: the
-# adaptive scaler trims FX, particles and projectiles but it does NOT trim
-# enemy count, so nothing downstream rescues a cap set too high.
-const HORDE_CAP_HARD_LIMIT = 680
+# Raised again with the five-minute step, and it had to be: the step multiplies
+# a value this then clamps, so at 680 everything past roughly 6:00 was pinned
+# and the +10% at 10:00, 15:00 and 20:00 added no bodies at all -- only a
+# slightly shorter interval. The table wants 1217 at 10:00 and 1509 at 15:00, so
+# this is still the binding constraint late on; it is a deliberate ceiling, not
+# a target.
+#
+# FIRST KNOB TO PULL BACK if frames drop. The adaptive scaler trims FX,
+# particles and projectiles but it does NOT trim enemy count, so nothing
+# downstream rescues a cap set too high, and frame cost at this count has NOT
+# been measured on real hardware -- only enemy counts have.
+const HORDE_CAP_HARD_LIMIT = 900
 # FFA spawns more aggressively than solo so every player faces a denser horde.
 # These are the *base* (2-player) multipliers; the live values scale further with
 # the live player count via _ffa_participant_count() so a full lobby (lots of
@@ -3448,7 +3465,22 @@ func _get_horde_count_multiplier(time_sec: float) -> float:
 	if time_sec < EARLY_GAME_HORDE_RAMP_TIME:
 		var t = clampf(time_sec / EARLY_GAME_HORDE_RAMP_TIME, 0.0, 1.0)
 		target = lerpf(1.0, target, t)
+	# Deliberately OUTSIDE the early-game lerp above: the first five-minute step
+	# lands at 5:00, long after that ramp has finished, so easing it in would
+	# only mean the step does not arrive when the clock says it should.
+	target *= _five_minute_step(time_sec)
 	return target * _extraction_count_multiplier() * difficulty_count_mult()
+
+## Flat +10% per completed five minutes. Lives here, in the ONE multiplier that
+## already drives both the spawn cap and the spawn interval, rather than being
+## applied at either of those separately -- and deliberately NOT folded into
+## _pack_size(), which keeps its own curve. Run length is already expressed by
+## the per-minute ramp and by this step; adding it to pack size as well would be
+## a third count of the same axis, which is the exact shape of the boss health
+## bug (fca9ca6).
+func _five_minute_step(time_sec: float) -> float:
+	var steps := floori(maxf(time_sec, 0.0) / 300.0)
+	return clampf(1.0 + float(steps) * HORDE_FIVE_MIN_STEP, 1.0, HORDE_FIVE_MIN_MAX)
 
 func difficulty_count_mult() -> float:
 	"""Body-count half of the global balance knob. Also read by the wave manager
