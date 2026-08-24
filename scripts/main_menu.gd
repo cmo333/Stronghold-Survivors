@@ -526,7 +526,10 @@ func _show_root_menu() -> void:
 
 	_content.add_child(_spacer(6))
 	_content.add_child(_make_button("PLAY", _on_play))
-	_content.add_child(_make_button("FFA (PROTOTYPE)", _on_ffa))
+	# FFA (PROTOTYPE) removed from the menu: the online free-for-all is ~2,000
+	# lines of frozen prototype (NORTHSTAR.md, "Deliberately deferred") and the
+	# button was a door into a lobby for a mode that does not exist. _on_ffa and
+	# the net code stay for if it ever does.
 	_content.add_child(_make_button("HEROES", _show_heroes_panel))
 	_content.add_child(_make_button("LEVELS", _show_levels_panel))
 	_content.add_child(_make_button("MODIFIERS", _show_modifiers_panel))

@@ -1889,7 +1889,14 @@ func _ready() -> void:
 	_spawn_props()
 	_spawn_initial_breakables()
 	_spawn_environmental_particles()
-	_spawn_resource_zones()
+	# Resource zones OFF: the pulsing gold circles were the visible half of the
+	# cut zone/relocation mechanic and read as UI for something that no longer
+	# exists. Not spawning is the whole change -- every consumer of
+	# resource_zones (get_zone_at, minimap, bot_controller, resource_generator's
+	# membership check) already guards the empty array, and the blight tiles only
+	# paint over placed zones. _spawn_resource_zones() and resource_zone.gd stay
+	# on disk, frozen like the multiplayer prototype, for if zones return.
+	#_spawn_resource_zones()
 	_apply_play_bounds()
 	_reset_run_stats()
 	_set_pause_allowed(false)
