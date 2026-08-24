@@ -1,0 +1,155 @@
+{
+  "_note": [
+    "The tables a run is rolled from. See NORTHSTAR.md ('What a run is') and",
+    "docs/RACE_BRIEF.md (the capture format).",
+    "",
+    "Honesty about what is wired, so nothing here reads as a promise the code",
+    "does not keep:",
+    "  races[].towers    -- REAL. Every id must resolve in data/structures.json;",
+    "                       tools/manifest_test.sh asserts it.",
+    "  races[].planned   -- NOT BUILT. Design captured from RACE_BRIEF.md so it",
+    "                       lives in data rather than only in prose. The manifest",
+    "                       never offers these.",
+    "  races[].bodies    -- REAL. Ids from the `characters` table in main.gd.",
+    "  regions[].terrain -- REAL. Keys of LEVEL_TERRAIN in scripts/ground.gd.",
+    "  modifiers         -- ROLLED BUT INERT. Nothing reads them yet. They exist",
+    "                       so the axis is exercised and testable; each carries",
+    "                       wired=false until something actually consumes it."
+  ],
+
+  "races": [
+    {
+      "id": "corporate",
+      "name": "Corporate",
+      "weight": 1,
+      "register": "cyberpunk — chrome, wet neon, corporate signage",
+      "attitude": "The Rift is an asset class. Everything they build is instrumented, branded and depreciating.",
+      "bodies": ["warlock", "reaper", "hunter", "hunter_classic", "pyromancer"],
+      "towers": [
+        "arrow_turret",
+        "cannon_tower",
+        "tesla_tower",
+        "spike_burst_tower",
+        "flamethrower_tower"
+      ],
+      "planned": [
+        {
+          "id": "tentacle_node",
+          "name": "Tentacle Node",
+          "shape": "radius",
+          "reach_tiles": 2.0,
+          "cadence": "continuous",
+          "cost_note": "buildable today — damage_enemies_in_radius at 64px"
+        },
+        {
+          "id": "flame_jet",
+          "name": "Flame Jet",
+          "shape": "cone",
+          "reach_tiles": 3.0,
+          "cadence": "continuous",
+          "cost_note": "re-tune of flamethrower_tower's existing cone, plus a burn hookup"
+        },
+        {
+          "id": "airport",
+          "name": "Airport",
+          "shape": "spawned_unit",
+          "reach_tiles": 0.0,
+          "cadence": "persistent",
+          "cost_note": "genuinely new — allies chase, they do not patrol, and nothing sweeps"
+        }
+      ],
+      "arrivals": [
+        {
+          "id": "corporate_quarterly",
+          "weight": 1,
+          "lines": [
+            "They pushed the cybernetics until the wetware answered back.",
+            "What answered was the Rift. It had been there the whole time.",
+            "By the next quarter it had a line item."
+          ]
+        },
+        {
+          "id": "corporate_noticed",
+          "weight": 1,
+          "lines": [
+            "Nobody travelled here. Someone noticed.",
+            "The noticing was patented within the hour."
+          ]
+        },
+        {
+          "id": "corporate_asset",
+          "weight": 1,
+          "lines": [
+            "The consciousness of the world was surveyed, valued, and depreciated",
+            "over seven years.",
+            "You are the equipment sent to protect the write-down."
+          ]
+        },
+        {
+          "id": "corporate_signal",
+          "weight": 1,
+          "lines": [
+            "An implant carried a signal it was never specified to carry.",
+            "The engineers called it a fault until Legal called it an opportunity.",
+            "You are standing inside the fault."
+          ]
+        }
+      ]
+    }
+  ],
+
+  "regions": [
+    {
+      "id": "graveyard",
+      "name": "The Interred Ground",
+      "weight": 3,
+      "terrain": "graveyard",
+      "blurb": "Somebody has been dying here longer than anyone has been arriving."
+    },
+    {
+      "id": "space",
+      "name": "Salvage Deck",
+      "weight": 1,
+      "terrain": "space",
+      "blurb": "Plating and hull. Whatever this was, it was built to go somewhere."
+    }
+  ],
+
+  "modifiers": [
+    {
+      "id": "dense_horde",
+      "name": "Dense",
+      "weight": 2,
+      "wired": false,
+      "blurb": "More of them arrive at once."
+    },
+    {
+      "id": "lean_purse",
+      "name": "Lean",
+      "weight": 2,
+      "wired": false,
+      "blurb": "The ground gives up less."
+    },
+    {
+      "id": "elite_pressure",
+      "name": "Attended",
+      "weight": 1,
+      "wired": false,
+      "blurb": "Something better-made walks with them."
+    },
+    {
+      "id": "long_dusk",
+      "name": "Long Dusk",
+      "weight": 1,
+      "wired": false,
+      "blurb": "The light goes early and does not come back."
+    },
+    {
+      "id": "thin_ground",
+      "name": "Thin Ground",
+      "weight": 1,
+      "wired": false,
+      "blurb": "Less of the region is worth standing on."
+    }
+  ]
+}
