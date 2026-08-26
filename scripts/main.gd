@@ -328,6 +328,17 @@ var characters = [
 	}
 ]
 var selected_character = 0
+
+# --- What this run takes from the Rift roll ----------------------------------
+# Cached once at _ready from RunManifest.current (null for harnesses and direct
+# scene runs, in which case all of this is inert: every scene allowed, every
+# multiplier 1.0). The roster is the set of enemy scenes whose climate range
+# overlaps the rolled primary biome's -- see data/rift.json and
+# docs/WORLD_FORMULA.md. Bosses are rolled on the manifest (boss_id) but the
+# BOSS_SCHEDULE below is NOT yet driven by it.
+var _rift_allowed_scenes: Dictionary = {}
+var _rift_horde_mult: float = 1.0
+var _rift_gold_mult: float = 1.0
 var building_effects = {
 	"armory_damage": {},
 	"tech_rate": {}
@@ -1792,6 +1803,16 @@ func _log_draft_telemetry() -> void:
 func _ready() -> void:
 	randomize()
 	add_to_group("game")
+	# Consume the Rift roll, if a deal happened (PLAY sets one; harnesses that
+	# instantiate this scene directly get the inert defaults).
+	var manifest_script: GDScript = load("res://scripts/run_manifest.gd")
+	if manifest_script != null and manifest_script.current != null:
+		var rift = manifest_script.current
+		_rift_allowed_scenes = rift.allowed_enemy_scenes()
+		_rift_horde_mult = rift.modifier_effect("horde_mult")
+		_rift_gold_mult = rift.modifier_effect("gold_mult")
+		print("[RIFT] run consumes: %d enemy types, horde x%.2f, gold x%.2f" % [
+			_rift_allowed_scenes.size(), _rift_horde_mult, _rift_gold_mult])
 	set_process_unhandled_input(true)
 	_ensure_input_map()
 	_settings_manager = _get_settings_manager()
@@ -3476,7 +3497,10 @@ func _get_horde_count_multiplier(time_sec: float) -> float:
 	# lands at 5:00, long after that ramp has finished, so easing it in would
 	# only mean the step does not arrive when the clock says it should.
 	target *= _five_minute_step(time_sec)
-	return target * _extraction_count_multiplier() * difficulty_count_mult()
+	# The rolled "Dense" modifier lands here, at the single choke point every
+	# spawn count already flows through -- not in _pack_size, which would be a
+	# second count of the same axis (the boss-health-bug shape, fca9ca6).
+	return target * _extraction_count_multiplier() * difficulty_count_mult() * _rift_horde_mult
 
 ## Flat +10% per completed five minutes. Lives here, in the ONE multiplier that
 ## already drives both the spawn cap and the spawn interval, rather than being
@@ -4443,6 +4467,16 @@ func _pick_enemy_scene() -> PackedScene:
 			break
 	if pool.is_empty():
 		return ENEMY_SCENE
+	# The world decides who belongs in it: keep only the scenes in the rolled
+	# roster. A filter that empties the pool falls back to the full one -- a
+	# thin roster must never mean no enemies.
+	if not _rift_allowed_scenes.is_empty():
+		var filtered: Array = []
+		for entry in pool:
+			if _rift_allowed_scenes.has(str((entry[0] as PackedScene).resource_path)):
+				filtered.append(entry)
+		if not filtered.is_empty():
+			pool = filtered
 	return _weighted_pick(pool)
 
 func _weighted_pick(pool: Array) -> PackedScene:
@@ -5582,7 +5616,9 @@ func damage_enemies_in_radius(position: Vector2, radius: float, damage: float, s
 func add_resources(amount: int, owner_id: int = 0) ->void:
 	var applied = amount
 	if amount > 0:
-		applied = max(1, int(round(float(amount) * RESOURCE_GAIN_MULT)))
+		# _rift_gold_mult: the rolled "Lean" modifier. Gains only -- a spend
+		# routed through here as a negative must never be discounted.
+		applied = max(1, int(round(float(amount) * RESOURCE_GAIN_MULT * _rift_gold_mult)))
 	if is_solo():
 		resources += applied
 		if applied > 0:

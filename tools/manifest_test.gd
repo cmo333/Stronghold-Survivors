@@ -15,7 +15,8 @@ extends SceneTree
 
 const EXPECTED := [
 	"arithmetic", "determinism", "varies", "independence",
-	"weighting", "modifier_bounds", "tables", "sample"
+	"weighting", "modifier_bounds", "tables",
+	"formula", "composition", "roster", "sample"
 ]
 
 var _f := 0
@@ -48,9 +49,11 @@ func _process(_d: float) -> bool:
 		return true
 
 	var tables: Dictionary = DB.tables()
-	print("[MANIFEST] tables: %d races, %d regions, %d modifiers" % [
+	print("[MANIFEST] tables: %d races, %d biomes, %d enemies, %d bosses, %d modifiers" % [
 		(tables.get("races", []) as Array).size(),
-		(tables.get("regions", []) as Array).size(),
+		(tables.get("biomes", []) as Array).size(),
+		(tables.get("enemies", []) as Array).size(),
+		(tables.get("bosses", []) as Array).size(),
 		(tables.get("modifiers", []) as Array).size()])
 
 	_check_arithmetic(RM)
@@ -60,6 +63,9 @@ func _process(_d: float) -> bool:
 	_check_weighting(RM)
 	_check_modifier_bounds(RM, tables)
 	_check_tables_are_true(DB, SDB)
+	_check_formula(RM, DB)
+	_check_composition(RM, DB, tables)
+	_check_roster(RM, DB)
 	_show_sample(RM)
 
 	for name in EXPECTED:
@@ -126,11 +132,15 @@ func _check_varies(RM: GDScript, tables: Dictionary) -> void:
 
 	var races: Array = tables.get("races", [])
 	var first_race: Dictionary = {} if races.is_empty() else races[0]
+	var wired_count := 0
+	for b in tables.get("biomes", []):
+		if bool((b as Dictionary).get("wired", false)):
+			wired_count += 1
 	var expect := {
 		"race": races.size(),
 		"body": (first_race.get("bodies", []) as Array).size(),
 		"arrival": (first_race.get("arrivals", []) as Array).size(),
-		"region": (tables.get("regions", []) as Array).size(),
+		"region": wired_count,
 		"modifiers": (tables.get("modifiers", []) as Array).size()
 	}
 	for axis in ["race", "body", "arrival", "region", "modifiers"]:
@@ -157,7 +167,8 @@ func _check_axis_independence(RM: GDScript, tables: Dictionary) -> void:
 		var a = RM.roll(s, tables)
 		var b = RM.roll(s, grown)
 		if a.race_id != b.race_id or a.body_id != b.body_id \
-				or a.arrival_id != b.arrival_id or a.region_id != b.region_id:
+				or a.arrival_id != b.arrival_id or a.region_id != b.region_id \
+				or a.accent_ids != b.accent_ids or a.boss_id != b.boss_id:
 			if drifted == 0:
 				_fail("growing the modifier table re-dealt seed %d: %s -> %s" % [
 					s, a.describe(), b.describe()])
@@ -176,7 +187,7 @@ func _check_weighting(RM: GDScript) -> void:
 			{"id": "heavy", "weight": 3, "bodies": ["x"], "arrivals": [{"id": "a", "weight": 1}]},
 			{"id": "light", "weight": 1, "bodies": ["x"], "arrivals": [{"id": "a", "weight": 1}]}
 		],
-		"regions": [{"id": "r", "weight": 1}],
+		"biomes": [{"id": "r", "weight": 1, "wired": true}],
 		"modifiers": [{"id": "m", "weight": 1}]
 	}
 	var heavy := 0
@@ -249,20 +260,162 @@ func _check_tables_are_true(DB: GDScript, SDB: GDScript) -> void:
 				_fail("race %s lists body '%s', absent from main.gd characters" % [
 					str((race as Dictionary).get("id", "?")), bid])
 
-	# Region terrain must be a key ground.gd actually knows.
+	# A WIRED biome's terrain must be a key ground.gd actually knows -- wired is
+	# a promise that the primary can be built. Unwired biomes need no terrain.
 	var ground: GDScript = load("res://scripts/ground.gd")
 	var terrain: Dictionary = ground.get_script_constant_map().get("LEVEL_TERRAIN", {})
 	if terrain.is_empty():
 		_fail("read zero terrain keys off ground.gd -- this check is not measuring anything")
-	for region in DB.regions():
-		var t: String = str((region as Dictionary).get("terrain", ""))
-		if not terrain.has(t):
-			_fail("region %s wants terrain '%s'; ground.gd knows %s" % [
-				str((region as Dictionary).get("id", "?")), t, str(terrain.keys())])
+	for biome in DB.biomes():
+		var bd := biome as Dictionary
+		if bool(bd.get("wired", false)) and not terrain.has(str(bd.get("terrain", ""))):
+			_fail("wired biome %s wants terrain '%s'; ground.gd knows %s" % [
+				str(bd.get("id", "?")), str(bd.get("terrain", "")), str(terrain.keys())])
 
-	print("[MANIFEST] tables: %d characters and %d terrain keys read; towers resolve in StructureDB" % [
-		known.size(), terrain.size()])
+	# Enemy scenes and boss scripts must exist -- the roster filter matches on
+	# these paths, and a path that resolves to nothing silently filters forever.
+	for e in DB.enemies():
+		var path := str((e as Dictionary).get("scene", ""))
+		if not ResourceLoader.exists(path):
+			_fail("enemy %s scene missing: %s" % [str((e as Dictionary).get("id", "?")), path])
+	for boss in DB.bosses():
+		var spath := str((boss as Dictionary).get("script", ""))
+		if not ResourceLoader.exists(spath):
+			_fail("boss %s script missing: %s" % [str((boss as Dictionary).get("id", "?")), spath])
+
+	# Every climate range must be well-formed: all four axes, lo <= hi, 0..3.
+	var tagged: Array = DB.biomes() + DB.enemies() + DB.bosses()
+	for entry in tagged:
+		var ed := entry as Dictionary
+		var axes: Dictionary = ed.get("axes", {})
+		for axis in RM_AXES:
+			var r: Array = axes.get(axis, [])
+			if r.size() != 2 or int(r[0]) > int(r[1]) or int(r[0]) < 0 or int(r[1]) > 3:
+				_fail("%s has a malformed %s range: %s" % [str(ed.get("id", "?")), axis, str(r)])
+
+	print("[MANIFEST] tables: %d characters, %d terrain keys, %d enemies, %d bosses all resolve" % [
+		known.size(), terrain.size(), DB.enemies().size(), DB.bosses().size()])
 	_mark("tables")
+
+
+const RM_AXES := ["heat", "light", "wet", "depth"]
+
+
+# The user-facing truths of the climate space, locked as assertions against the
+# REAL table. If a retune of the axes breaks one of these, the design broke,
+# whatever the numbers say: lava never mixes with forest or ocean, caves mix
+# with almost everything because underground is insulated, the radiant plains
+# accept forest but not lava, and the salvage deck is a sealed hull that mixes
+# with nothing organic.
+func _check_formula(RM: GDScript, DB: GDScript) -> void:
+	var truths := [
+		["lava_fields", "forest", false],
+		["lava_fields", "ocean", false],
+		["lava_fields", "caves", true],
+		["forest", "ocean", true],
+		["forest", "caves", true],
+		["graveyard", "caves", true],
+		["graveyard", "forest", true],
+		["luminous_plains", "forest", true],
+		["luminous_plains", "lava_fields", false],
+		["salvage_deck", "forest", false],
+		["salvage_deck", "lava_fields", false]
+	]
+	for t in truths:
+		var a: Dictionary = DB.get_biome(t[0])
+		var b: Dictionary = DB.get_biome(t[1])
+		if a.is_empty() or b.is_empty():
+			_fail("formula truth references a missing biome: %s x %s" % [t[0], t[1]])
+			continue
+		var got: bool = RM.climate_compatible(a.get("axes", {}), b.get("axes", {}))
+		if got != bool(t[2]):
+			_fail("formula: %s x %s should be %s, the axes say %s" % [t[0], t[1], t[2], got])
+	print("[MANIFEST] formula: %d compatibility truths hold" % truths.size())
+	_mark("formula")
+
+
+# Composition: the primary always carries real art, accents are always legal
+# guests, and the boss is always an intruder where the table makes one possible.
+func _check_composition(RM: GDScript, DB: GDScript, tables: Dictionary) -> void:
+	# Both wired primaries must HAVE intruders, or boss-as-intruder is
+	# unfalsifiable and the fallback path runs silently forever.
+	for primary_id in ["graveyard", "salvage_deck"]:
+		var primary: Dictionary = DB.get_biome(primary_id)
+		var intruders := 0
+		for boss in DB.bosses():
+			if not RM.climate_compatible((boss as Dictionary).get("axes", {}), primary.get("axes", {})):
+				intruders += 1
+		if intruders == 0:
+			_fail("no boss is an intruder vs %s -- the inversion means nothing there" % primary_id)
+
+	var bad := 0
+	for s in range(0, 400):
+		var m = RM.roll(s, tables)
+		var primary: Dictionary = DB.get_biome(m.region_id)
+		if not bool(primary.get("wired", false)):
+			_fail("seed %d rolled unwired primary '%s'" % [s, m.region_id]); bad += 1; break
+		if m.accent_ids.size() > 2:
+			_fail("seed %d rolled %d accents" % [s, m.accent_ids.size()]); bad += 1; break
+		for aid in m.accent_ids:
+			if aid == m.region_id:
+				_fail("seed %d rolled its primary as an accent" % s); bad += 1
+			var accent: Dictionary = DB.get_biome(aid)
+			if not RM.climate_compatible(accent.get("axes", {}), primary.get("axes", {})):
+				_fail("seed %d: accent %s is not compatible with primary %s" % [s, aid, m.region_id]); bad += 1
+		var boss: Dictionary = DB.get_boss(m.boss_id)
+		if boss.is_empty():
+			_fail("seed %d rolled no boss" % s); bad += 1
+		elif RM.climate_compatible(boss.get("axes", {}), primary.get("axes", {})):
+			_fail("seed %d: boss %s is NATIVE to %s -- the intruder rule failed" % [
+				s, m.boss_id, m.region_id]); bad += 1
+		if bad > 0:
+			break
+	if bad == 0:
+		print("[MANIFEST] composition: 400 seeds -- primaries wired, accents legal, bosses intrude")
+	_mark("composition")
+
+
+# The roster is what the formula says it is, and the two shipped worlds get
+# exactly the game they should: the graveyard keeps every enemy the game spawns
+# today (the pivot must not thin the current game), and the salvage deck keeps
+# only the mass and the ghosts -- a dead ship haunted, which is the first time
+# the world composition changes what walks in it.
+func _check_roster(RM: GDScript, DB: GDScript) -> void:
+	var m = RM.new()
+	m.region_id = "graveyard"
+	var grave := {}
+	for e in m.enemy_roster():
+		grave[str((e as Dictionary).get("id", ""))] = true
+	if grave.size() != DB.enemies().size():
+		var missing := []
+		for e in DB.enemies():
+			if not grave.has(str((e as Dictionary).get("id", ""))):
+				missing.append(str((e as Dictionary).get("id", "")))
+		_fail("graveyard roster lost %s -- the pivot thinned the current game" % str(missing))
+
+	m.region_id = "salvage_deck"
+	var deck := {}
+	for e in m.enemy_roster():
+		deck[str((e as Dictionary).get("id", ""))] = true
+	var want := {"husk": true, "banshee": true, "wraith": true}
+	if deck != want:
+		_fail("salvage deck roster is %s, want exactly husk+banshee+wraith" % str(deck.keys()))
+
+	# Modifier effects: wired modifiers multiply, unwired ones are inert, and
+	# an effect nobody rolled is 1.0.
+	m.modifier_ids = ["lean_purse", "dense_horde", "long_dusk"] as Array[String]
+	var gold: float = m.modifier_effect("gold_mult")
+	var horde: float = m.modifier_effect("horde_mult")
+	var nothing: float = m.modifier_effect("does_not_exist")
+	if absf(gold - 0.7) > 0.0001:
+		_fail("gold_mult with lean_purse rolled: %f, want 0.7" % gold)
+	if absf(horde - 1.35) > 0.0001:
+		_fail("horde_mult with dense_horde rolled: %f, want 1.35" % horde)
+	if absf(nothing - 1.0) > 0.0001:
+		_fail("an effect nobody defines returned %f, want 1.0" % nothing)
+
+	print("[MANIFEST] roster: graveyard keeps all %d, salvage deck is husk+ghosts, effects multiply" % grave.size())
+	_mark("roster")
 
 
 func _show_sample(RM: GDScript) -> void:

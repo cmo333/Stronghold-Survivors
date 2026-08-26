@@ -61,6 +61,15 @@ cooks a corridor are two different games. That spread *is* the identity.
 
 Capture format for new races and towers: `docs/RACE_BRIEF.md`.
 
+## The world composes
+
+Regions, enemies and bosses share one climate space (heat, light, wet, depth;
+`docs/WORLD_FORMULA.md`). A region is a rolled primary biome plus compatible
+accents — lava can host caves but never forest, forests take oceans and light,
+the salvage deck mixes with nothing organic. Enemies belong where their ranges
+overlap the world; **the boss is rolled from what the world could NOT have
+produced**, so it reads as an intruder — distinct because it does not fit.
+
 ## The first race is the game you already have
 
 **Corporate** — cyberpunk, chrome and wet neon — reached the Rift by pushing

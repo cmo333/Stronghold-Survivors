@@ -39,7 +39,9 @@ static func tables() -> Dictionary:
 	_ensure_loaded()
 	return {
 		"races": _data.get("races", []),
-		"regions": _data.get("regions", []),
+		"biomes": _data.get("biomes", []),
+		"enemies": _data.get("enemies", []),
+		"bosses": _data.get("bosses", []),
 		"modifiers": _data.get("modifiers", [])
 	}
 
@@ -49,9 +51,19 @@ static func races() -> Array:
 	return _data.get("races", [])
 
 
-static func regions() -> Array:
+static func biomes() -> Array:
 	_ensure_loaded()
-	return _data.get("regions", [])
+	return _data.get("biomes", [])
+
+
+static func enemies() -> Array:
+	_ensure_loaded()
+	return _data.get("enemies", [])
+
+
+static func bosses() -> Array:
+	_ensure_loaded()
+	return _data.get("bosses", [])
 
 
 static func modifiers() -> Array:
@@ -59,25 +71,31 @@ static func modifiers() -> Array:
 	return _data.get("modifiers", [])
 
 
+static func _by_id(entries: Array, id: String) -> Dictionary:
+	for e in entries:
+		if str((e as Dictionary).get("id", "")) == id:
+			return e
+	return {}
+
+
 static func get_race(id: String) -> Dictionary:
-	for r in races():
-		if str((r as Dictionary).get("id", "")) == id:
-			return r
-	return {}
+	return _by_id(races(), id)
 
 
-static func get_region(id: String) -> Dictionary:
-	for r in regions():
-		if str((r as Dictionary).get("id", "")) == id:
-			return r
-	return {}
+static func get_biome(id: String) -> Dictionary:
+	return _by_id(biomes(), id)
+
+
+static func get_enemy(id: String) -> Dictionary:
+	return _by_id(enemies(), id)
+
+
+static func get_boss(id: String) -> Dictionary:
+	return _by_id(bosses(), id)
 
 
 static func get_modifier(id: String) -> Dictionary:
-	for m in modifiers():
-		if str((m as Dictionary).get("id", "")) == id:
-			return m
-	return {}
+	return _by_id(modifiers(), id)
 
 
 # The arrival entry a manifest rolled, looked back up. Arrivals live under the

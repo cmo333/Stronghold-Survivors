@@ -64,8 +64,41 @@ var seed: int = 0
 var race_id: String = ""
 var body_id: String = ""
 var arrival_id: String = ""
-var region_id: String = ""
+var region_id: String = ""          # the primary biome -- carries the terrain
+var accent_ids: Array[String] = []  # compatible guest biomes, flavor scaffold
+var boss_id: String = ""            # rolled from the INCOMPATIBLE set: an intruder
 var modifier_ids: Array[String] = []
+
+
+# --- The climate space ---------------------------------------------------------
+#
+# Every biome, enemy and boss occupies a RANGE on four axes (heat, light, wet,
+# depth; each 0..3, see data/rift.json). Two things are compatible iff their
+# ranges overlap on EVERY axis. One interval test replaces a hand-authored NxN
+# mixing matrix that would need editing every time a biome is added: lava[3,3]
+# and forest[1,2] share no heat value and can never mix; caves span heat[1,3]
+# because underground is insulated, so icy caves, forest caves and lava caves
+# all fall out of the same rule with no special cases.
+#
+# The same space does three jobs:
+#   regions:  accents must be compatible with the primary
+#   enemies:  the roster is exactly the set compatible with the primary
+#   bosses:   INVERTED -- the boss rolls from the incompatible set, because a
+#             boss should read as something the world did not produce
+
+const AXES := ["heat", "light", "wet", "depth"]
+
+static func climate_compatible(a: Dictionary, b: Dictionary) -> bool:
+	for axis in AXES:
+		var ar: Array = a.get(axis, [0, 3])
+		var br: Array = b.get(axis, [0, 3])
+		if int(ar[0]) > int(br[1]) or int(br[0]) > int(ar[1]):
+			return false
+	return true
+
+
+static func _axes_of(entry: Dictionary) -> Dictionary:
+	return entry.get("axes", {})
 
 
 # --- Seed derivation ----------------------------------------------------------
@@ -173,7 +206,39 @@ static func roll(run_seed: int, tables: Dictionary) -> RunManifest:
 	var arrivals: Array = race.get("arrivals", [])
 	m.arrival_id = str(_pick(arrivals, m.rng_for("arrival")).get("id", ""))
 
-	m.region_id = str(_pick(tables.get("regions", []), m.rng_for("region")).get("id", ""))
+	# The region composes: a primary that carries the world (wired -- it has
+	# real terrain art) plus 0-2 compatible accents, which may be unwired
+	# scaffolds. The formula, not a matrix, decides who may sit together.
+	var biomes: Array = tables.get("biomes", [])
+	var wired: Array = []
+	for b in biomes:
+		if bool((b as Dictionary).get("wired", false)):
+			wired.append(b)
+	var primary: Dictionary = _pick(wired, m.rng_for("region"))
+	m.region_id = str(primary.get("id", ""))
+
+	if not primary.is_empty():
+		var guests: Array = []
+		for b in biomes:
+			var bd := b as Dictionary
+			if str(bd.get("id", "")) == m.region_id:
+				continue
+			if climate_compatible(_axes_of(bd), _axes_of(primary)):
+				guests.append(bd)
+		var arng := m.rng_for("accents")
+		m.accent_ids = _pick_distinct(guests, arng.randi_range(0, 2), arng)
+
+		# The boss is an intruder: rolled from what the world could NOT have
+		# produced. If every boss is native (small table, broad primary), fall
+		# back to the full set rather than rolling no boss at all.
+		var bosses: Array = tables.get("bosses", [])
+		var intruders: Array = []
+		for boss in bosses:
+			if not climate_compatible(_axes_of(boss as Dictionary), _axes_of(primary)):
+				intruders.append(boss)
+		if intruders.is_empty():
+			intruders = bosses
+		m.boss_id = str(_pick(intruders, m.rng_for("boss")).get("id", ""))
 
 	var mrng := m.rng_for("modifiers")
 	var count: int = mrng.randi_range(MODIFIERS_MIN, MODIFIERS_MAX)
@@ -236,7 +301,54 @@ func race() -> Dictionary:
 
 
 func region() -> Dictionary:
-	return Tables.get_region(region_id)
+	return Tables.get_biome(region_id)
+
+
+func accents() -> Array:
+	var out: Array = []
+	for id in accent_ids:
+		var b := Tables.get_biome(id)
+		if not b.is_empty():
+			out.append(b)
+	return out
+
+
+func boss() -> Dictionary:
+	return Tables.get_boss(boss_id)
+
+
+# The regular roster is DERIVED, not rolled: exactly the enemies whose climate
+# range overlaps the primary biome's. The world decides who belongs in it.
+func enemy_roster() -> Array:
+	var primary := region()
+	if primary.is_empty():
+		return []
+	var out: Array = []
+	for e in Tables.enemies():
+		if climate_compatible(_axes_of(e as Dictionary), _axes_of(primary)):
+			out.append(e)
+	return out
+
+
+# Scene paths for the roster, in the shape main.gd's spawn filter wants.
+func allowed_enemy_scenes() -> Dictionary:
+	var out: Dictionary = {}
+	for e in enemy_roster():
+		var path := str((e as Dictionary).get("scene", ""))
+		if path != "":
+			out[path] = true
+	return out
+
+
+# The product of one named effect across this run's wired modifiers. 1.0 when
+# nothing rolled touches it, so callers multiply unconditionally.
+func modifier_effect(key: String) -> float:
+	var out := 1.0
+	for id in modifier_ids:
+		var mod := Tables.get_modifier(id)
+		if bool(mod.get("wired", false)):
+			out *= float((mod.get("effects", {}) as Dictionary).get(key, 1.0))
+	return out
 
 
 func arrival() -> Dictionary:
@@ -262,11 +374,14 @@ func to_dict() -> Dictionary:
 		"body": body_id,
 		"arrival": arrival_id,
 		"region": region_id,
+		"accents": accent_ids.duplicate(),
+		"boss": boss_id,
 		"modifiers": modifier_ids.duplicate()
 	}
 
 
 func describe() -> String:
-	return "seed=%d race=%s body=%s region=%s arrival=%s mods=[%s]" % [
-		seed, race_id, body_id, region_id, arrival_id, ", ".join(modifier_ids)
+	return "seed=%d race=%s body=%s region=%s+[%s] boss=%s arrival=%s mods=[%s]" % [
+		seed, race_id, body_id, region_id, ", ".join(accent_ids), boss_id,
+		arrival_id, ", ".join(modifier_ids)
 	]
