@@ -22,6 +22,9 @@ const SUBTITLE := "AGE OF AETHER"
 const QUOTE := "Alexander wept for with the number of worlds infinite he had yet to conquer one"
 const SIGNOFF := "GOOD LUCK"
 
+# By path, not the class_name global -- see run_manifest.gd for why.
+const Run := preload("res://scripts/run_manifest.gd")
+
 # Fixed beats, in seconds from the start.
 const T_STARS_IN := 0.9      # black -> stars fade up, slow drift
 const T_TITLE_OUT := 3.0     # title starts dissolving
@@ -59,6 +62,13 @@ const COLOR_SUBTITLE := Color(0.45, 0.95, 1.0)
 const COLOR_HINT := Color(0.62, 0.60, 0.70)
 # Cooler and dimmer than the title: the quote is meant to be read, not shouted.
 const COLOR_QUOTE := Color(0.86, 0.88, 0.94)
+
+# What the cinematic types. Defaults to the Alexander quote and is replaced in
+# _ready by the rolled arrival, so a missing or empty rift table degrades to the
+# old intro instead of a blank screen. Every timing downstream derives from this
+# string's length (_build_timeline), which is why swapping the text is the whole
+# change -- the reveal, dwell, sign-off, warp and hand-off all reflow to fit.
+var _quote_text: String = QUOTE
 
 var _t := 0.0
 var _stars: Array[Vector3] = []
@@ -103,6 +113,15 @@ func _ready() -> void:
 		return
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	# The Rift roll happens HERE, at boot, because this cinematic is the
+	# arrival: every load is a different story (NORTHSTAR.md). First roller
+	# wins -- a harness that pre-rolled a known seed keeps its roll.
+	if Run.current == null:
+		Run.begin(Run.random_seed())
+	print("[RIFT] ", Run.current.describe())
+	var lines: Array = Run.current.arrival_lines()
+	if not lines.is_empty():
+		_quote_text = "\n".join(lines)
 	_build_timeline()
 	_build_ticks()
 	_seed_stars()
@@ -112,7 +131,7 @@ func _ready() -> void:
 	AudioManager.play_one_shot("chest_charge", Vector2.ZERO, AudioManager.HIGH_PRIORITY)
 
 func _build_timeline() -> void:
-	_quote_end = T_QUOTE + float(QUOTE.length()) / QUOTE_CPS
+	_quote_end = T_QUOTE + float(_quote_text.length()) / QUOTE_CPS
 	_quote_gone = _quote_end + QUOTE_HOLD + TEXT_FADE
 	_signoff_start = _quote_gone + SIGNOFF_GAP
 	_signoff_end = _signoff_start + float(SIGNOFF.length()) / SIGNOFF_CPS
@@ -195,7 +214,7 @@ func _build_text() -> void:
 
 	# The quote is mixed-case and wraps; the sign-off is a single short sting.
 	_quote = Label.new()
-	_quote.text = QUOTE
+	_quote.text = _quote_text
 	_quote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_quote.add_theme_font_size_override("font_size", 20)
@@ -337,13 +356,13 @@ func _update_typed_lines() -> void:
 	if _t >= T_QUOTE:
 		q_a = clampf((_t - T_QUOTE) / 0.25, 0.0, 1.0)
 		var want: int = int(floor((_t - T_QUOTE) * QUOTE_CPS))
-		want = clampi(want, 0, QUOTE.length())
+		want = clampi(want, 0, _quote_text.length())
 		if want > _quote_shown:
 			# One tick for the batch, not per character: a long frame must not
 			# fire six clicks at once.
 			var voiced := false
 			for i in range(_quote_shown, want):
-				if QUOTE[i] != " ":
+				if _quote_text[i] != " ":
 					voiced = true
 			if voiced:
 				_tick(1.0)

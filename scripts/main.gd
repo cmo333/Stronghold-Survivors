@@ -6564,6 +6564,10 @@ func _on_main_menu_pressed() -> void:
 	_force_close_menus()
 	# Restore time scale before leaving the run scene.
 	Engine.time_scale = 1.0
+	# This run is spent. Clearing the roll here means the menu deals a fresh
+	# hand on arrival -- one roll, one run, never a reroll of a run in flight.
+	var manifest_script: GDScript = load("res://scripts/run_manifest.gd")
+	manifest_script.current = null
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 func _handle_game_over_input() -> void:

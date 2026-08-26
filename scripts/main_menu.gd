@@ -7,6 +7,8 @@ extends Control
 # panel frames, themed button textures, animated atmospheric background.
 
 const GAME_SCENE := "res://scenes/main.tscn"
+# By path, not the class_name global -- see run_manifest.gd for why.
+const Run := preload("res://scripts/run_manifest.gd")
 # Play drops into the descent cinematic, which hands off to GAME_SCENE itself.
 const DESCENT_SCENE := "res://scenes/descent.tscn"
 const LOBBY_SCENE := "res://scenes/lobby.tscn"
@@ -518,8 +520,19 @@ func _show_root_menu() -> void:
 	_clear_content()
 	_refresh_cores()
 
+	# The hand you were dealt. The intro rolls at boot; if the last run consumed
+	# the roll (main.gd clears it on the way back here) or the menu was reached
+	# without the intro, deal a fresh one now.
+	if Run.current == null:
+		Run.begin(Run.random_seed())
+	var m = Run.current
+
 	var info := Label.new()
-	info.text = "%s   |   %s   |   %s" % [_hero_display_name(_selected_hero), _level_display_name(_selected_level), _modifier_display_name()]
+	info.text = "%s   |   %s   |   %s   |   SEED %d" % [
+		str(m.race().get("name", m.race_id)).to_upper(),
+		_hero_display_name(m.body_id),
+		str(m.region().get("name", m.region_id)).to_upper(),
+		m.seed]
 	_apply_font(info, 12, COLOR_DIM)
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_content.add_child(info)
@@ -530,8 +543,11 @@ func _show_root_menu() -> void:
 	# lines of frozen prototype (NORTHSTAR.md, "Deliberately deferred") and the
 	# button was a door into a lobby for a mode that does not exist. _on_ffa and
 	# the net code stay for if it ever does.
-	_content.add_child(_make_button("HEROES", _show_heroes_panel))
-	_content.add_child(_make_button("LEVELS", _show_levels_panel))
+	#
+	# HEROES and LEVELS removed with the Rift pivot: you are dealt a hand, not
+	# given a menu (NORTHSTAR.md). The roll above is the whole selection. The
+	# panels and their unlock plumbing stay on disk; _selected_hero and
+	# _selected_level are no longer read by PLAY.
 	_content.add_child(_make_button("MODIFIERS", _show_modifiers_panel))
 	_content.add_child(_make_button("UNLOCKS", _show_unlocks_panel))
 	_content.add_child(_make_button("SETTINGS", _on_settings))
@@ -591,8 +607,12 @@ func _on_play() -> void:
 		net.shutdown()
 	var meta := _meta()
 	if meta != null:
-		meta.pending_hero = _selected_hero
-		meta.pending_level = _selected_level
+		# The run plays the roll, not a selection. pending_* stays the carrier
+		# because main.gd and every harness already read it; the menu just stops
+		# being the author of what goes in.
+		var m = Run.current
+		meta.pending_hero = m.body_id
+		meta.pending_level = str(m.region().get("terrain", "graveyard"))
 		meta.autostart_run = true
 	get_tree().change_scene_to_file(DESCENT_SCENE)
 
