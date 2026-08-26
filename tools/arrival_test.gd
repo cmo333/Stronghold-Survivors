@@ -1,11 +1,12 @@
 extends SceneTree
 
-# Does the boot cinematic actually speak the rolled arrival, and does its
-# timeline reflow to fit? See tools/arrival_test.sh for what each section
-# guards. Same completion-counting shape as manifest_test.gd: a check that
-# errors out partway must show up as missing, not as silence.
+# The PLAY-deals flow, asserted with the real scenes: the boot intro never
+# varies, RunManifest.deal() forwards the hand, and the descent narrates it.
+# See tools/arrival_test.sh for what each section guards. Completion-counting
+# shape as in manifest_test.gd: a check that errors out partway shows up as
+# missing, never as silence.
 
-const EXPECTED := ["differing_seeds", "typed_rolled", "reflow", "fallback"]
+const EXPECTED := ["intro_classic", "deal_forwards", "descent_speaks", "descent_fallback"]
 
 var _f := 0
 var _ok := true
@@ -19,15 +20,15 @@ func _mark(name: String) -> void:
 	_done[name] = true
 
 
-func _spawn_intro() -> Control:
-	var intro: Control = (load("res://scenes/intro.tscn") as PackedScene).instantiate()
-	root.add_child(intro)
-	return intro
+func _spawn(path: String) -> Control:
+	var node: Control = (load(path) as PackedScene).instantiate()
+	root.add_child(node)
+	return node
 
 
-func _kill(intro: Control) -> void:
-	root.remove_child(intro)
-	intro.free()
+func _kill(node: Control) -> void:
+	root.remove_child(node)
+	node.free()
 
 
 func _process(_d: float) -> bool:
@@ -42,80 +43,78 @@ func _process(_d: float) -> bool:
 		quit(1)
 		return true
 
-	# Two seeds whose arrival texts differ in LENGTH -- required for the reflow
-	# check to mean anything. If 200 seeds cannot produce two different lengths
-	# the arrival table has collapsed to one entry, and that is itself a failure.
-	var seed_a := -1
-	var seed_b := -1
-	var text_a := ""
-	var text_b := ""
-	for s in range(1, 200):
-		var lines: Array = RM.roll_default(s).arrival_lines()
-		if lines.is_empty():
-			continue
-		var joined: String = "\n".join(lines)
-		if seed_a == -1:
-			seed_a = s
-			text_a = joined
-		elif joined.length() != text_a.length():
-			seed_b = s
-			text_b = joined
-			break
-	if seed_a == -1 or seed_b == -1:
-		_fail("could not find two seeds with different-length arrivals in 200 tries")
+	# The boot cinematic is the game's one fixed text. Even with a live roll
+	# sitting in RunManifest.current it must type Alexander, nothing else.
+	RM.begin(42)
+	var intro := _spawn("res://scenes/intro.tscn")
+	if str(intro._quote.text) != str(intro.QUOTE):
+		_fail("intro deviated from the Alexander quote: '%s'" % str(intro._quote.text).left(60))
 	else:
-		print("[ARRIVAL] seeds %d (%d chars) and %d (%d chars)" % [
-			seed_a, text_a.length(), seed_b, text_b.length()])
-		_mark("differing_seeds")
-
-	# The intro must type OUR roll, not its own and not the Alexander quote.
-	RM.begin(seed_a)
-	var intro := _spawn_intro()
-	var typed: String = str(intro._quote.text)
-	var end_a: float = float(intro._t_end)
-	if typed != text_a:
-		_fail("intro typed %d chars, the roll says %d: '%s'" % [
-			typed.length(), text_a.length(), typed.left(60)])
-	elif typed == intro.QUOTE:
-		_fail("intro typed the Alexander quote despite a live roll")
-	else:
-		print("[ARRIVAL] intro typed the rolled arrival for seed %d" % seed_a)
-		_mark("typed_rolled")
+		print("[ARRIVAL] intro types the Alexander quote, roll or no roll")
+		_mark("intro_classic")
 	_kill(intro)
-
-	# THE REFLOW. The handoff's whole reason for wiring the intro first: every
-	# beat derives from text length, so a different arrival must shift the end
-	# of the cinematic by exactly the character difference over QUOTE_CPS.
-	RM.begin(seed_b)
-	var intro2 := _spawn_intro()
-	var end_b: float = float(intro2._t_end)
-	var want_delta: float = float(text_b.length() - text_a.length()) / float(intro2.QUOTE_CPS)
-	var got_delta: float = end_b - end_a
-	print("[ARRIVAL] reflow: t_end %0.3f -> %0.3f (delta %0.3f, want %0.3f)" % [
-		end_a, end_b, got_delta, want_delta])
-	if absf(got_delta - want_delta) > 0.001:
-		_fail("timeline did not reflow with the text")
-	elif absf(want_delta) < 0.0001:
-		_fail("chosen seeds gave a zero expected delta -- check the seed search")
-	else:
-		_mark("reflow")
-	_kill(intro2)
-
-	# Empty tables must degrade to the old intro, not a blank screen.
-	RM.current = RM.roll(1, {"races": [], "regions": [], "modifiers": []})
-	var intro3 := _spawn_intro()
-	if str(intro3._quote.text) != str(intro3.QUOTE):
-		_fail("empty roll did not fall back to the Alexander quote")
-	else:
-		print("[ARRIVAL] empty tables fall back to the stock quote")
-		_mark("fallback")
-	_kill(intro3)
 	RM.current = null
+
+	# The PLAY press. deal() with a fixed seed must publish the roll and
+	# forward body -> pending_hero and region terrain -> pending_level on the
+	# REAL MetaProgression autoload, because that is the carrier main.gd reads.
+	var meta = root.get_node_or_null("MetaProgression")
+	if meta == null:
+		_fail("MetaProgression autoload not attached -- cannot test the carrier")
+	else:
+		var m = RM.deal(meta, 42)
+		var want_level: String = str(m.region().get("terrain", ""))
+		if RM.current != m:
+			_fail("deal() did not publish the roll to RunManifest.current")
+		elif str(meta.pending_hero) != str(m.body_id):
+			_fail("pending_hero is '%s', the roll dealt '%s'" % [meta.pending_hero, m.body_id])
+		elif str(meta.pending_level) != want_level:
+			_fail("pending_level is '%s', the region says '%s'" % [meta.pending_level, want_level])
+		else:
+			print("[ARRIVAL] deal(seed 42) forwarded body=%s level=%s" % [m.body_id, want_level])
+			_mark("deal_forwards")
+
+	# The descent speaks the dealt arrival -- the real descent.tscn, reading
+	# the roll deal() just published.
+	var expected: String = "\n".join(RM.current.arrival_lines())
+	var descent := _spawn("res://scenes/descent.tscn")
+	var spoken: String = str(descent._message.text)
+	if expected == "":
+		_fail("seed 42 dealt no arrival lines -- table problem, not a descent problem")
+	elif spoken != expected:
+		_fail("descent typed %d chars, the roll says %d: '%s'" % [
+			spoken.length(), expected.length(), spoken.left(60)])
+	elif spoken == str(descent.MESSAGE_LINES):
+		_fail("descent typed the stock message despite a live roll")
+	else:
+		print("[ARRIVAL] descent speaks the dealt arrival (%d chars)" % spoken.length())
+		_mark("descent_speaks")
+	_kill(descent)
+
+	# No roll (direct scene run, broken table) must fall back to the stock
+	# lines, never a silent descent.
+	RM.current = null
+	var descent2 := _spawn("res://scenes/descent.tscn")
+	if str(descent2._message.text) != str(descent2.MESSAGE_LINES):
+		_fail("descent without a roll did not fall back to the stock message")
+	else:
+		print("[ARRIVAL] descent without a roll falls back to the stock message")
+		_mark("descent_fallback")
+	_kill(descent2)
 
 	for name in EXPECTED:
 		if not _done.has(name):
 			_fail("check '%s' never completed -- it errored out partway" % name)
 	print("[ARRIVAL] checks completed: %d of %d" % [_done.size(), EXPECTED.size()])
 	print("[ARRIVAL] RESULT: %s" % ("PASS" if _ok else "FAIL"))
+
+	# The descents started a threaded load of main.tscn that outlives them.
+	# Quitting while it is mid-flight tears resources out from under the loader
+	# thread and prints a wall of spurious "Could not preload resource file"
+	# errors after the RESULT line. Block until it lands, then quit clean.
+	var status := ResourceLoader.load_threaded_get_status("res://scenes/main.tscn")
+	if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS or status == ResourceLoader.THREAD_LOAD_LOADED:
+		ResourceLoader.load_threaded_get("res://scenes/main.tscn")
+
 	quit(0 if _ok else 1)
 	return true

@@ -23,6 +23,9 @@ extends Control
 
 const NEXT_SCENE := "res://scenes/main.tscn"
 
+# By path, not the class_name global -- see run_manifest.gd for why.
+const Run := preload("res://scripts/run_manifest.gd")
+
 # Beats, in seconds.
 const T_SPARK := 1.2         # one point of light, pulsing alone
 const T_WEAVE := 4.2         # the lattice draws itself outward
@@ -223,7 +226,17 @@ func _build_message() -> void:
 
 	_message = Label.new()
 	_message.name = "RiftMessage"
+	# The message is the run's arrival: how THIS roll reached the Rift, dealt
+	# by PLAY a moment ago (RunManifest.deal). The typing runs on
+	# visible_ratio over a fixed beat, so any length of arrival fits the same
+	# window without retiming the sequence. The stock lines remain the
+	# fallback for a direct scene run or an empty table, so the descent never
+	# goes down silent.
 	_message.text = MESSAGE_LINES
+	if Run.current != null:
+		var lines: Array = Run.current.arrival_lines()
+		if not lines.is_empty():
+			_message.text = "\n".join(lines)
 	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_message.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_message.add_theme_font_size_override("font_size", 22)

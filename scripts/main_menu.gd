@@ -520,19 +520,11 @@ func _show_root_menu() -> void:
 	_clear_content()
 	_refresh_cores()
 
-	# The hand you were dealt. The intro rolls at boot; if the last run consumed
-	# the roll (main.gd clears it on the way back here) or the menu was reached
-	# without the intro, deal a fresh one now.
-	if Run.current == null:
-		Run.begin(Run.random_seed())
-	var m = Run.current
-
+	# No hand to show: the Rift deals when PLAY is pressed (RunManifest.deal),
+	# not while you sit on the menu. The menu promises the deal; the descent
+	# narrates what was dealt.
 	var info := Label.new()
-	info.text = "%s   |   %s   |   %s   |   SEED %d" % [
-		str(m.race().get("name", m.race_id)).to_upper(),
-		_hero_display_name(m.body_id),
-		str(m.region().get("name", m.region_id)).to_upper(),
-		m.seed]
+	info.text = "THE RIFT DEALS YOUR HAND ON ENTRY   |   %s" % _modifier_display_name()
 	_apply_font(info, 12, COLOR_DIM)
 	info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_content.add_child(info)
@@ -606,13 +598,12 @@ func _on_play() -> void:
 	if net != null and net.has_method("shutdown"):
 		net.shutdown()
 	var meta := _meta()
+	# THE moment the run comes into existence: press PLAY, get dealt. deal()
+	# rolls everything from one seed and forwards body and region through
+	# pending_hero/pending_level -- the carrier main.gd and every harness
+	# already read. The descent narrates the hand on the way down.
+	Run.deal(meta)
 	if meta != null:
-		# The run plays the roll, not a selection. pending_* stays the carrier
-		# because main.gd and every harness already read it; the menu just stops
-		# being the author of what goes in.
-		var m = Run.current
-		meta.pending_hero = m.body_id
-		meta.pending_level = str(m.region().get("terrain", "graveyard"))
 		meta.autostart_run = true
 	get_tree().change_scene_to_file(DESCENT_SCENE)
 

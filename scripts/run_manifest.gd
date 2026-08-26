@@ -192,6 +192,25 @@ static func begin(run_seed: int) -> RunManifest:
 	return current
 
 
+# The PLAY press. Deals the whole hand for a new run -- lore, race, body,
+# region, modifiers -- and forwards what the run scene consumes today through
+# MetaProgression's pending fields, which main.gd and every harness already
+# read. As more of the world becomes rolled (enemies, towers), this is the one
+# place the forwarding grows.
+#
+# run_seed < 0 (the game's path) means deal at random; a harness passes a fixed
+# seed and gets a provable hand.
+static func deal(meta: Object, run_seed: int = -1) -> RunManifest:
+	var m := begin(random_seed() if run_seed < 0 else run_seed)
+	if meta != null:
+		if "pending_hero" in meta:
+			meta.pending_hero = m.body_id
+		if "pending_level" in meta:
+			meta.pending_level = str(m.region().get("terrain", "graveyard"))
+	print("[RIFT] ", m.describe())
+	return m
+
+
 # The one deliberately non-deterministic call in this file. Everything else
 # derives; this is where a fresh run gets its number, and it is isolated so it is
 # obvious that nothing else rolls.
