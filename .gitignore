@@ -12,6 +12,7 @@ output/
 .play.pid
 .play.godot
 .play.log
+.play.err.log
 
 # Claude Code local state (agent worktrees, per-user settings)
 .claude/
