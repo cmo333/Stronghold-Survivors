@@ -19,3 +19,6 @@ output/
 
 # Windows locked-file-replacement leftovers next to the Steam DLLs
 addons/godotsteam/win64/~*
+
+# Python bytecode from the art generators
+__pycache__/
