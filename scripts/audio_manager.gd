@@ -5,7 +5,19 @@ extends Node
 # Handles SFX, Music, UI sounds with spatial audio
 # ============================================
 
-const MAX_SFX_CHANNELS = 32
+# 32 simultaneous voices turns a big horde into a wall of noise. Combat sounds
+# are also rate-limited and the whole mix ducks as more voices pile on, so a
+# 200-enemy wave stays readable instead of painful.
+const MAX_SFX_CHANNELS = 16
+
+# At most this many combat impacts/deaths may start within the window. Past
+# that the hits still land, they just stop each demanding their own voice.
+const COMBAT_SOUND_BUDGET := 4
+const COMBAT_BUDGET_WINDOW_MS := 130
+# Voices beyond this start attenuating so 12 overlapping sounds are not 12x
+# as loud as one. -3dB per doubling, floored so nothing vanishes entirely.
+const CROWD_DUCK_START := 4
+const CROWD_DUCK_FLOOR_DB := -11.0
 const DEFAULT_PRIORITY = 0
 const HIGH_PRIORITY = 10
 const CRITICAL_PRIORITY = 20
@@ -18,7 +30,9 @@ var ui_bus: int = 3
 
 # Volume settings (0.0 to 1.0)
 var master_volume: float = 1.0
-var sfx_volume: float = 0.8
+var sfx_volume: float = 0.62
+var _combat_window_start: int = 0
+var _combat_window_count: int = 0
 var music_volume: float = 0.6
 var ui_volume: float = 0.9
 
@@ -68,17 +82,22 @@ func _ready() -> void:
 	_update_bus_volumes()
 
 func _any_audio_exists() -> bool:
-	"""Quick check — do any of our audio directories have files?"""
-	for dir_path in ["res://assets/audio/sfx", "res://assets/audio/ui", "res://assets/audio/special"]:
-		if DirAccess.dir_exists_absolute(dir_path):
-			var dir = DirAccess.open(dir_path)
-			if dir != null:
-				dir.list_dir_begin()
-				var file = dir.get_next()
-				while file != "":
-					if not dir.current_is_dir() and (file.ends_with(".wav") or file.ends_with(".ogg") or file.ends_with(".mp3")):
-						return true
-					file = dir.get_next()
+	"""Do any of our known audio resources exist?
+
+	Probe known imported audio resources instead of scanning the raw filesystem.
+	In web/.pck exports the raw .wav source files are NOT packed (only the imported
+	.sample + .import remap), so a DirAccess scan finds nothing and disables all
+	audio. ResourceLoader.exists() honors the import remap and works on desktop
+	AND web. The probe paths mirror one entry per category in _cache_sounds().
+	"""
+	var probe_paths = [
+		"res://assets/audio/sfx/gun_fire_01.wav",
+		"res://assets/audio/ui/click.wav",
+		"res://assets/audio/special/chest_open.wav",
+	]
+	for path in probe_paths:
+		if ResourceLoader.exists(path):
+			return true
 	return false
 
 func _setup_audio_buses() -> void:
@@ -164,10 +183,11 @@ func _cache_sounds() -> void:
 	_cache_sound("wave_start", "res://assets/audio/ui/wave_start.wav", "ui")
 	_cache_sound("level_up", "res://assets/audio/ui/level_up.wav", "ui")
 	
-	# Ambient sounds
-	_cache_sound("generator_hum", "res://assets/audio/ambient/generator_hum.wav", "ambient")
-	_cache_sound("wind", "res://assets/audio/ambient/wind.wav", "ambient")
-	_cache_sound("distant_battle", "res://assets/audio/ambient/distant_battle.wav", "ambient")
+	# No ambient sounds. The three declared here pointed at
+	# res://assets/audio/ambient/, a directory that does not exist, so they
+	# were dropped by the exists() guard in _cache_sound and the "ambient"
+	# category was always empty. Declaring assets that are not there hides
+	# the gap instead of filling it.
 	
 	# Special sounds
 	_cache_sound("chest_open", "res://assets/audio/special/chest_open.wav", "special")
@@ -179,7 +199,54 @@ func _cache_sounds() -> void:
 	_cache_sound("victory", "res://assets/audio/special/victory.wav", "special")
 	_cache_sound("berserk_activate", "res://assets/audio/special/berserk_activate.wav", "special")
 
-func _cache_sound(name: String, path: String, category: String) -> void:
+	# Chest jackpot kit (tools/audio/generate_chest_audio.py)
+	_cache_sound("chest_charge", "res://assets/audio/special/chest_charge.wav", "special")
+	_cache_sound("reveal_common", "res://assets/audio/special/reveal_common.wav", "special")
+	_cache_sound("reveal_rare", "res://assets/audio/special/reveal_rare.wav", "special")
+	_cache_sound("reveal_epic", "res://assets/audio/special/reveal_epic.wav", "special")
+	_cache_sound("reveal_diamond", "res://assets/audio/special/reveal_diamond.wav", "special")
+	_cache_sound("jackpot_fanfare", "res://assets/audio/special/jackpot_fanfare.wav", "special")
+	_cache_sound("coin_cascade", "res://assets/audio/special/coin_cascade.wav", "special")
+
+	_cache_stand_ins()
+
+# Sounds the game asks for that have no file of their own yet. Every one of
+# these was being played by gameplay code and silently dropped: play_one_shot
+# warns and returns when a name is not cached, so *every boss mechanic in the
+# game was mute* -- warnings, phase changes, mortar fire, the lich's teleports
+# and nova, the siegebreaker's shield, all explosions.
+#
+# Pointing them at the nearest sound that does exist is not sound design, it is
+# audibility. When real audio arrives this table is the one place to change: give
+# the name its own file and delete the row.
+const SOUND_STAND_INS := {
+	# name: [path of the stand-in, category]
+	"boss_warning": ["res://assets/audio/ui/wave_start.wav", "special"],
+	"boss_phase": ["res://assets/audio/special/berserk_activate.wav", "special"],
+	"explosion": ["res://assets/audio/sfx/cannon_boom.wav", "impact"],
+	"explosion_large": ["res://assets/audio/special/generator_destroyed.wav", "impact"],
+	"heavy_hit": ["res://assets/audio/sfx/crit_hit.wav", "impact"],
+	"mortar_fire": ["res://assets/audio/sfx/cannon_boom.wav", "weapon"],
+	"nova_charge": ["res://assets/audio/special/chest_charge.wav", "special"],
+	"nova_explosion": ["res://assets/audio/special/generator_destroyed.wav", "impact"],
+	"poison_hit": ["res://assets/audio/sfx/enemy_hit_02.wav", "impact"],
+	"shield_break": ["res://assets/audio/sfx/shield_hit.wav", "impact"],
+	"shield_restore": ["res://assets/audio/ui/upgrade.wav", "special"],
+	"summon": ["res://assets/audio/special/powerup_spawn.wav", "special"],
+	"summon_army": ["res://assets/audio/special/berserk_activate.wav", "special"],
+	"teleport": ["res://assets/audio/special/powerup_pickup.wav", "special"],
+	"teleport_arrive": ["res://assets/audio/special/powerup_spawn.wav", "special"],
+	"button_click": ["res://assets/audio/ui/click.wav", "ui"]
+}
+
+func _cache_stand_ins() -> void:
+	for sound_name in SOUND_STAND_INS.keys():
+		if _sound_cache.has(sound_name):
+			continue  # a real file was registered above; leave it alone
+		var entry: Array = SOUND_STAND_INS[sound_name]
+		_cache_sound(sound_name, str(entry[0]), str(entry[1]))
+
+func _cache_sound(sound_name: String, path: String, category: String) -> void:
 	"""Load a sound and add to category"""
 	if not ResourceLoader.exists(path):
 		# File doesn't exist yet — skip silently to avoid flooding the editor
@@ -187,9 +254,9 @@ func _cache_sound(name: String, path: String, category: String) -> void:
 		return
 	var stream = load(path)
 	if stream != null:
-		_sound_cache[name] = stream
+		_sound_cache[sound_name] = stream
 		if sfx_categories.has(category):
-			sfx_categories[category].append(name)
+			sfx_categories[category].append(sound_name)
 
 # ============================================
 # PUBLIC API
@@ -226,12 +293,18 @@ func play_one_shot(sound_name: String, position: Vector2 = Vector2.ZERO, priorit
 		return
 	
 	player.stream = stream
+	# Critical sounds (boss cues, death, jackpot) stay at full level; everything
+	# else ducks as the mix gets crowded.
+	if priority < CRITICAL_PRIORITY:
+		volume_db += _crowd_duck_db()
 	player.volume_db = volume_db
-	
+	# Slight pitch variation stops rapid repeats sounding like a machine gun.
+	player.pitch_scale = randf_range(0.95, 1.05)
+
 	if position != Vector2.ZERO:
 		player.global_position = position
 		player.attenuation = 1.5
-	
+
 	player.play()
 	
 	# Track active SFX
@@ -271,15 +344,43 @@ func play_weapon_sound(weapon_type: String, position: Vector2) -> void:
 			play_one_shot("arrow_shoot", position, DEFAULT_PRIORITY)
 
 func play_impact_sound(is_crit: bool = false, is_death: bool = false, position: Vector2 = Vector2.ZERO) -> void:
-	"""Play impact sound based on hit type"""
+	"""Play impact sound based on hit type.
+
+	Combat audio is the main source of overwhelm: with a large horde every hit
+	and every death wants a voice. Crits still always play (they are meaningful
+	feedback); ordinary hits and deaths draw from a small shared budget."""
 	if not audio_enabled:
 		return
-	if is_death:
-		play_random_from_category("impact", position, DEFAULT_PRIORITY)
-	elif is_crit:
+	if is_crit:
 		play_one_shot("crit_hit", position, HIGH_PRIORITY)
-	else:
-		play_random_from_category("impact", position, DEFAULT_PRIORITY)
+		return
+	if not _claim_combat_budget():
+		return
+	play_random_from_category("impact", position, DEFAULT_PRIORITY)
+
+func _claim_combat_budget() -> bool:
+	"""True if a combat sound may start now. Sliding window, cheap to run."""
+	var now := Time.get_ticks_msec()
+	if now - _combat_window_start > COMBAT_BUDGET_WINDOW_MS:
+		_combat_window_start = now
+		_combat_window_count = 0
+	if _combat_window_count >= COMBAT_SOUND_BUDGET:
+		return false
+	_combat_window_count += 1
+	return true
+
+func _crowd_duck_db() -> float:
+	"""Attenuate as concurrent voices pile up so overlapping sounds compress
+	instead of summing into clipping-loud mush."""
+	var active := 0
+	for p in _sfx_pool:
+		if p.playing:
+			active += 1
+	if active <= CROWD_DUCK_START:
+		return 0.0
+	var over := float(active - CROWD_DUCK_START)
+	# -3dB per doubling of excess voices, floored.
+	return maxf(CROWD_DUCK_FLOOR_DB, -3.0 * (log(1.0 + over) / log(2.0)))
 
 func play_ui_sound(sound_name: String) -> void:
 	"""Play UI sound (non-spatial)"""
@@ -289,7 +390,9 @@ func play_ui_sound(sound_name: String) -> void:
 		var player = AudioStreamPlayer.new()
 		player.bus = "UI"
 		player.stream = _sound_cache[sound_name]
-		player.finished.connect(func(): player.queue_free())
+		player.finished.connect(func():
+			player.queue_free()
+		)
 		add_child(player)
 		player.play()
 
@@ -399,22 +502,38 @@ func set_ui_volume(volume: float) -> void:
 
 func _update_bus_volumes() -> void:
 	"""Update all audio bus volumes"""
-	AudioServer.set_bus_volume_db(master_bus, linear_to_db(master_volume))
-	AudioServer.set_bus_volume_db(sfx_bus, linear_to_db(sfx_volume))
-	AudioServer.set_bus_volume_db(music_bus, linear_to_db(music_volume))
-	AudioServer.set_bus_volume_db(ui_bus, linear_to_db(ui_volume))
+	if not audio_enabled:
+		return
+	var bus_count := AudioServer.get_bus_count()
+	if master_bus >= 0 and master_bus < bus_count:
+		AudioServer.set_bus_volume_db(master_bus, linear_to_db(master_volume))
+	if sfx_bus >= 0 and sfx_bus < bus_count:
+		AudioServer.set_bus_volume_db(sfx_bus, linear_to_db(sfx_volume))
+	if music_bus >= 0 and music_bus < bus_count:
+		AudioServer.set_bus_volume_db(music_bus, linear_to_db(music_volume))
+	if ui_bus >= 0 and ui_bus < bus_count:
+		AudioServer.set_bus_volume_db(ui_bus, linear_to_db(ui_volume))
 
 func mute_all(muted: bool) -> void:
 	"""Mute or unmute all audio"""
-	AudioServer.set_bus_mute(master_bus, muted)
+	if not audio_enabled:
+		return
+	if master_bus >= 0 and master_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(master_bus, muted)
 
 func mute_sfx(muted: bool) -> void:
 	"""Mute or unmute SFX bus"""
-	AudioServer.set_bus_mute(sfx_bus, muted)
+	if not audio_enabled:
+		return
+	if sfx_bus >= 0 and sfx_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(sfx_bus, muted)
 
 func mute_music(muted: bool) -> void:
 	"""Mute or unmute Music bus"""
-	AudioServer.set_bus_mute(music_bus, muted)
+	if not audio_enabled:
+		return
+	if music_bus >= 0 and music_bus < AudioServer.get_bus_count():
+		AudioServer.set_bus_mute(music_bus, muted)
 
 # ============================================
 # SPATIAL AUDIO

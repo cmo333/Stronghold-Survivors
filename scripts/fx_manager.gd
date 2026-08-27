@@ -19,6 +19,7 @@ const CORPSE_FADE_SCENE = preload("res://scenes/fx/corpse_fade.tscn")
 # Parent nodes
 var _fx_root: Node2D
 var _game: Node
+var _settings_manager: Node = null
 
 # Color constants for damage types
 const COLOR_FIRE = Color(1.0, 0.3, 0.1, 1.0)
@@ -35,364 +36,488 @@ const MAX_POOL_SIZE = 20
 const MAX_FX_CHILDREN = 150  # Global cap on FX to prevent memory issues
 
 func setup(game: Node, fx_root: Node2D) -> void:
-    _game = game
-    _fx_root = fx_root
+	_game = game
+	_fx_root = fx_root
+	_settings_manager = get_node_or_null("/root/SettingsManager")
 
 func _can_spawn_fx() -> bool:
-    """Check if we can spawn more FX without exceeding limits"""
-    if _fx_root == null:
-        return false
-    return _fx_root.get_child_count() < MAX_FX_CHILDREN
+	"""Check if we can spawn more FX without exceeding limits"""
+	if _fx_root == null:
+		return false
+	var density = _get_effective_fx_scale()
+	var cap = max(60, int(round(float(MAX_FX_CHILDREN) * density)))
+	if _game != null and "max_particles" in _game:
+		cap = min(cap, int(_game.max_particles))
+	return _fx_root.get_child_count() < cap
+
+func _get_fx_density_scale() -> float:
+	if _settings_manager == null:
+		_settings_manager = get_node_or_null("/root/SettingsManager")
+	if _settings_manager != null and _settings_manager.has_method("get_fx_density_scale"):
+		return clampf(float(_settings_manager.get_fx_density_scale()), 0.25, 1.5)
+	return 1.0
+
+func _get_effective_fx_scale() -> float:
+	var scale = _get_fx_density_scale()
+	if _game != null and _game.has_method("get_adaptive_perf_scale"):
+		scale *= clampf(float(_game.get_adaptive_perf_scale()), 0.2, 1.0)
+	if _game != null and _game.has_method("get_optional_fx_quality_cap"):
+		scale = min(scale, float(_game.get_optional_fx_quality_cap()))
+	return clampf(scale, 0.25, 1.5)
 
 # ============================================
 # PROJECTILE TRAILS
 # ============================================
 
-func spawn_projectile_trail(projectile: Node2D, damage_type: String = "normal") -> Node2D:
-    """Create a fading trail that follows a projectile"""
-    if _fx_root == null or not is_instance_valid(projectile):
-        return null
-    
-    var trail = _get_pooled_trail()
-    if trail == null:
-        trail = PROJECTILE_TRAIL_SCENE.instantiate()
-    
-    trail.global_position = projectile.global_position
-    _fx_root.add_child(trail)
-    
-    # Configure based on damage type
-    var color = _get_damage_type_color(damage_type)
-    var width = 3.0
-    var fade_time = 0.3
-    
-    if trail.has_method("setup"):
-        trail.setup(projectile, color, width, fade_time)
-    
-    return trail
+func spawn_projectile_trail(projectile: Node2D, damage_type: String = "normal", color_override: Color = Color(0, 0, 0, 0)) -> Node2D:
+	"""Create a fading trail that follows a projectile"""
+	if _fx_root == null or not is_instance_valid(projectile):
+		return null
+	
+	var trail = _get_pooled_trail()
+	if trail == null:
+		trail = PROJECTILE_TRAIL_SCENE.instantiate()
+
+	# The trail stores points in GLOBAL space, so the node itself must sit at the
+	# origin -- otherwise points get double-offset and draw a stray line. Only add
+	# it to the tree if it isn't already parented (pooled trails already are).
+	trail.position = Vector2.ZERO
+	if trail.get_parent() == null:
+		_fx_root.add_child(trail)
+	elif trail.get_parent() != _fx_root:
+		trail.reparent(_fx_root)
+	trail.visible = true
+
+	# Length and falloff belong to the trail itself - they are how the effect is
+	# drawn, not a per-caller choice. Colour is the shot's identity, so a caller
+	# with its own (a tower tier, an evolution) overrides the damage-type default;
+	# without that, every arrow tier trailed the same cream regardless of tint.
+	var color = _get_damage_type_color(damage_type)
+	if color_override.a > 0.0:
+		color = color_override
+	var width = 3.0
+
+	if trail.has_method("setup"):
+		trail.setup(projectile, color, width)
+
+	return trail
 
 func _get_pooled_trail() -> Node2D:
-    for trail in _trail_pool:
-        if trail != null and not trail.visible:
-            return trail
-    if _trail_pool.size() < MAX_POOL_SIZE:
-        return null
-    return _trail_pool[0] if not _trail_pool.is_empty() else null
+	for trail in _trail_pool:
+		if trail != null and not trail.visible:
+			return trail
+	if _trail_pool.size() < MAX_POOL_SIZE:
+		return null
+	return _trail_pool[0] if not _trail_pool.is_empty() else null
 
 # ============================================
 # IMPACT EFFECTS
 # ============================================
 
 func spawn_impact(position: Vector2, damage_type: String = "normal", is_crit: bool = false, impact_normal: Vector2 = Vector2.UP) -> void:
-    """Spawn impact effects - sparks, ground crack, screen shake"""
-    
-    # Hit sparks (4-8 particles bouncing away)
-    var spark_count = randi_range(4, 8)
-    if is_crit:
-        spark_count = randi_range(8, 14)
-    
-    spawn_impact_sparks(position, spark_count, damage_type, impact_normal)
-    
-    # Ground crack decal (fades over 2s)
-    spawn_ground_crack(position, damage_type, impact_normal)
-    
-    # Screen micro-shake
-    if _game != null and _game.has_method("shake_camera"):
-        var shake_strength = FeedbackConfig.SCREEN_SHAKE_BASE_INTENSITY * (2.0 if is_crit else 1.0)
-        _game.shake_camera(shake_strength, 0.08 if is_crit else 0.05)
+	"""Spawn impact effects - sparks, ground crack, screen shake"""
+	
+	# Hit sparks (4-8 particles bouncing away)
+	var spark_count = randi_range(4, 8)
+	if is_crit:
+		spark_count = randi_range(8, 14)
+	spark_count = max(2, int(round(float(spark_count) * _get_effective_fx_scale())))
+	
+	spawn_impact_sparks(position, spark_count, damage_type, impact_normal)
+	
+	# Ground crack decal (fades over 2s)
+	spawn_ground_crack(position, damage_type, impact_normal)
+	
+	# Screen micro-shake
+	if _game != null and _game.has_method("shake_camera"):
+		var shake_strength = FeedbackConfig.SCREEN_SHAKE_BASE_INTENSITY * (2.0 if is_crit else 1.0)
+		_game.shake_camera(shake_strength, 0.08 if is_crit else 0.05)
 
 func spawn_impact_sparks(position: Vector2, count: int, damage_type: String, normal: Vector2 = Vector2.UP) -> void:
-    """Spawn bouncing spark particles"""
-    if not _can_spawn_fx():
-        return
-    
-    var color = _get_damage_type_color(damage_type)
-    
-    for i in range(count):
-        var spark = IMPACT_SPARKS_SCENE.instantiate() if _spark_pool.is_empty() else _spark_pool.pop_back()
-        spark.global_position = position
-        _fx_root.add_child(spark)
-        
-        # Bounce direction - mostly away from impact normal with spread
-        var bounce_angle = normal.angle() + randf_range(-PI * 0.4, PI * 0.4)
-        var bounce_speed = randf_range(80.0, 180.0) * (1.0 + randf() * 0.5)
-        var velocity = Vector2.RIGHT.rotated(bounce_angle) * bounce_speed
-        
-        # Gravity for arc
-        velocity += Vector2(0, -randf_range(30.0, 80.0))  # Upward initial velocity
-        
-        var size = randf_range(2.0, 5.0)
-        var lifetime = randf_range(0.3, 0.6)
-        
-        if spark.has_method("setup"):
-            spark.setup(color, size, lifetime, velocity, true)  # true = bounce
+	"""Spawn bouncing spark particles"""
+	if not _can_spawn_fx():
+		return
+	
+	var color = _get_damage_type_color(damage_type)
+	
+	for i in range(count):
+		var spark = IMPACT_SPARKS_SCENE.instantiate() if _spark_pool.is_empty() else _spark_pool.pop_back()
+		spark.global_position = position
+		_fx_root.add_child(spark)
+		
+		# Bounce direction - mostly away from impact normal with spread
+		var bounce_angle = normal.angle() + randf_range(-PI * 0.4, PI * 0.4)
+		var bounce_speed = randf_range(80.0, 180.0) * (1.0 + randf() * 0.5)
+		var velocity = Vector2.RIGHT.rotated(bounce_angle) * bounce_speed
+		
+		# Gravity for arc
+		velocity += Vector2(0, -randf_range(30.0, 80.0))  # Upward initial velocity
+		
+		var size = randf_range(2.0, 5.0)
+		var lifetime = randf_range(0.3, 0.6)
+		
+		if spark.has_method("setup"):
+			spark.setup(color, size, lifetime, velocity, true)  # true = bounce
 
 func spawn_ground_crack(position: Vector2, damage_type: String, normal: Vector2 = Vector2.UP) -> void:
-    """Spawn ground crack decal that fades over 2 seconds"""
-    if not _can_spawn_fx():
-        return
-    
-    var crack = GROUND_CRACK_SCENE.instantiate()
-    crack.global_position = position
-    crack.rotation = normal.angle() + randf_range(-0.3, 0.3)
-    _fx_root.add_child(crack)
-    
-    var color = _get_damage_type_color(damage_type)
-    color.a = 0.7
-    
-    if crack.has_method("setup"):
-        crack.setup(color, 2.0)  # 2 second fade time
+	"""Spawn ground crack decal that fades over 2 seconds"""
+	if not _can_spawn_fx():
+		return
+	
+	var crack = GROUND_CRACK_SCENE.instantiate()
+	crack.global_position = position
+	crack.rotation = normal.angle() + randf_range(-0.3, 0.3)
+	_fx_root.add_child(crack)
+	
+	var color = _get_damage_type_color(damage_type)
+	color.a = 0.7
+	
+	if crack.has_method("setup"):
+		crack.setup(color, 2.0)  # 2 second fade time
 
 # ============================================
 # DEATH EFFECTS
 # ============================================
 
 func spawn_death_effect(enemy: Node2D, enemy_color: Color, corpse_texture: Texture2D = null) -> void:
-    """Enhanced death sequence with flash, scale, particles, corpse"""
-    if enemy == null or not is_instance_valid(enemy):
-        return
-    
-    var position = enemy.global_position
-    
-    # 1. White flash (instant)
-    spawn_flash(position, Color.WHITE, 0.1, 1.5)
-    
-    # 2. Particle explosion matching enemy color
-    spawn_death_burst(position, enemy_color, 6)
+	"""Enhanced death sequence with flash, scale, particles, corpse"""
+	if enemy == null or not is_instance_valid(enemy):
+		return
+	
+	var position = enemy.global_position
+	
+	# 1. White flash (instant)
+	spawn_flash(position, Color.WHITE, 0.1, 1.5)
+	
+	# 2. Particle explosion matching enemy color
+	spawn_death_burst(position, enemy_color, 6)
 
-    # 3. Leave fading corpse for 1s
-    if corpse_texture != null:
-        spawn_corpse_fade(position, corpse_texture, enemy_color, enemy.scale, enemy.rotation)
+	# 3. Leave fading corpse for 1s
+	if corpse_texture != null:
+		spawn_corpse_fade(position, corpse_texture, enemy_color, enemy.scale, enemy.rotation)
 
-    # 4. Blood/gore particles
-    spawn_gore_particles(position, enemy_color)
+	# 4. Blood/gore particles
+	spawn_gore_particles(position, enemy_color)
 
 func spawn_death_burst(position: Vector2, base_color: Color, particle_count: int) -> void:
-    """Explosion of particles in all directions"""
-    if not _can_spawn_fx() or not _game:
-        return
-    
-    for i in range(particle_count):
-        var angle = (TAU / particle_count) * i + randf_range(-0.3, 0.3)
-        var speed = randf_range(60.0, 150.0)
-        var velocity = Vector2.RIGHT.rotated(angle) * speed
-        
-        var color = base_color.lerp(Color.WHITE, randf_range(0.0, 0.5))
-        var size = randf_range(4.0, 10.0)
-        var lifetime = randf_range(0.4, 0.8)
-        
-        if _game.has_method("spawn_glow_particle"):
-            _game.spawn_glow_particle(position, color, size, lifetime, velocity, 1.8, 0.6, 0.9, 2)
+	"""Explosion of particles in all directions"""
+	if not _can_spawn_fx() or not _game:
+		return
+	
+	for i in range(particle_count):
+		var angle = (TAU / particle_count) * i + randf_range(-0.3, 0.3)
+		var speed = randf_range(60.0, 150.0)
+		var velocity = Vector2.RIGHT.rotated(angle) * speed
+		
+		var color = base_color.lerp(Color.WHITE, randf_range(0.0, 0.5))
+		var size = randf_range(4.0, 10.0)
+		var lifetime = randf_range(0.4, 0.8)
+		
+		if _game.has_method("spawn_glow_particle"):
+			_game.spawn_glow_particle(position, color, size, lifetime, velocity, 1.8, 0.6, 0.9, 2)
 
 func spawn_corpse_fade(position: Vector2, texture: Texture2D, color: Color, scale: Vector2, rotation: float) -> void:
-    """Create a fading corpse that stays for 1 second"""
-    if not _can_spawn_fx():
-        return
-    
-    var corpse = CORPSE_FADE_SCENE.instantiate()
-    corpse.global_position = position
-    corpse.rotation = rotation
-    _fx_root.add_child(corpse)
-    
-    if corpse.has_method("setup"):
-        corpse.setup(texture, color, scale, 1.0)  # 1 second fade
+	"""Create a fading corpse that stays for 1 second"""
+	if not _can_spawn_fx():
+		return
+	
+	var corpse = CORPSE_FADE_SCENE.instantiate()
+	corpse.global_position = position
+	corpse.rotation = rotation
+	_fx_root.add_child(corpse)
+	
+	if corpse.has_method("setup"):
+		corpse.setup(texture, color, scale, 1.0)  # 1 second fade
 
 func spawn_gore_particles(position: Vector2, enemy_color: Color) -> void:
-    """Blood and gore particle spray"""
-    if not _can_spawn_fx() or not _game:
-        return
-    
-    var gore_color = enemy_color.darkened(0.3)
-    gore_color = gore_color.lerp(Color(0.4, 0.05, 0.05), 0.5)  # Blood tint
-    
-    for i in range(3):
-        var angle = randf() * TAU
-        var speed = randf_range(40.0, 100.0)
-        var velocity = Vector2.RIGHT.rotated(angle) * speed
-        velocity.y -= randf_range(20.0, 50.0)  # Arc up slightly
+	"""Blood and gore particle spray"""
+	if not _can_spawn_fx() or not _game:
+		return
+	
+	var gore_color = enemy_color.darkened(0.3)
+	gore_color = gore_color.lerp(Color(0.4, 0.05, 0.05), 0.5)  # Blood tint
 
-        var size = randf_range(3.0, 7.0)
-        var lifetime = randf_range(0.4, 0.7)
+	for i in range(8):
+		var angle = randf() * TAU
+		var speed = randf_range(50.0, 160.0)
+		var velocity = Vector2.RIGHT.rotated(angle) * speed
+		velocity.y -= randf_range(20.0, 70.0)  # Arc up slightly
 
-        if _game.has_method("spawn_glow_particle"):
-            _game.spawn_glow_particle(position, gore_color, size, lifetime, velocity, 1.2, 0.8, 0.7, 1)
+		var size = randf_range(3.0, 9.0)
+		var lifetime = randf_range(0.45, 0.85)
+
+		if _game.has_method("spawn_glow_particle"):
+			_game.spawn_glow_particle(position, gore_color, size, lifetime, velocity, 1.2, 0.8, 0.7, 1)
 
 func spawn_flash(position: Vector2, color: Color, duration: float, max_size: float) -> void:
-    """Bright flash effect that expands and fades"""
-    if not _can_spawn_fx():
-        return
-    if not is_inside_tree():
-        return
-    
-    var flash = Sprite2D.new()
-    flash.texture = _create_flash_texture()
-    flash.global_position = position
-    flash.modulate = color
-    flash.z_index = 10
-    _fx_root.add_child(flash)
-    
-    flash.scale = Vector2.ZERO
-    if not flash.is_inside_tree():
-        flash.queue_free()
-        return
-    var tween = flash.create_tween()
-    tween.tween_property(flash, "scale", Vector2.ONE * max_size, duration * 0.3)
-    tween.parallel().tween_property(flash, "modulate:a", 0.0, duration)
-    tween.tween_callback(flash.queue_free)
+	"""Bright flash effect that expands and fades"""
+	if not _can_spawn_fx():
+		return
+	if not is_inside_tree():
+		return
+	
+	var flash = Sprite2D.new()
+	flash.texture = _create_flash_texture()
+	flash.global_position = position
+	flash.modulate = color
+	flash.z_index = 10
+	_fx_root.add_child(flash)
+	
+	flash.scale = Vector2.ZERO
+	if not flash.is_inside_tree():
+		flash.queue_free()
+		return
+	var tween = flash.create_tween()
+	tween.tween_property(flash, "scale", Vector2.ONE * max_size, duration * 0.3)
+	tween.parallel().tween_property(flash, "modulate:a", 0.0, duration)
+	tween.tween_callback(flash.queue_free)
 
 # ============================================
 # ENVIRONMENTAL PARTICLES
 # ============================================
 
 func spawn_environmental_particles(zone_type: String = "grass") -> void:
-    """Spawn zone-appropriate ambient particles"""
-    if _fx_root == null:
-        return
-    
-    match zone_type:
-        "grass":
-            _spawn_fireflies()
-        "wasteland":
-            _spawn_embers()
-        _:
-            _spawn_dust_motes()
+	"""Spawn zone-appropriate ambient particles"""
+	if _fx_root == null:
+		return
+	
+	match zone_type:
+		"grass":
+			_spawn_fireflies()
+		"wasteland":
+			_spawn_embers()
+		_:
+			_spawn_dust_motes()
 
 func _spawn_fireflies() -> void:
-    """Floating fireflies in grass zones"""
-    var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
-    _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_fireflies"):
-        dust_system.setup_fireflies()
+	"""Floating fireflies in grass zones"""
+	var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
+	_fx_root.add_child(dust_system)
+	
+	if dust_system.has_method("setup_fireflies"):
+		dust_system.setup_fireflies()
 
 func _spawn_embers() -> void:
-    """Floating embers in wasteland zones"""
-    var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
-    _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_embers"):
-        dust_system.setup_embers()
+	"""Floating embers in wasteland zones"""
+	var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
+	_fx_root.add_child(dust_system)
+	
+	if dust_system.has_method("setup_embers"):
+		dust_system.setup_embers()
 
 func _spawn_dust_motes() -> void:
-    """Dust particles floating in light"""
-    var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
-    _fx_root.add_child(dust_system)
-    
-    if dust_system.has_method("setup_dust"):
-        dust_system.setup_dust()
+	"""Dust particles floating in light"""
+	var dust_system = ENVIRONMENTAL_DUST_SCENE.instantiate()
+	_fx_root.add_child(dust_system)
+	
+	if dust_system.has_method("setup_dust"):
+		dust_system.setup_dust()
 
 func spawn_generator_smoke(generator_position: Vector2) -> void:
-    """Smoke trail from resource generator"""
-    if _fx_root == null or not _game:
-        return
-    
-    var smoke_color = Color(0.4, 0.4, 0.4, 0.6)
-    var velocity = Vector2(0, -30.0)  # Float up
-    
-    if _game.has_method("spawn_glow_particle"):
-        _game.spawn_glow_particle(
-            generator_position + Vector2(randf_range(-8, 8), -10),
-            smoke_color,
-            randf_range(8.0, 14.0),
-            randf_range(1.5, 2.5),
-            velocity + Vector2(randf_range(-5, 5), 0),
-            1.0, 0.3, 0.5, -1
-        )
+	"""Smoke trail from resource generator"""
+	if _fx_root == null or not _game:
+		return
+	
+	var smoke_color = Color(0.4, 0.4, 0.4, 0.6)
+	var velocity = Vector2(0, -30.0)  # Float up
+	
+	if _game.has_method("spawn_glow_particle"):
+		_game.spawn_glow_particle(
+			generator_position + Vector2(randf_range(-8, 8), -10),
+			smoke_color,
+			randf_range(8.0, 14.0),
+			randf_range(1.5, 2.5),
+			velocity + Vector2(randf_range(-5, 5), 0),
+			1.0, 0.3, 0.5, -1
+		)
 
 # ============================================
 # ABILITY FX
 # ============================================
 
 func spawn_tesla_lightning(from_pos: Vector2, to_positions: Array[Vector2], color: Color = COLOR_LIGHTNING) -> void:
-    """Arcing lightning beams between tower and targets"""
-    if not _can_spawn_fx():
-        return
-    
-    var beam = LIGHTNING_BEAM_SCENE.instantiate()
-    beam.global_position = from_pos
-    _fx_root.add_child(beam)
-    
-    if beam.has_method("setup"):
-        beam.setup(from_pos, to_positions, color)
+	"""Arcing lightning beams between tower and targets"""
+	if not _can_spawn_fx():
+		return
+	
+	var beam = LIGHTNING_BEAM_SCENE.instantiate()
+	beam.global_position = from_pos
+	_fx_root.add_child(beam)
+	
+	if beam.has_method("setup"):
+		beam.setup(from_pos, to_positions, color)
 
 func spawn_cannon_shockwave(position: Vector2, radius: float, damage_type: String = "fire") -> void:
-    """Expanding shockwave ring for cannon explosions"""
-    if not _can_spawn_fx():
-        return
-    
-    var shockwave = _get_pooled_shockwave()
-    if shockwave == null:
-        shockwave = SHOCKWAVE_RING_SCENE.instantiate()
-    
-    shockwave.global_position = position
-    _fx_root.add_child(shockwave)
-    
-    var color = _get_damage_type_color(damage_type)
-    
-    if shockwave.has_method("setup"):
-        shockwave.setup(radius, color, 0.4)
+	"""Expanding shockwave ring for cannon explosions"""
+	if not _can_spawn_fx():
+		return
+	
+	var shockwave = _get_pooled_shockwave()
+	if shockwave == null:
+		shockwave = SHOCKWAVE_RING_SCENE.instantiate()
+	
+	shockwave.global_position = position
+	_fx_root.add_child(shockwave)
+	
+	var color = _get_damage_type_color(damage_type)
+	
+	if shockwave.has_method("setup"):
+		shockwave.setup(radius, color, 0.4)
+
+func spawn_tower_fire_emitter(position: Vector2, direction: Vector2, tower_type: String = "tower", intensity: float = 1.0, profile: Dictionary = {}) -> void:
+	"""Shared procedural muzzle pulse for towers to keep fire FX consistent and cheap."""
+	if not _can_spawn_fx():
+		return
+	var dir = direction
+	if dir.length_squared() <= 0.0001:
+		dir = Vector2.RIGHT
+	else:
+		dir = dir.normalized()
+	var fx_scale = _get_effective_fx_scale()
+	var pulse = clampf(intensity * fx_scale, 0.35, 1.6)
+	var core = Color(1.0, 0.85, 0.55, 0.95)
+	var glow = Color(1.0, 0.58, 0.22, 0.7)
+	match tower_type:
+		"tesla":
+			core = Color(0.65, 0.98, 1.0, 0.95)
+			glow = Color(0.2, 0.75, 1.0, 0.68)
+		"cannon":
+			core = Color(1.0, 0.85, 0.45, 0.95)
+			glow = Color(1.0, 0.42, 0.18, 0.74)
+		"arrow":
+			core = Color(1.0, 0.95, 0.65, 0.95)
+			glow = Color(1.0, 0.6, 0.24, 0.7)
+	if not profile.is_empty():
+		core = profile.get("core_color", core)
+		glow = profile.get("glow_color", glow)
+		pulse = clampf(pulse * float(profile.get("pulse_mult", 1.0)), 0.22, 2.2)
+	var node = Node2D.new()
+	node.global_position = position
+	node.z_index = 9
+	_fx_root.add_child(node)
+
+	var beam = Line2D.new()
+	var beam_width_mult = float(profile.get("beam_width_mult", 1.0)) if not profile.is_empty() else 1.0
+	var beam_length_mult = float(profile.get("beam_length_mult", 1.0)) if not profile.is_empty() else 1.0
+	beam.width = (1.8 + pulse * 2.2) * beam_width_mult
+	beam.default_color = core
+	beam.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	beam.points = PackedVector2Array([Vector2.ZERO, dir * (8.0 + pulse * 13.0) * beam_length_mult])
+	node.add_child(beam)
+
+	# Additive glow ring stacks brightness across many simultaneous shots, which
+	# blows out to white at high tower density. Gate it behind the optional-FX
+	# budget and dial back its alpha so it reads as a flare, not a sheet.
+	var allow_ring = true
+	if _game != null and _game.has_method("should_spawn_optional_fx"):
+		allow_ring = _game.should_spawn_optional_fx()
+	var ring: Sprite2D = null
+	if allow_ring:
+		ring = Sprite2D.new()
+		ring.texture = _create_flash_texture()
+		ring.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		ring.rotation = dir.angle()
+		var ring_scale_mult = float(profile.get("ring_scale_mult", 1.0)) if not profile.is_empty() else 1.0
+		ring.scale = Vector2.ONE * (0.12 + pulse * 0.08) * ring_scale_mult
+		var ring_glow = glow
+		ring_glow.a *= 0.7
+		ring.modulate = ring_glow
+		var ring_mat = CanvasItemMaterial.new()
+		ring_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+		ring.material = ring_mat
+		node.add_child(ring)
+
+	if _game != null and _game.has_method("spawn_glow_particle"):
+		var particle_mult = float(profile.get("particle_mult", 1.0)) if not profile.is_empty() else 1.0
+		var count = max(1, int(round(2.0 * fx_scale * particle_mult)))
+		for i in range(count):
+			var jitter_dir = dir.rotated(randf_range(-0.25, 0.25))
+			_game.spawn_glow_particle(
+				position + jitter_dir * randf_range(4.0, 10.0),
+				glow,
+				randf_range(5.0, 9.0),
+				randf_range(0.08, 0.14),
+				jitter_dir * randf_range(30.0, 70.0),
+				1.8,
+				0.0,
+				0.4,
+				5
+			)
+
+	if not node.is_inside_tree():
+		node.queue_free()
+		return
+	var tween = node.create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(beam, "width", 0.0, 0.08)
+	tween.tween_property(beam, "default_color:a", 0.0, 0.08)
+	if ring != null:
+		tween.tween_property(ring, "scale", ring.scale * (1.6 + pulse * 0.5), 0.09)
+		tween.tween_property(ring, "modulate:a", 0.0, 0.09)
+	tween.chain().tween_callback(node.queue_free)
 
 func spawn_multishot_indicator(position: Vector2, direction: Vector2, spread_angles: Array[float]) -> void:
-    """Visual fan pattern showing multishot spread"""
-    if not _can_spawn_fx():
-        return
-    
-    var indicator = MULTISHOT_INDICATOR_SCENE.instantiate()
-    indicator.global_position = position
-    indicator.rotation = direction.angle()
-    _fx_root.add_child(indicator)
-    
-    if indicator.has_method("setup"):
-        indicator.setup(spread_angles)
+	"""Visual fan pattern showing multishot spread"""
+	if not _can_spawn_fx():
+		return
+	
+	var indicator = MULTISHOT_INDICATOR_SCENE.instantiate()
+	indicator.global_position = position
+	indicator.rotation = direction.angle()
+	_fx_root.add_child(indicator)
+	
+	if indicator.has_method("setup"):
+		indicator.setup(spread_angles)
 
 func _get_pooled_shockwave() -> Node2D:
-    for sw in _shockwave_pool:
-        if sw != null and not sw.visible:
-            return sw
-    return null
+	for sw in _shockwave_pool:
+		if sw != null and not sw.visible:
+			return sw
+	return null
 
 # ============================================
 # UTILITY
 # ============================================
 
 func _get_damage_type_color(damage_type: String) -> Color:
-    match damage_type:
-        "fire":
-            return COLOR_FIRE
-        "ice":
-            return COLOR_ICE
-        "lightning":
-            return COLOR_LIGHTNING
-        "crit":
-            return COLOR_CRIT
-        _:
-            return COLOR_NORMAL
+	match damage_type:
+		"fire":
+			return COLOR_FIRE
+		"ice":
+			return COLOR_ICE
+		"lightning":
+			return COLOR_LIGHTNING
+		"crit":
+			return COLOR_CRIT
+		_:
+			return COLOR_NORMAL
 
 var _cached_flash_texture: Texture2D = null
 
 func _create_flash_texture() -> Texture2D:
-    if _cached_flash_texture == null:
-        var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
-        img.fill(Color.WHITE)
-        _cached_flash_texture = ImageTexture.create_from_image(img)
-    return _cached_flash_texture
+	if _cached_flash_texture == null:
+		var img = Image.create(32, 32, false, Image.FORMAT_RGBA8)
+		img.fill(Color.WHITE)
+		_cached_flash_texture = ImageTexture.create_from_image(img)
+	return _cached_flash_texture
 
 func return_to_pool(node: Node2D, pool_type: String) -> void:
-    """Return a pooled object to its pool for reuse"""
-    node.visible = false
-    
-    match pool_type:
-        "trail":
-            if not _trail_pool.has(node):
-                _trail_pool.append(node)
-                if _trail_pool.size() > MAX_POOL_SIZE:
-                    _trail_pool.pop_front().queue_free()
-        "spark":
-            if not _spark_pool.has(node):
-                _spark_pool.append(node)
-                if _spark_pool.size() > MAX_POOL_SIZE:
-                    _spark_pool.pop_front().queue_free()
-        "shockwave":
-            if not _shockwave_pool.has(node):
-                _shockwave_pool.append(node)
-                if _shockwave_pool.size() > MAX_POOL_SIZE:
-                    _shockwave_pool.pop_front().queue_free()
+	"""Return a pooled object to its pool for reuse"""
+	node.visible = false
+	
+	match pool_type:
+		"trail":
+			if not _trail_pool.has(node):
+				_trail_pool.append(node)
+				if _trail_pool.size() > MAX_POOL_SIZE:
+					_trail_pool.pop_front().queue_free()
+		"spark":
+			if not _spark_pool.has(node):
+				_spark_pool.append(node)
+				if _spark_pool.size() > MAX_POOL_SIZE:
+					_spark_pool.pop_front().queue_free()
+		"shockwave":
+			if not _shockwave_pool.has(node):
+				_shockwave_pool.append(node)
+				if _shockwave_pool.size() > MAX_POOL_SIZE:
+					_shockwave_pool.pop_front().queue_free()

@@ -33,8 +33,8 @@ func _ready() -> void:
 	attack_rate = 1.2
 	attack_range = 40.0
 	
-	# Flying enemies ignore terrain collisions
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY  # Don't collide with buildings
+	# Obeys maze collisions like all enemies (phases through player body).
+	collision_mask = GameLayers.ALLY | GameLayers.BUILDING
 	
 	super._ready()
 
@@ -89,8 +89,10 @@ func _calculate_orbit_direction(target_pos: Vector2) -> Vector2:
 	
 	var dir: Vector2
 	if dist > orbit_distance * 1.2:
-		# Move closer
-		dir = to_target.normalized()
+		# Move closer, following the flow field so the approach routes around
+		# walls. The away/orbit legs below stay straight -- they are short-range
+		# positioning around a target already in sight.
+		dir = _get_move_direction(target_pos, get_physics_process_delta_time())
 	elif dist < orbit_distance * 0.8:
 		# Move away
 		dir = -to_target.normalized()
@@ -264,6 +266,8 @@ func _start_death_sequence() -> void:
 	for add in _active_adds:
 		if add != null and is_instance_valid(add) and add.has_method("take_damage"):
 			add.take_damage(9999, global_position, false, false)
+	if _game != null and _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("boss_death", global_position, 1.35, "poison")
 	
 	super._start_death_sequence()
 

@@ -9,10 +9,31 @@ radius = 16.0
 [node name="ResourceGenerator" type="Node2D"]
 script = ExtResource(1)
 
-[node name="Sprite" type="AnimatedSprite2D" parent="."]
+; Named "Body" to match every other building that reacts to being hit --
+; resource_generator.gd looks up "Body", so while this node was called "Sprite"
+; the damage flash and the low-health pulse were both silently no-ops.
+;
+; The frame list is a ping-pong over the 15 sliced frames ordered by how much
+; plume they carry, not the sheet's reading order. Read in order, the sheet is
+; three separate surges that each snap back to nothing at the row boundary, so
+; the fountain popped three times a loop. Ordered by plume mass and played
+; up-then-back-down, the jet swells and subsides once per cycle: 28 frames at
+; 12fps, so one breath every ~2.3s.
+;
+; z_index 1 because World/Buildings is not y-sorted: draw order there is purely
+; the order things were placed. The old art was 64px and barely taller than its
+; own footprint so nothing ever overlapped, but this building is 112px and the
+; top half of it is plume. The extractor is placed first (it starts the siege)
+; and the player then builds around it, so under placement order essentially
+; every tower north of it painted over the jet -- confirmed in a render, where
+; a tesla tower one cell up cut the fountain off at the stonework. One index up
+; puts the whole building above its neighbours while staying well below the
+; objective beacon (60) and the player (120).
+[node name="Body" type="AnimatedSprite2D" parent="."]
+z_index = 1
 script = ExtResource(2)
-frame_paths = ["res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f002_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f003_v001.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f004_v001.png"]
-fps = 6.0
+frame_paths = ["res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f012_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f015_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f011_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f002_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f013_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f007_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f006_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f003_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f014_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f008_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f004_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f005_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f009_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f010_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f009_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f005_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f004_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f008_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f014_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f003_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f006_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f007_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f013_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f002_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f011_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f001_v002.png", "res://assets/level1/level1_buildings_traps_anim60/building_resource_generator_2x2_active_f015_v002.png"]
+fps = 12.0
 
 [node name="Collider" type="StaticBody2D" parent="."]
 

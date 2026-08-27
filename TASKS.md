@@ -1,16 +1,77 @@
 # Tasks
 
 ## Now
-- Playtest maze feel with walls + gates + siege pressure.
-- Tune XP curve and tech pick frequency.
-- Add pickup visibility polish (glow or size pass).
+- Phase 3 pass shipped:
+- set-piece hero FX wired to evolution/elite/boss/major impact events.
+- pause-menu quality cycling + live perf snapshot labels.
+- code-level perf review documented in `docs/PHASE3_PERFORMANCE_REVIEW.md`.
+- Tower graphics overhaul plan locked:
+- `docs/TOWER_GRAPHICS_UPDATE_PLAN.md`
+- 8-state motion standard + evolution-specific animation sets.
+- Style pivot lock:
+- `docs/STYLE_PIVOT_SCIFI_FIDELITY.md`
+- blend target = Halls of Torment + Warcraft 3 TD + StarCraft 1 sci-fi readability.
+- Update core art briefs:
+- `MOODBOARD.md`
+- `ART_BRIEF.md`
+- Lock and execute `docs/HYBRID_ANIMATION_FX_SPEC.md` v1:
+- tower deterministic motion hooks + procedural FX-first runtime
+- AI-assisted content limited to hero set-piece effects
+- Phase 1 hybrid implementation:
+- replace per-shot tower tween spam with deterministic fire impulse motion
+- increase player contrast/readability in dense combat
+- increase build-preview visibility under swarm overlap
+- Add 4090 batch pipeline tooling/docs for BiRefNet+luma merge:
+- `tools/win4090_biref_batch.py`
+- `docs/WIN4090_AI_FX_PIPELINE.md`
+- Player readability emergency pass:
+- render-priority player marker + halo amplification + local enemy occlusion near player.
+- Validate readability at 300s/600s/900s wave density.
+- Lock visual/performance roadmap in `VISUAL_PERF_PLAN.md` and execute by phase.
+- Finalize progression overhaul spec and lock v1 decisions:
+- all towers unlocked at run start
+- draft-first progression
+- Essence as agency currency
+- chest archetypes + rarity floors
+- Define phase breakdown for safe incremental rollout and QA gates.
+- Phase A foundation pass:
+- unlock all core towers at run start/reset
+- rarity floor + pity draft generation scaffolding
+- Essence reroll action in draft UI with cost scaling
+- run telemetry counters for rarity distribution and rerolls
+- Phase C v0 draft-agency pass:
+- Essence lock for next draft option
+- Essence infuse for extra stack on multi-rank picks
+- Essence force-category reroll (tower/engineer/economy)
+- category tags surfaced in draft cards for readability
+- Phase C sustain + chest-impact pass:
+- centralized heal-drop policy with missing-health scaling (enemy + breakables/chests)
+- heal pickup readability pass (distinct life visuals + pickup feedback)
+- tower-focused chest upgrades (rare/epic/diamond) wired into tower damage/rate scalars
 
 ## Next
-- Add chest loot tables + Diamond event drop.
-- Add more tower path techs (Cannon, Flamethrower, Mortar).
-- Add enemy variants: flyer, tank, disruptor.
+- Phase 2 hybrid animation/FX runtime:
+- shared procedural emitter hooks for tower fire/impact states
+- low/mid/high quality profile caps for particles, overlays, and optional FX
+- Build first AI-assisted hero FX batch using 4090 pipeline:
+- evolution transform burst
+- elite death burst
+- large impact variants for cannon/missile finals
+- Phase 2 animation smoothing pass from `VISUAL_PERF_PLAN.md`:
+- timing table unification for player/enemy/tower states.
+- remove high-frequency tween churn in combat hot paths.
+- Phase 3 performance controls from `VISUAL_PERF_PLAN.md`:
+- particle/floating-text caps by quality tier.
+- adaptive optional-FX downscaling under load.
+- Implement draft generator v1 with no-dead-screen and pity logic.
+- Balance/tune Essence costs and cap behavior for reroll/lock/infuse/force actions.
+- Rework elite/boss chest pipeline into 3-option reward flow.
+- Simplify tower upgrades to specialization breakpoint model.
+- Playtest/tune life-drop sustain numbers and chest tower-upgrade power bands.
 
 ## Later
+- Visual rarity language pass (card tiers, breakthrough reveal moments, relic chest treatment).
+- Mars biome + abyss extraction zone visual overhaul.
+- Animation standardization pass (player/enemy/tower timing table, smoother loops).
 - Meta progression and unlocks.
-- Map modifiers and biomes.
-- Art pass with pixel assets.
+- Additional biomes, map modifiers, and content expansions.

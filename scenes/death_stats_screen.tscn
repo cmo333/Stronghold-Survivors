@@ -1,7 +1,7 @@
 [gd_scene load_steps=4 format=3 uid="uid://deathstats12345"]
 
 [ext_resource type="Script" path="res://scripts/death_stats_screen.gd" id="1_death"]
-[ext_resource type="FontFile" uid="uid://c8j7y3r2j1q0w" path="res://assets/ui/pixel_font.ttf" id="2_font"]
+[ext_resource type="FontFile" path="res://assets/ui/pixel_font.ttf" id="2_font"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxDeath"]
 bg_color = Color(0.05, 0.05, 0.06, 0.98)

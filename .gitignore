@@ -3,3 +3,22 @@
 .import/
 *.import
 .mono/
+
+build/
+output/
+*.zip
+
+# play.sh tracks the game process it launched
+.play.pid
+.play.godot
+.play.log
+.play.err.log
+
+# Claude Code local state (agent worktrees, per-user settings)
+.claude/
+
+# Windows locked-file-replacement leftovers next to the Steam DLLs
+addons/godotsteam/win64/~*
+
+# Python bytecode from the art generators
+__pycache__/

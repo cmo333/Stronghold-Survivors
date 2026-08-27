@@ -1,0 +1,315 @@
+{
+  "_note": [
+    "The tables a run is rolled from. See NORTHSTAR.md, docs/RACE_BRIEF.md and",
+    "docs/WORLD_FORMULA.md (the climate space).",
+    "",
+    "THE FORMULA: every biome, enemy and boss occupies a RANGE on four axes --",
+    "  heat  0 frozen . 1 cool . 2 warm . 3 molten",
+    "  light 0 abyssal . 1 dim . 2 lit . 3 radiant",
+    "  wet   0 arid . 1 damp . 2 soaked . 3 submerged",
+    "  depth 0 sky/orbit . 1 surface . 2 underground . 3 abyss",
+    "Two things are compatible iff their ranges OVERLAP ON EVERY AXIS. That one",
+    "interval test replaces any hand-authored NxN mixing matrix: lava[3,3] and",
+    "forest[1,2] can never share a heat value, so they never mix; caves span",
+    "heat[1,3] because underground is insulated, so icy caves, forest caves and",
+    "lava caves all fall out of the same rule with no special cases.",
+    "",
+    "Regions compose as PRIMARY + ACCENTS: the primary carries the world (and",
+    "must be wired -- have real terrain art); accents are compatible guests and",
+    "may be unwired scaffolds. Enemies BELONG where they overlap the primary;",
+    "the regular roster is exactly the compatible set. Bosses INVERT the rule:",
+    "the rolled boss comes from the INCOMPATIBLE set, because a boss should",
+    "read as an intruder -- something the world did not produce.",
+    "",
+    "Wiring honesty, so nothing here reads as a promise the code does not keep:",
+    "  biomes[].wired      true = has terrain art (a LEVEL_TERRAIN key in",
+    "                      ground.gd) and may roll as primary. false = design",
+    "                      scaffold; may appear as an accent only.",
+    "  enemies[].scene     REAL -- must load. The roster filter in main.gd",
+    "                      matches on these paths.",
+    "  bosses[]            Tagged and rolled (boss_id on the manifest) but the",
+    "                      BOSS_SCHEDULE in main.gd is NOT yet driven by it.",
+    "  modifiers[].wired   true = effects are applied by main.gd. false = rolls",
+    "                      and displays but changes nothing yet.",
+    "  races[].planned     NOT BUILT -- design capture; never offered."
+  ],
+
+  "races": [
+    {
+      "id": "corporate",
+      "name": "Corporate",
+      "weight": 1,
+      "register": "cyberpunk — chrome, wet neon, corporate signage",
+      "attitude": "The Rift is an asset class. Everything they build is instrumented, branded and depreciating.",
+      "bodies": ["warlock", "reaper", "hunter", "hunter_classic", "pyromancer"],
+      "towers": [
+        "arrow_turret",
+        "cannon_tower",
+        "tesla_tower",
+        "spike_burst_tower",
+        "flamethrower_tower"
+      ],
+      "planned": [
+        {
+          "id": "tentacle_node",
+          "name": "Tentacle Node",
+          "shape": "radius",
+          "reach_tiles": 2.0,
+          "cadence": "continuous",
+          "cost_note": "buildable today — damage_enemies_in_radius at 64px"
+        },
+        {
+          "id": "flame_jet",
+          "name": "Flame Jet",
+          "shape": "cone",
+          "reach_tiles": 3.0,
+          "cadence": "continuous",
+          "cost_note": "re-tune of flamethrower_tower's existing cone, plus a burn hookup"
+        },
+        {
+          "id": "airport",
+          "name": "Airport",
+          "shape": "spawned_unit",
+          "reach_tiles": 0.0,
+          "cadence": "persistent",
+          "cost_note": "genuinely new — allies chase, they do not patrol, and nothing sweeps"
+        }
+      ],
+      "arrivals": [
+        {
+          "id": "corporate_quarterly",
+          "weight": 1,
+          "lines": [
+            "They pushed the cybernetics until the wetware answered back.",
+            "What answered was the Rift. It had been there the whole time.",
+            "By the next quarter it had a line item."
+          ]
+        },
+        {
+          "id": "corporate_noticed",
+          "weight": 1,
+          "lines": [
+            "Nobody travelled here. Someone noticed.",
+            "The noticing was patented within the hour."
+          ]
+        },
+        {
+          "id": "corporate_asset",
+          "weight": 1,
+          "lines": [
+            "The consciousness of the world was surveyed, valued, and depreciated",
+            "over seven years.",
+            "You are the equipment sent to protect the write-down."
+          ]
+        },
+        {
+          "id": "corporate_signal",
+          "weight": 1,
+          "lines": [
+            "An implant carried a signal it was never specified to carry.",
+            "The engineers called it a fault until Legal called it an opportunity.",
+            "You are standing inside the fault."
+          ]
+        }
+      ]
+    }
+  ],
+
+  "biomes": [
+    {
+      "id": "graveyard",
+      "name": "The Interred Ground",
+      "weight": 3,
+      "wired": true,
+      "terrain": "graveyard",
+      "axes": { "heat": [1, 2], "light": [0, 2], "wet": [1, 2], "depth": [1, 1] },
+      "blurb": "Somebody has been dying here longer than anyone has been arriving."
+    },
+    {
+      "id": "salvage_deck",
+      "name": "Salvage Deck",
+      "weight": 1,
+      "wired": true,
+      "terrain": "space",
+      "axes": { "heat": [0, 1], "light": [0, 2], "wet": [0, 0], "depth": [0, 0] },
+      "blurb": "Plating and hull. Whatever this was, it was built to go somewhere."
+    },
+    {
+      "id": "lava_fields",
+      "name": "The Slag Meridian",
+      "weight": 2,
+      "wired": false,
+      "axes": { "heat": [3, 3], "light": [1, 3], "wet": [0, 0], "depth": [1, 2] },
+      "blurb": "The ground has opinions, and they are all about heat."
+    },
+    {
+      "id": "forest",
+      "name": "The Chlorophyll Debt",
+      "weight": 2,
+      "wired": false,
+      "axes": { "heat": [1, 2], "light": [1, 3], "wet": [1, 2], "depth": [1, 1] },
+      "blurb": "Everything here is alive, which is another way of saying hungry."
+    },
+    {
+      "id": "ocean",
+      "name": "The Standing Water",
+      "weight": 2,
+      "wired": false,
+      "axes": { "heat": [0, 2], "light": [0, 2], "wet": [2, 3], "depth": [1, 1] },
+      "blurb": "It remembers being deeper."
+    },
+    {
+      "id": "caves",
+      "name": "The Undertable",
+      "weight": 2,
+      "wired": false,
+      "axes": { "heat": [1, 3], "light": [0, 1], "wet": [0, 2], "depth": [1, 2] },
+      "blurb": "The insulation of the world. Anything can be down here, and is."
+    },
+    {
+      "id": "luminous_plains",
+      "name": "The Overexposure",
+      "weight": 1,
+      "wired": false,
+      "axes": { "heat": [1, 2], "light": [3, 3], "wet": [0, 1], "depth": [0, 1] },
+      "blurb": "There is no shade, and nothing that needed shade survived."
+    }
+  ],
+
+  "enemies": [
+    {
+      "id": "husk",
+      "scene": "res://scenes/enemy.tscn",
+      "axes": { "heat": [0, 3], "light": [0, 3], "wet": [0, 3], "depth": [0, 3] },
+      "note": "the universal mass -- the horde's body, belongs everywhere"
+    },
+    {
+      "id": "zombie_shambler",
+      "scene": "res://scenes/enemies/zombie_shambler.tscn",
+      "axes": { "heat": [1, 2], "light": [0, 2], "wet": [1, 2], "depth": [1, 2] }
+    },
+    {
+      "id": "charger",
+      "scene": "res://scenes/enemies/charger.tscn",
+      "axes": { "heat": [1, 3], "light": [0, 2], "wet": [0, 2], "depth": [1, 2] }
+    },
+    {
+      "id": "hellhound",
+      "scene": "res://scenes/enemies/hellhound.tscn",
+      "axes": { "heat": [2, 3], "light": [1, 2], "wet": [0, 1], "depth": [1, 2] }
+    },
+    {
+      "id": "spitter",
+      "scene": "res://scenes/enemies/spitter.tscn",
+      "axes": { "heat": [1, 2], "light": [0, 2], "wet": [1, 3], "depth": [1, 2] }
+    },
+    {
+      "id": "banshee",
+      "scene": "res://scenes/enemies/banshee.tscn",
+      "axes": { "heat": [0, 2], "light": [0, 1], "wet": [0, 2], "depth": [0, 3] },
+      "note": "ghosts go anywhere, including a dead ship"
+    },
+    {
+      "id": "wraith",
+      "scene": "res://scenes/enemies/wraith.tscn",
+      "axes": { "heat": [0, 2], "light": [0, 1], "wet": [0, 2], "depth": [0, 3] },
+      "note": "ghosts go anywhere, including a dead ship"
+    },
+    {
+      "id": "healer",
+      "scene": "res://scenes/enemies/healer.tscn",
+      "axes": { "heat": [1, 2], "light": [0, 2], "wet": [0, 2], "depth": [1, 2] }
+    },
+    {
+      "id": "necromancer",
+      "scene": "res://scenes/enemies/necromancer.tscn",
+      "axes": { "heat": [1, 2], "light": [0, 1], "wet": [1, 2], "depth": [1, 2] }
+    },
+    {
+      "id": "imp_skirmisher",
+      "scene": "res://scenes/enemies/imp_skirmisher.tscn",
+      "axes": { "heat": [2, 3], "light": [0, 2], "wet": [0, 1], "depth": [1, 2] }
+    },
+    {
+      "id": "fiend_duelist",
+      "scene": "res://scenes/enemies/fiend_duelist.tscn",
+      "axes": { "heat": [1, 3], "light": [0, 2], "wet": [0, 1], "depth": [1, 2] }
+    },
+    {
+      "id": "plague_abomination",
+      "scene": "res://scenes/enemies/plague_abomination.tscn",
+      "axes": { "heat": [1, 2], "light": [0, 1], "wet": [1, 3], "depth": [1, 2] }
+    }
+  ],
+
+  "bosses": [
+    {
+      "id": "bone_colossus",
+      "script": "res://scripts/boss_bone_colossus.gd",
+      "weight": 1,
+      "axes": { "heat": [1, 2], "light": [0, 2], "wet": [1, 2], "depth": [1, 2] },
+      "note": "graveyard-native: assembled from what the ground holds"
+    },
+    {
+      "id": "plague_bringer",
+      "script": "res://scripts/boss_plague_bringer.gd",
+      "weight": 1,
+      "axes": { "heat": [1, 2], "light": [0, 1], "wet": [2, 3], "depth": [1, 2] },
+      "note": "needs standing rot; soaked places"
+    },
+    {
+      "id": "siegebreaker",
+      "script": "res://scripts/boss_siegebreaker.gd",
+      "weight": 1,
+      "axes": { "heat": [2, 3], "light": [1, 2], "wet": [0, 0], "depth": [1, 2] },
+      "note": "forge-dry; an intruder anywhere damp"
+    },
+    {
+      "id": "lich",
+      "script": "res://scripts/boss_lich.gd",
+      "weight": 1,
+      "axes": { "heat": [0, 0], "light": [0, 1], "wet": [0, 1], "depth": [2, 3] },
+      "note": "cold and deep; an intruder on any warm surface"
+    }
+  ],
+
+  "modifiers": [
+    {
+      "id": "dense_horde",
+      "name": "Dense",
+      "weight": 2,
+      "wired": true,
+      "effects": { "horde_mult": 1.35 },
+      "blurb": "More of them arrive at once."
+    },
+    {
+      "id": "lean_purse",
+      "name": "Lean",
+      "weight": 2,
+      "wired": true,
+      "effects": { "gold_mult": 0.7 },
+      "blurb": "The ground gives up less."
+    },
+    {
+      "id": "elite_pressure",
+      "name": "Attended",
+      "weight": 1,
+      "wired": false,
+      "blurb": "Something better-made walks with them."
+    },
+    {
+      "id": "long_dusk",
+      "name": "Long Dusk",
+      "weight": 1,
+      "wired": false,
+      "blurb": "The light goes early and does not come back."
+    },
+    {
+      "id": "thin_ground",
+      "name": "Thin Ground",
+      "weight": 1,
+      "wired": false,
+      "blurb": "Less of the region is worth standing on."
+    }
+  ]
+}

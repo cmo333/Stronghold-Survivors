@@ -64,7 +64,6 @@ grow_horizontal = 2
 grow_vertical = 2
 current_tab = 0
 
-# ===== AUDIO TAB =====
 [node name="Audio" type="VBoxContainer" parent="Panel/TabContainer"]
 layout_mode = 2
 offset_left = 4.0
@@ -93,7 +92,6 @@ step = 0.05
 value = 0.8
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/MasterVolume/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "80%"
 
@@ -117,7 +115,6 @@ step = 0.05
 value = 1.0
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/SFXVolume/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "100%"
 
@@ -141,7 +138,6 @@ step = 0.05
 value = 0.7
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/MusicVolume/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "70%"
 
@@ -165,11 +161,9 @@ step = 0.05
 value = 0.9
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Audio/UIVolume/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "90%"
 
-# ===== GRAPHICS TAB =====
 [node name="Graphics" type="VBoxContainer" parent="Panel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -221,7 +215,6 @@ popup/item_1/text = "Medium"
 popup/item_2/text = "High"
 popup/item_3/text = "Ultra"
 
-# ===== CONTROLS TAB =====
 [node name="Controls" type="VBoxContainer" parent="Panel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -243,7 +236,6 @@ layout_mode = 2
 text = "Move Up"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveUp"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "W"
 
@@ -255,7 +247,6 @@ layout_mode = 2
 text = "Move Down"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveDown"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "S"
 
@@ -267,7 +258,6 @@ layout_mode = 2
 text = "Move Left"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveLeft"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "A"
 
@@ -279,7 +269,6 @@ layout_mode = 2
 text = "Move Right"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/MoveRight"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "D"
 
@@ -291,7 +280,6 @@ layout_mode = 2
 text = "Build / Interact"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/Build"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "LMB"
 
@@ -303,11 +291,9 @@ layout_mode = 2
 text = "Pause"
 
 [node name="KeyButton" type="Button" parent="Panel/TabContainer/Controls/Pause"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "Escape"
 
-# ===== GAMEPLAY TAB =====
 [node name="Gameplay" type="VBoxContainer" parent="Panel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -336,7 +322,6 @@ step = 0.1
 value = 1.0
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Gameplay/Screenshake/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "1.0x"
 
@@ -391,7 +376,6 @@ unique_name_in_owner = true
 layout_mode = 2
 button_pressed = true
 
-# ===== ACCESSIBILITY TAB =====
 [node name="Accessibility" type="VBoxContainer" parent="Panel/TabContainer"]
 visible = false
 layout_mode = 2
@@ -438,7 +422,6 @@ step = 1.0
 value = 16.0
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Accessibility/FontSize/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "16"
 
@@ -461,7 +444,6 @@ step = 0.1
 value = 0.0
 
 [node name="ValueLabel" type="Label" parent="Panel/TabContainer/Accessibility/ScreenFlash/HBoxContainer"]
-unique_name_in_owner = true
 layout_mode = 2
 text = "0%"
 
@@ -489,7 +471,6 @@ text = "High Contrast"
 unique_name_in_owner = true
 layout_mode = 2
 
-# ===== BOTTOM BUTTONS =====
 [node name="BottomButtons" type="HBoxContainer" parent="Panel"]
 layout_mode = 1
 anchors_preset = 12

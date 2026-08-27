@@ -15,6 +15,8 @@ var _game: Node = null
 var _chest_glow_timer = 0.0
 var _chest_glow_interval = 0.24
 @onready var sprite: Sprite2D = $Body
+var _shadow: Sprite2D = null
+static var _shadow_tex: Texture2D = null
 
 func setup(game_ref: Node, amount: int, xp_amount: int, style_name: String = "small", chest: bool = false) -> void:
 	_game = game_ref
@@ -28,7 +30,32 @@ func _ready() -> void:
 	collision_layer = 0
 	collision_mask = GameLayers.PLAYER
 	body_entered.connect(_on_body_entered)
+	_ensure_shadow()
 	_apply_style()
+
+# Soft contact shadow so breakables sit on the ground instead of floating. The
+# radial texture is built once and shared across all breakables.
+func _ensure_shadow() -> void:
+	if _shadow != null and is_instance_valid(_shadow):
+		return
+	if _shadow_tex == null:
+		var size := 48
+		var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
+		var c := float(size) * 0.5
+		for y in range(size):
+			for x in range(size):
+				var d: float = Vector2(x - c, y - c).length() / c
+				var a: float = clamp(1.0 - d, 0.0, 1.0)
+				a = a * a
+				img.set_pixel(x, y, Color(1, 1, 1, a))
+		_shadow_tex = ImageTexture.create_from_image(img)
+	_shadow = Sprite2D.new()
+	_shadow.texture = _shadow_tex
+	_shadow.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_shadow.modulate = Color(0, 0, 0, 0.32)
+	_shadow.z_index = -1
+	add_child(_shadow)
+	move_child(_shadow, 0)
 
 func _process(delta: float) -> void:
 	if not is_chest or _game == null or not _game.has_method("spawn_glow_particle"):
@@ -49,11 +76,12 @@ func _on_body_entered(body: Node) -> void:
 		if _game != null:
 			_game.add_resources(value)
 			_game.add_xp(xp)
-			var heal_chance = 0.12
-			if is_chest:
-				heal_chance = 0.4
-			if _game.has_method("spawn_pickup") and randf() < heal_chance:
-				_game.spawn_pickup(global_position, 14 if is_chest else 12, "heal")
+			if _game.has_method("spawn_pickup") and _game.has_method("should_spawn_heal_drop"):
+				if _game.should_spawn_heal_drop(false, false, "breakable", is_chest):
+					var heal_amount = 14 if is_chest else 12
+					if _game.has_method("get_heal_drop_amount"):
+						heal_amount = int(_game.get_heal_drop_amount(false, false, "breakable", is_chest))
+					_game.spawn_pickup(global_position, heal_amount, "heal")
 		queue_free()
 
 func _apply_style() -> void:
@@ -74,3 +102,16 @@ func _apply_style() -> void:
 	if is_chest:
 		tex = TEX_CART
 	sprite.texture = tex
+	# Seat the sprite so its base meets the node origin (the y-sort anchor) and
+	# size the contact shadow to the art footprint.
+	var h := 32.0
+	if tex != null:
+		h = float(tex.get_height())
+	sprite.offset = Vector2(0, -h * 0.5)
+	if _shadow != null and is_instance_valid(_shadow):
+		var base_w: float = 48.0
+		if _shadow_tex != null:
+			base_w = float(_shadow_tex.get_width())
+		var sx: float = (h * 0.6) / max(1.0, base_w)
+		_shadow.scale = Vector2(sx, sx * 0.42)
+		_shadow.position = Vector2(0, -2)

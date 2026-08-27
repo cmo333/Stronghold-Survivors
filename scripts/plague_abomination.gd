@@ -17,7 +17,8 @@ func _process(delta: float) -> void:
     var player = _game.player
     if player == null:
         return
-    if global_position.distance_squared_to(player.global_position) <= pulse_radius * pulse_radius:
+    if global_position.distance_squared_to(player.global_position) <= pulse_radius * pulse_radius \
+            and has_los_between(global_position, player.global_position, self):
         if player.has_method("take_damage"):
             player.take_damage(pulse_damage)
         if player.has_method("apply_slow"):

@@ -86,8 +86,10 @@ func _boss_behavior(delta: float) -> void:
 		_cast_magic_missile(target)
 		_attack_cooldown = 1.0 / max(0.1, attack_rate)
 	elif dist > attack_range:
-		# Move to optimal range
-		var dir = (target.global_position - global_position).normalized()
+		# Move to optimal range. The approach follows the flow field; the
+		# back-away below deliberately does not, because retreating along the
+		# path you came from is the point.
+		var dir = _get_move_direction(target.global_position, delta)
 		if dist < attack_range * 0.7:
 			dir = -dir  # Back away if too close
 		velocity = dir * speed * _slow_multiplier
@@ -389,6 +391,8 @@ func _start_death_sequence() -> void:
 	for skeleton in _active_skeletons:
 		if skeleton != null and is_instance_valid(skeleton) and skeleton.has_method("take_damage"):
 			skeleton.take_damage(9999, global_position, false, false)
+	if _game != null and _game.has_method("spawn_setpiece_fx"):
+		_game.spawn_setpiece_fx("boss_death", global_position, 1.35, "necrotic")
 	
 	super._start_death_sequence()
 

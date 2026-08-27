@@ -105,8 +105,9 @@ func _boss_behavior(delta: float) -> void:
 		_fire_mortar(target.global_position)
 		_mortar_timer = mortar_cooldown
 	
-	# Move toward target
-	var dir = (target.global_position - global_position).normalized()
+	# Move toward target, following the flow field rather than a straight line
+	# so walls and towers are routed around instead of walked into.
+	var dir = _get_move_direction(target.global_position, delta)
 	velocity = dir * speed * _slow_multiplier
 	move_and_slide()
 	
@@ -207,7 +208,12 @@ func _on_mortar_impact(body: Node, mortar: Node, impact_pos: Vector2) -> void:
 		mortar.queue_free()
 
 func _apply_mortar_damage(center: Vector2) -> void:
-	"""Apply AOE damage from mortar explosion"""
+	"""Apply AOE damage from mortar explosion.
+
+	Deliberately ignores line of sight, unlike the ground-level slams and pulses
+	that now respect it: a mortar is indirect fire arcing over cover, so walling
+	yourself in is supposed to be no defence against it. That is the whole point
+	of the siegebreaker."""
 	var radius_sq = mortar_radius * mortar_radius
 	
 	# Damage player
@@ -226,7 +232,10 @@ func _apply_mortar_damage(center: Vector2) -> void:
 		if dist_sq <= radius_sq:
 			var damage_mult = 1.0 - (sqrt(dist_sq) / mortar_radius) * 0.6
 			if building.has_method("take_damage"):
-				building.take_damage(mortar_damage * damage_mult * 1.5)  # Extra damage to buildings
+				# Keeps its 1.5x siege bonus over the colossus -- breaking bases
+				# is this boss's job -- but under the same structure cap, so it
+				# wears a base down instead of deleting it a shell at a time.
+				building.take_damage(mortar_damage * damage_mult * 1.5 * BOSS_AOE_BUILDING_MULT)
 
 func _update_shield(delta: float) -> void:
 	"""Update shield state and regen"""
@@ -249,15 +258,15 @@ func _update_shield(delta: float) -> void:
 		var shield_percent = _current_shield / _max_shield
 		_shield_visual.modulate.a = 0.3 + shield_percent * 0.4
 
-func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal", hit_dir: Vector2 = Vector2.ZERO) -> void:
 	"""Override damage to handle shield"""
 	if not is_boss_active or _is_dying:
 		return
-	
+
 	# Tesla/lightning bypasses shield
 	if damage_type == "lightning" or damage_type == "tesla":
 		# Full damage bypasses shield
-		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
+		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type, hit_dir)
 		return
 	
 	# Shield absorbs damage
@@ -288,7 +297,7 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	
 	# Remaining damage goes to health
 	if amount > 0:
-		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type)
+		super.take_damage(amount, hit_position, show_hit_fx, show_damage_number, damage_type, hit_dir)
 
 func _perform_attack(target: Node2D) -> void:
 	_deal_damage(target, attack_damage, global_position, true)

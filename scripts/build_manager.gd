@@ -4,25 +4,47 @@ const BUILD_BINDINGS = {
 	"build_1": "arrow_turret",
 	"build_2": "cannon_tower",
 	"build_3": "tesla_tower",
-	"build_4": "mine_trap",
-	"build_5": "ice_trap",
-	"build_6": "acid_trap",
-	"build_7": "resource_generator",
-	"build_8": "barracks",
-	"build_9": "armory",
-	"build_barracks": "tech_lab",
-	"build_armory": "shrine"
+	"build_4": "resource_generator",
+	"build_5": "shrine",
+	"build_shrine": "shrine"
 }
+# NOTE: traps + extra towers/utility buildings were removed from the buildable
+# set; their hotkey bindings were dropped here. See docs/REMOVED_BUILDINGS.md.
 
-const PREVIEW_COLOR_OK = Color(0.2, 0.9, 0.8, 0.35)
-const PREVIEW_COLOR_BLOCKED = Color(0.95, 0.2, 0.2, 0.35)
-const PREVIEW_COLOR_UNAFFORDABLE = Color(0.95, 0.7, 0.2, 0.35)
+const PREVIEW_COLOR_OK = Color(0.24, 1.0, 0.92, 0.62)
+const PREVIEW_COLOR_BLOCKED = Color(1.0, 0.22, 0.22, 0.6)
+const PREVIEW_COLOR_UNAFFORDABLE = Color(1.0, 0.76, 0.24, 0.6)
 const RANGE_PREVIEW_IDS = ["arrow_turret", "cannon_tower", "tesla_tower"]
+const PREVIEW_STATUS_REFRESH_INTERVAL = 0.08
 
 # Pathfinding constants
-const PATH_CHECK_RESOLUTION = 16.0  # Grid size for pathfinding check (smaller = more accurate)
-const PATH_CHECK_RADIUS_OFFSET = 4.0  # How much to shrink building radius for path checks
+const PATH_CHECK_RESOLUTION = 16.0  # Match flow-field grid size for consistent path validity
+const PATH_AGENT_RADIUS = 7.0
+const PATH_CLEARANCE_MARGIN = 1.0
+const PATH_MIN_REACHABLE_SPAWN_CELLS = 16
+const PATH_MIN_REACHABLE_SPAWN_FRACTION = 0.02
+const PATH_CLEARANCE_DIRS = [
+	Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1),
+	Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)
+]
+const PATH_CHECK_RADIUS_OFFSET = 0.0  # Keep accurate blocking for maze fidelity
+# Half-width of the local box used to prove the extractor/generators are not
+# walled in. 420 was too small: a late-game fort spans more than that, so a ring
+# built at its outer wall escaped the box and read as open. Sized to cover a
+# realistic base. This runs only when the exact reachability test is
+# inconclusive, so the larger BFS is not on the common path.
+const PATH_ESCAPE_BOX_RADIUS = 900.0
+# How far the BFS may walk out of whatever is covering the player's own cell
+# before giving up. The widest footprint in the game is 18, so its config-space
+# square is 25px either side of centre - 4 cells clears it from any point inside
+# it, and stopping there keeps the search from stepping over a wall.
+const PATH_START_ESCAPE_CELLS = 4
+# The extractor/generator scene. Placing one has to be validated the same way as
+# walling one in: until it exists there is nothing in the scene to protect, so
+# dropping it into an already-sealed pocket would otherwise sail through.
+const PROTECTED_BUILD_SCENE = "res://scenes/buildings/resource_generator.tscn"
 
+var _last_path_block_reason := "Must leave path open!"
 var game: Node2D = null
 var buildings_root: Node2D = null
 var ui: CanvasLayer = null
@@ -36,29 +58,103 @@ var preview: Node2D = null
 var selection_ring: Sprite2D = null
 var range_ring: Sprite2D = null
 var _evo_input_cooldown: float = 0.0
+var _preview_status_timer: float = 0.0
+var _preview_cached_pos: Vector2 = Vector2(999999.0, 999999.0)
+var _preview_cached_id: String = ""
+var _preview_cached_resources: int = -999999
+var _preview_cached_status: Dictionary = {}
+var _show_tower_range: bool = true
+# Shows every tower's range while building (scripts/coverage_overlay.gd).
+var _coverage_overlay: Node2D = null
+
+func _ensure_coverage_overlay() -> void:
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		return
+	if game == null:
+		return
+	var Script = load("res://scripts/coverage_overlay.gd")
+	if Script == null:
+		return
+	_coverage_overlay = Script.new()
+	_coverage_overlay.name = "CoverageOverlay"
+	game.get_node("World").add_child(_coverage_overlay)
+	if _coverage_overlay.has_method("setup"):
+		_coverage_overlay.setup(game)
+var _selection_pulse: float = 0.0
+var _selection_ring_base_scale: float = 1.18
+
+# --- Gamepad / virtual build cursor ---
+# When the player's last input came from a controller, build placement uses a
+# code-driven cursor (right stick / d-pad) instead of the mouse. Both input
+# methods coexist; switching device flips _using_gamepad automatically.
+const VIRTUAL_CURSOR_SPEED := 520.0
+# Build ids the prev/next shoulder buttons cycle through (matches BUILD_BINDINGS order).
+const BUILD_CYCLE_ORDER := ["arrow_turret", "cannon_tower", "tesla_tower", "resource_generator", "shrine"]
+var _using_gamepad: bool = false
+var _virtual_cursor: Vector2 = Vector2.ZERO
+var _virtual_cursor_seeded: bool = false
+var _virtual_cursor_sprite: Sprite2D = null
+var _evo_pad_cooldown: float = 0.0
 
 func setup(game_ref: Node2D, buildings_ref: Node2D, ui_ref: CanvasLayer) -> void:
 	game = game_ref
 	buildings_root = buildings_ref
 	ui = ui_ref
+	# Mouse/touch selection of evolution choices routes through this signal so
+	# clicking a card behaves identically to the keyboard/controller picks.
+	if ui != null and ui.has_signal("evolution_card_clicked"):
+		if not ui.evolution_card_clicked.is_connected(_on_evolution_card_clicked):
+			ui.evolution_card_clicked.connect(_on_evolution_card_clicked)
 	set_process_unhandled_input(true)
 	_create_preview()
 	_create_selection_ring()
-	build_mode = true
+	# Start OUT of build mode: the player opts in via a build hotkey (1-5) or the
+	# build toggle. current_id is pre-seeded so the first toggle has a sensible
+	# default, but no preview/placement is shown until the player asks for it.
+	build_mode = false
 	current_id = "arrow_turret"
 	_update_preview_state()
 	_set_selection_text(_describe_current_build())
 	_set_controls_text()
 	_refresh_palette()
+	_sync_build_focus()
 
 func _process(delta: float) -> void:
+	_preview_status_timer = max(0.0, _preview_status_timer - delta)
+	_animate_selection_ring(delta)
+	# Before any early-out: the evolve chooser belongs to one specific tower, and
+	# nothing closed it when that tower stopped existing. A boss slam landing on
+	# the tower you were mid-evolution on left the panel up, bound to a freed
+	# node, until you happened to press ESC. That was survivable while it was only
+	# a stale panel; it is not now that main.gd holds the level-up draft behind
+	# this panel, because the pick would wait on something that never closes.
+	#
+	# Keyed on _evolution_options rather than on the target reference, for two
+	# reasons. A freed Object compares EQUAL to null in GDScript, so the obvious
+	# `_evolution_target != null and not is_instance_valid(...)` is dead code --
+	# the first half is already false once the tower is freed. And _evolution_
+	# options is emptied by _hide_evolution_panel, so this fires exactly once
+	# instead of restarting the close tween every frame of its 0.15s fade.
+	if not _evolution_options.is_empty() and not is_instance_valid(_evolution_target):
+		_hide_evolution_panel()
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		if preview != null:
 			preview.visible = false
+		_set_virtual_cursor_visible(false)
+		return
+	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
+		if preview != null:
+			preview.visible = false
+		if selection_ring != null:
+			selection_ring.visible = false
+		if range_ring != null:
+			range_ring.visible = false
+		_set_virtual_cursor_visible(false)
 		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
 		if preview != null:
 			preview.visible = false
+		_set_virtual_cursor_visible(false)
 		return
 	if selected_building != null and not is_instance_valid(selected_building):
 		selected_building = null
@@ -76,6 +172,15 @@ func _process(delta: float) -> void:
 				choose_evolution(key_idx)
 				break
 		_evo_input_cooldown = max(0.0, _evo_input_cooldown - delta)
+		# Gamepad: A = option 1, X (upgrade) = option 2.
+		_evo_pad_cooldown = max(0.0, _evo_pad_cooldown - delta)
+		if _evo_pad_cooldown <= 0.0:
+			if Input.is_action_just_pressed("build_place"):
+				_evo_pad_cooldown = 0.3
+				choose_evolution(0)
+			elif Input.is_action_just_pressed("upgrade"):
+				_evo_pad_cooldown = 0.3
+				choose_evolution(1)
 		return  # Block all other input while evolution panel open
 
 	_handle_hotkeys()
@@ -91,12 +196,41 @@ func _process(delta: float) -> void:
 		else:
 			_clear_selection()
 			_set_selection_text("")
+	# Gamepad: cycle the selected build with the shoulder buttons.
+	if Input.is_action_just_pressed("build_next"):
+		_cycle_build_selection(1)
+	elif Input.is_action_just_pressed("build_prev"):
+		_cycle_build_selection(-1)
+	# Gamepad: move the virtual cursor and place/select with the confirm button.
+	_update_virtual_cursor(delta)
+	if _using_gamepad and Input.is_action_just_pressed("build_place"):
+		if build_mode and current_id != "":
+			_try_place()
+		else:
+			_try_select()
 	_update_preview_position()
 
 func _unhandled_input(event: InputEvent) -> void:
+	# Track the active input device so build placement uses the matching pointer
+	# (mouse position vs. virtual cursor). Cheap + reliable.
+	if event is InputEventMouse:
+		_using_gamepad = false
+	elif event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		_using_gamepad = true
 	if game != null and game.has_method("is_game_started") and not game.is_game_started():
 		return
+	if game != null and game.has_method("is_menu_open") and game.is_menu_open():
+		return
 	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
+		return
+	# While the evolution chooser is open, swallow world clicks so a stray click
+	# off the cards doesn't place/select a tower behind the dialog. A right-click
+	# (or ESC, handled in _process) cancels the chooser instead.
+	if ui != null and ui.has_method("is_evolution_panel_open") and ui.is_evolution_panel_open():
+		if event is InputEventMouseButton and event.pressed:
+			if event.button_index == MOUSE_BUTTON_RIGHT:
+				_hide_evolution_panel()
+			get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index == MOUSE_BUTTON_RIGHT:
@@ -136,14 +270,30 @@ func _create_selection_ring() -> void:
 	selection_ring = Sprite2D.new()
 	selection_ring.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 	selection_ring.visible = false
-	selection_ring.z_index = 20
+	# Sit above gameplay FX so the selected tower is never lost in the horde.
+	selection_ring.z_as_relative = false
+	selection_ring.z_index = 60
+	selection_ring.scale = Vector2.ONE * 1.18
+	# Brighter, fully opaque cyan reads instantly against any backdrop.
+	selection_ring.modulate = Color(0.35, 1.0, 1.0, 1.0)
 	buildings_root.add_child(selection_ring)
 	range_ring = Sprite2D.new()
 	range_ring.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 	range_ring.visible = false
-	range_ring.z_index = 19
-	range_ring.modulate = Color(0.4, 0.8, 1.0, 0.35)
+	range_ring.z_as_relative = false
+	range_ring.z_index = 58
+	range_ring.modulate = Color(0.4, 0.95, 1.0, 0.7)
 	buildings_root.add_child(range_ring)
+	# Gamepad pointer: a small bright ring so controller players can see where the
+	# virtual cursor is when aiming at a tower to select/upgrade or placing a build.
+	_virtual_cursor_sprite = Sprite2D.new()
+	_virtual_cursor_sprite.texture = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
+	_virtual_cursor_sprite.visible = false
+	_virtual_cursor_sprite.z_as_relative = false
+	_virtual_cursor_sprite.z_index = 70
+	_virtual_cursor_sprite.scale = Vector2.ONE * 0.5
+	_virtual_cursor_sprite.modulate = Color(1.0, 0.95, 0.4, 0.95)
+	buildings_root.add_child(_virtual_cursor_sprite)
 
 func _update_preview_state() -> void:
 	if preview == null:
@@ -163,13 +313,13 @@ func _update_preview_state() -> void:
 func _update_preview_position() -> void:
 	if preview == null or not preview.visible:
 		return
-	var pos = _get_mouse_world_position()
+	var pos = _get_build_world_position()
 	var snapped = _snap_to_grid(pos)
 	preview.global_position = snapped
 	if current_id != "" and preview.has_method("set_color"):
 		var def = StructureDB.get_def(current_id)
 		if not def.is_empty():
-			var status = _evaluate_placement(snapped, def)
+			var status = _get_preview_status(snapped, def)
 			if status["clear"] and status["path_clear"] and status["affordable"]:
 				preview.set_color(PREVIEW_COLOR_OK)
 			elif status["clear"] and status["path_clear"] and not status["affordable"]:
@@ -186,10 +336,11 @@ func _update_preview_visuals() -> void:
 		return
 	if not _is_unlocked(current_id):
 		return
+	_invalidate_preview_cache()
 	var def = StructureDB.get_def(current_id)
 	if def.is_empty():
 		return
-	var radius = float(def.get("footprint_radius", 12))
+	var radius = _get_effective_footprint_radius(def)
 	if preview.has_method("set_radius"):
 		preview.set_radius(radius)
 	if preview.has_method("set_color"):
@@ -198,7 +349,7 @@ func _update_preview_visuals() -> void:
 		var path = str(def.get("preview", ""))
 		preview.set_ghost_texture(path)
 	if preview.has_method("set_range_radius"):
-		if RANGE_PREVIEW_IDS.has(current_id):
+		if _show_tower_range and RANGE_PREVIEW_IDS.has(current_id):
 			preview.set_range_radius(float(def.get("range", 0.0)))
 		else:
 			preview.set_range_radius(0.0)
@@ -211,7 +362,7 @@ func _try_place() -> void:
 		_set_selection_text("Locked: earn tech picks to unlock")
 		return
 	var tier = 0
-	var pos = _snap_to_grid(_get_mouse_world_position())
+	var pos = _snap_to_grid(_get_build_world_position())
 	var status = _evaluate_placement(pos, def)
 	if not status["can_place"]:
 		_set_selection_text(status["reason"])
@@ -223,33 +374,95 @@ func _try_place() -> void:
 	var scene: PackedScene = load(scene_path)
 	if scene == null:
 		return
+	# In FFA, charge the local player's pool and tag ownership so this builder's
+	# towers go inert when they die/leave. Damage stays host-authoritative.
+	var owner_id := 1
+	if game != null and game.has_method("local_player_id"):
+		owner_id = game.local_player_id()
+	if game != null and not game.can_afford(cost, owner_id):
+		_set_selection_text("Not enough resources")
+		return
 	var building: Node2D = scene.instantiate()
 	building.global_position = pos
+	if "owner_id" in building:
+		building.owner_id = owner_id
 	buildings_root.add_child(building)
 	if building.has_method("configure"):
 		building.configure(current_id, def, tier)
 	if game != null:
 		if game.has_method("mark_flow_field_dirty"):
 			game.mark_flow_field_dirty()
-		game.spend(cost)
+		game.spend(cost, owner_id)
 		if game.has_method("spawn_fx"):
 			game.spawn_fx("build", pos)
 		# Track tower built
 		if game.has_method("track_tower_built"):
 			game.track_tower_built()
+	_invalidate_preview_cache()
 	_set_selection_text("Built %s" % def.get("name", current_id))
+
+# Host-side tower placement for an FFA bot. Mirrors _try_place() but charges the
+# bot's own economy (owner_id) and runs without any local UI/preview side effects.
+# Returns true if a tower was placed. Added to the scene tree so it auto-replicates
+# to all peers, exactly like a real player's tower.
+func bot_place_tower(owner_id: int, pos: Vector2, tower_id: String) -> bool:
+	if game == null or buildings_root == null:
+		return false
+	var def = StructureDB.get_def(tower_id)
+	if def.is_empty():
+		return false
+	var snapped = _snap_to_grid(pos)
+	var footprint = _get_effective_footprint_radius(def)
+	if not _is_clear(snapped, footprint):
+		return false
+	var blocks_path = bool(def.get("blocks_path", true))
+	if blocks_path and not _check_path_validity(snapped, footprint, _def_is_protected_target(def)):
+		return false
+	var tier_data = StructureDB.get_tier(def, 0)
+	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
+	if not game.can_afford(cost, owner_id):
+		return false
+	var scene_path: String = str(def.get("scene", ""))
+	if scene_path == "":
+		return false
+	var scene: PackedScene = load(scene_path)
+	if scene == null:
+		return false
+	var building: Node2D = scene.instantiate()
+	building.global_position = snapped
+	if "owner_id" in building:
+		building.owner_id = owner_id
+	buildings_root.add_child(building)
+	if building.has_method("configure"):
+		building.configure(tower_id, def, 0)
+	game.spend(cost, owner_id)
+	if game.has_method("mark_flow_field_dirty"):
+		game.mark_flow_field_dirty()
+	if game.has_method("spawn_fx"):
+		game.spawn_fx("build", snapped)
+	if game.has_method("track_tower_built"):
+		game.track_tower_built()
+	return true
 
 func _try_select() -> void:
 	selected_building = null
-	var pos = _get_mouse_world_position()
+	var pos = _get_build_world_position()
 	var best_dist = INF
 	var buildings_found = get_tree().get_nodes_in_group("buildings")
-	for building: Node2D in buildings_found:
-		if building == null:
+	for raw_building in buildings_found:
+		if raw_building == null or not is_instance_valid(raw_building):
 			continue
+		if not (raw_building is Node2D):
+			continue
+		var building := raw_building as Node2D
 		var radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			radius = building.get_footprint_radius()
+		# FFA: only allow selecting/upgrading your OWN buildings.
+		if game != null and game.has_method("is_ffa") and game.is_ffa():
+			if "owner_id" in building and game.has_method("local_player_id"):
+				if int(building.owner_id) != game.local_player_id():
+					continue
 		# Increase selection radius significantly for easier clicking (3x footprint, min 40px)
 		var select_radius = max(radius * 3.0, 40.0)
 		var dist = pos.distance_to(building.global_position)
@@ -283,11 +496,28 @@ func _try_upgrade_selected() -> void:
 	if not can_up:
 		_set_selection_text("No upgrade available")
 		return
-	var upgrade_cost = _apply_cost_mult(int(selected_building.get_upgrade_cost()))
+	var upgrade_cost = int(selected_building.get_upgrade_cost())
+	var upgrade_essence_cost = 0
+	if selected_building.has_method("get_upgrade_essence_cost"):
+		upgrade_essence_cost = int(selected_building.get_upgrade_essence_cost())
+	if upgrade_essence_cost <= 0:
+		upgrade_cost = _apply_cost_mult(upgrade_cost)
 	var can_afford = game != null and game.can_afford(upgrade_cost)
 	if not can_afford:
 		_set_selection_text("Not enough resources")
 		return
+	if upgrade_essence_cost > 0:
+		if game == null:
+			_set_selection_text("Need %d Essence" % upgrade_essence_cost)
+			return
+		var has_essence = false
+		if game.has_method("can_afford_essence"):
+			has_essence = bool(game.can_afford_essence(upgrade_essence_cost))
+		else:
+			has_essence = int(game.essence) >= upgrade_essence_cost
+		if not has_essence:
+			_set_selection_text("Need %d Essence" % upgrade_essence_cost)
+			return
 
 	# Store position before upgrade (in case building dies)
 	var building_pos = selected_building.global_position
@@ -319,6 +549,13 @@ func _try_upgrade_selected() -> void:
 
 		if game != null:
 			game.spend(upgrade_cost)
+			if upgrade_essence_cost > 0:
+				if game.has_method("spend_essence"):
+					game.spend_essence(upgrade_essence_cost)
+				else:
+					game.essence -= upgrade_essence_cost
+					if game.has_method("_update_ui"):
+						game._update_ui()
 			# Premium upgrade FX
 			if game.has_method("spawn_fx"):
 				game.spawn_fx("upgrade_burst", building_pos)
@@ -353,7 +590,21 @@ func _show_evolution_choice(building: Node) -> void:
 	if ui != null and ui.has_method("show_evolution_panel"):
 		ui.show_evolution_panel(_evolution_options, game.essence if game != null else 0)
 
+func _on_evolution_card_clicked(index: int) -> void:
+	# A card was clicked in the UI. Only act while we actually have a pending
+	# evolution (guards against stray clicks after the panel closed).
+	if _evolution_target == null or not is_instance_valid(_evolution_target):
+		return
+	choose_evolution(index)
+
 func choose_evolution(index: int) -> void:
+	# The card's gui_input is a direct Control signal, so it bypasses the
+	# is_tech_open() guards in _process and _unhandled_input. main.gd now defers
+	# the draft rather than stacking it, so the two should never overlap -- but a
+	# click that spends essence and evolves a tower underneath a modal that owns
+	# the input is not something to leave resting on that alone.
+	if game != null and game.has_method("is_tech_open") and game.is_tech_open():
+		return
 	if _evolution_target == null or not is_instance_valid(_evolution_target):
 		_hide_evolution_panel()
 		return
@@ -366,7 +617,12 @@ func choose_evolution(index: int) -> void:
 		_set_selection_text("Not enough Essence (%d needed)" % cost)
 		return
 	# Spend essence and evolve
-	game.essence -= cost
+	if game.has_method("spend_essence"):
+		game.spend_essence(cost)
+	else:
+		game.essence -= cost
+		if game.has_method("_update_ui"):
+			game._update_ui()
 	_evolution_target.evolve(option.get("id", ""))
 	_hide_evolution_panel()
 	_set_selection_text(_describe_building(_evolution_target))
@@ -395,7 +651,22 @@ func _try_toggle_selected() -> void:
 	if selected_building == null:
 		return
 	if selected_building.has_method("toggle"):
+		var was_blocks_path = bool(selected_building.blocks_path) if "blocks_path" in selected_building else false
 		selected_building.toggle()
+		# Prevent closing gates (or other toggles) from sealing enemy routes.
+		var now_blocks_path = bool(selected_building.blocks_path) if "blocks_path" in selected_building else false
+		if not was_blocks_path and now_blocks_path:
+			var radius = 12.0
+			if selected_building.has_method("get_footprint_radius"):
+				radius = float(selected_building.get_footprint_radius())
+			if not _check_path_validity(selected_building.global_position, radius):
+				selected_building.toggle()
+				_set_selection_text("Must leave path open!")
+				_invalidate_preview_cache()
+				return
+		if game != null and game.has_method("mark_flow_field_dirty"):
+			game.mark_flow_field_dirty()
+		_invalidate_preview_cache()
 		_set_selection_text(_describe_building(selected_building))
 		_update_selection_ring()
 
@@ -412,6 +683,7 @@ func _try_sell_selected() -> void:
 	_clear_selection()
 	_hide_upgrade_panel()
 	bld.sell()
+	_invalidate_preview_cache()
 	_set_selection_text("Sold for %d resources" % refund)
 
 func _describe_building(building: Node) -> String:
@@ -428,12 +700,23 @@ func _describe_building(building: Node) -> String:
 	if building.has_method("can_evolve") and building.can_evolve():
 		base_name += " [U: EVOLVE]"
 	elif building.has_method("can_upgrade") and building.can_upgrade():
-		var cost = _apply_cost_mult(building.get_upgrade_cost())
-		base_name += " [U:%d]" % cost
+		var cost = int(building.get_upgrade_cost())
+		var essence_cost = 0
+		if building.has_method("get_upgrade_essence_cost"):
+			essence_cost = int(building.get_upgrade_essence_cost())
+		if essence_cost <= 0:
+			cost = _apply_cost_mult(cost)
+		if essence_cost > 0:
+			base_name += " [U:%dG + %dE]" % [cost, essence_cost]
+		else:
+			base_name += " [U:%d]" % cost
 
 	# Add sell value
 	if building.has_method("get_sell_value"):
 		base_name += " [X: Sell +%d]" % building.get_sell_value()
+	if building.has_method("get_health_ratio"):
+		var hp_ratio := float(building.get_health_ratio())
+		base_name += " [HP %d%%]" % int(round(clampf(hp_ratio, 0.0, 1.0) * 100.0))
 
 	return base_name
 
@@ -445,7 +728,16 @@ func _describe_current_build() -> String:
 		return "Build: %s" % current_id
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
-	return "Build: %s (Cost %d)" % [def.get("name", current_id), cost]
+	var blocks_path := bool(def.get("blocks_path", false))
+	var tags: Array[String] = []
+	if current_id in RANGE_PREVIEW_IDS:
+		tags.append("tower")
+	if blocks_path:
+		tags.append("wall")
+	var suffix = ""
+	if not tags.is_empty():
+		suffix = " [%s]" % ", ".join(tags)
+	return "Build: %s (Cost %d)%s" % [def.get("name", current_id), cost, suffix]
 
 func _set_controls_text() -> void:
 	if ui == null:
@@ -469,6 +761,12 @@ func _notify_palette_active() -> void:
 	if ui.has_method("set_palette_active"):
 		ui.set_palette_active(current_id)
 
+func _sync_build_focus() -> void:
+	if game == null or not game.has_method("set_build_focus"):
+		return
+	var active = build_mode and current_id != "" and _is_unlocked(current_id)
+	game.set_build_focus(active, current_id)
+
 func _set_selection_text(text: String) -> void:
 	if ui == null:
 		return
@@ -488,13 +786,30 @@ func _update_selection_ring() -> void:
 		radius = selected_building.get_footprint_radius()
 	var diameter = radius * 2.2
 	var scale = diameter / 64.0
+	_selection_ring_base_scale = scale
 	selection_ring.scale = Vector2.ONE * scale
 	selection_ring.global_position = selected_building.global_position
 	selection_ring.visible = true
 	_update_range_ring()
 
+func _animate_selection_ring(delta: float) -> void:
+	# Soft breathing pulse + position follow so the highlight feels alive and
+	# is easy to track even while the camera and horde churn around it.
+	if selection_ring == null or not selection_ring.visible:
+		return
+	_selection_pulse += delta * 4.5
+	var pulse := 1.0 + sin(_selection_pulse) * 0.07
+	selection_ring.scale = Vector2.ONE * _selection_ring_base_scale * pulse
+	var glow := 0.85 + (sin(_selection_pulse) * 0.5 + 0.5) * 0.15
+	selection_ring.modulate = Color(0.35, 1.0, 1.0, glow)
+	if selected_building != null and is_instance_valid(selected_building):
+		selection_ring.global_position = selected_building.global_position
+
 func _update_range_ring() -> void:
 	if range_ring == null or selected_building == null:
+		return
+	if not _show_tower_range:
+		range_ring.visible = false
 		return
 	if not selected_building.has_method("get_range"):
 		range_ring.visible = false
@@ -506,12 +821,26 @@ func _update_range_ring() -> void:
 	range_ring.global_position = selected_building.global_position
 	range_ring.visible = true
 
+func set_show_tower_range(enabled: bool) -> void:
+	_show_tower_range = enabled
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		_coverage_overlay.set_active(enabled and build_mode)
+	if not enabled and range_ring != null:
+		range_ring.visible = false
+	if preview != null and preview.has_method("set_range_radius"):
+		if not enabled:
+			preview.set_range_radius(0.0)
+		else:
+			_update_preview_visuals()
+
 func _is_clear(position: Vector2, radius: float) -> bool:
 	if game == null:
 		return true
 	var space: PhysicsDirectSpaceState2D = game.get_world_2d().direct_space_state
-	var shape = CircleShape2D.new()
-	shape.radius = radius
+	var shape = RectangleShape2D.new()
+	# Slight inset so edge-touching grid-aligned towers are allowed (flush placement for maze building).
+	var query_size = max(1.0, radius * 2.0 - 0.2)
+	shape.size = Vector2(query_size, query_size)
 	var params = PhysicsShapeQueryParameters2D.new()
 	params.shape = shape
 	params.transform = Transform2D(0.0, position)
@@ -521,14 +850,17 @@ func _is_clear(position: Vector2, radius: float) -> bool:
 	var hits: Array = space.intersect_shape(params, 1)
 	if not hits.is_empty():
 		return false
-	for building: Node2D in get_tree().get_nodes_in_group("buildings"):
-		if building == null or not is_instance_valid(building):
+	for raw_building in get_tree().get_nodes_in_group("buildings"):
+		if raw_building == null or not is_instance_valid(raw_building):
 			continue
+		if not (raw_building is Node2D):
+			continue
+		var building := raw_building as Node2D
 		var other_radius = 12.0
 		if building.has_method("get_footprint_radius"):
 			other_radius = building.get_footprint_radius()
 		var min_dist = radius + other_radius
-		if position.distance_squared_to(building.global_position) < min_dist * min_dist:
+		if abs(position.x - building.global_position.x) < min_dist and abs(position.y - building.global_position.y) < min_dist:
 			return false
 	return true
 
@@ -544,6 +876,62 @@ func _get_mouse_world_position() -> Vector2:
 	var viewport = get_viewport()
 	return viewport.get_camera_2d().get_global_mouse_position()
 
+func _get_build_world_position() -> Vector2:
+	# Gamepad uses the virtual cursor; mouse/keyboard uses the real cursor.
+	if _using_gamepad:
+		return _virtual_cursor
+	return _get_mouse_world_position()
+
+func _update_virtual_cursor(delta: float) -> void:
+	if not _using_gamepad:
+		_virtual_cursor_seeded = false
+		_set_virtual_cursor_visible(false)
+		return
+	# Seed the cursor near the player the first frame we need it so it starts
+	# on-screen rather than at world origin.
+	if not _virtual_cursor_seeded:
+		if game != null and game.player != null and is_instance_valid(game.player):
+			_virtual_cursor = game.player.global_position
+		else:
+			_virtual_cursor = _get_mouse_world_position()
+		_virtual_cursor_seeded = true
+	var move := Vector2(
+		Input.get_action_strength("build_cursor_right") - Input.get_action_strength("build_cursor_left"),
+		Input.get_action_strength("build_cursor_down") - Input.get_action_strength("build_cursor_up")
+	)
+	if move.length() > 1.0:
+		move = move.normalized()
+	if move != Vector2.ZERO:
+		_virtual_cursor += move * VIRTUAL_CURSOR_SPEED * delta
+		if game != null and game.has_method("clamp_to_play_area"):
+			_virtual_cursor = game.clamp_to_play_area(_virtual_cursor)
+	# Keep the visible pointer glued to the cursor whenever the pad is active.
+	if _virtual_cursor_sprite != null and is_instance_valid(_virtual_cursor_sprite):
+		_virtual_cursor_sprite.global_position = _virtual_cursor
+	_set_virtual_cursor_visible(true)
+
+func _set_virtual_cursor_visible(v: bool) -> void:
+	if _virtual_cursor_sprite != null and is_instance_valid(_virtual_cursor_sprite):
+		_virtual_cursor_sprite.visible = v
+
+func _cycle_build_selection(step: int) -> void:
+	# Cycle current_id through the unlocked buildable structures (LB/RB on a pad).
+	var available: Array = []
+	for id in BUILD_CYCLE_ORDER:
+		if _is_unlocked(id):
+			available.append(id)
+	if available.is_empty():
+		return
+	var idx := available.find(current_id)
+	if idx < 0:
+		idx = 0
+	else:
+		idx = (idx + step + available.size()) % available.size()
+	current_id = available[idx]
+	_set_build_mode(true)
+	_set_selection_text(_describe_current_build())
+	_notify_palette_active()
+
 func _is_unlocked(id: String) -> bool:
 	if game != null and game.has_method("is_build_unlocked"):
 		return game.is_build_unlocked(id)
@@ -551,7 +939,15 @@ func _is_unlocked(id: String) -> bool:
 
 func _set_build_mode(active: bool) -> void:
 	build_mode = active
+	_ensure_coverage_overlay()
+	if _coverage_overlay != null and is_instance_valid(_coverage_overlay):
+		_coverage_overlay.set_active(active and _show_tower_range)
+	_invalidate_preview_cache()
 	_update_preview_state()
+	_sync_build_focus()
+	# Deliberately does NOT re-show the controls strip: it used to reappear on
+	# every build-mode toggle, which kept it on screen for most of a run. The
+	# key list is in the pause menu instead.
 
 func _clear_selection() -> void:
 	selected_building = null
@@ -560,6 +956,39 @@ func _clear_selection() -> void:
 	if range_ring != null:
 		range_ring.visible = false
 	_hide_upgrade_panel()
+
+func _invalidate_preview_cache() -> void:
+	_preview_status_timer = 0.0
+	_preview_cached_id = ""
+	_preview_cached_resources = -999999
+	_preview_cached_pos = Vector2(999999.0, 999999.0)
+	_preview_cached_status = {}
+
+func _get_resource_snapshot() -> int:
+	if game == null:
+		return -1
+	if "resources" in game:
+		return int(game.resources)
+	return -1
+
+func _get_preview_status(snapped: Vector2, def: Dictionary) -> Dictionary:
+	var resources_now = _get_resource_snapshot()
+	var needs_refresh = _preview_cached_status.is_empty()
+	if current_id != _preview_cached_id:
+		needs_refresh = true
+	elif snapped != _preview_cached_pos:
+		needs_refresh = true
+	elif resources_now != _preview_cached_resources:
+		needs_refresh = true
+	elif _preview_status_timer <= 0.0:
+		needs_refresh = true
+	if needs_refresh:
+		_preview_cached_status = _evaluate_placement(snapped, def)
+		_preview_cached_pos = snapped
+		_preview_cached_id = current_id
+		_preview_cached_resources = resources_now
+		_preview_status_timer = PREVIEW_STATUS_REFRESH_INTERVAL
+	return _preview_cached_status
 
 func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	var result = {
@@ -574,10 +1003,15 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	if def.is_empty():
 		result["reason"] = "Invalid build"
 		return result
+	# The extractor is a one-per-run objective, not a normal build.
+	if current_id == "resource_generator" and game != null \
+			and game.has_method("has_extractor") and game.has_extractor():
+		result["reason"] = "Extractor already deployed"
+		return result
 	var tier_data = StructureDB.get_tier(def, 0)
 	var cost = _apply_cost_mult(int(tier_data.get("cost", 0)))
 	result["cost"] = cost
-	result["footprint"] = float(def.get("footprint_radius", 12))
+	result["footprint"] = _get_effective_footprint_radius(def)
 	if game != null and not game.can_afford(cost):
 		result["affordable"] = false
 		result["reason"] = "Not enough resources"
@@ -588,16 +1022,430 @@ func _evaluate_placement(pos: Vector2, def: Dictionary) -> Dictionary:
 	# Check path blocking - only for buildings that block path
 	var blocks_path = bool(def.get("blocks_path", true))
 	if blocks_path and result["clear"]:
-		result["path_clear"] = _check_path_validity(pos, result["footprint"])
+		result["path_clear"] = _check_path_validity(pos, result["footprint"], _def_is_protected_target(def))
 		if not result["path_clear"]:
-			result["reason"] = "Must leave path open!"
+			result["reason"] = _last_path_block_reason
 	
 	result["can_place"] = result["affordable"] and result["clear"] and result["path_clear"]
 	return result
 
-func _check_path_validity(proposed_pos: Vector2, proposed_radius: float) -> bool:
-	"""Check if placing a building would block paths. Disabled for now."""
+func _get_effective_footprint_radius(def: Dictionary) -> float:
+	var radius = float(def.get("footprint_radius", 12))
+	var blocks_path = bool(def.get("blocks_path", true))
+	# Keep preview/placement checks aligned with Building.configure() collider sizing.
+	if blocks_path:
+		radius = max(radius, 16.0)
+	return radius
+
+func _check_path_validity(proposed_pos: Vector2, proposed_radius: float, proposed_is_target: bool = false) -> bool:
+	"""Check if placing a building would block paths to the player or seal off the
+	extraction objective."""
+	_last_path_block_reason = "Must leave path open!"
+	if game == null or game.player == null:
+		return true
+
+	var player_pos: Vector2 = game.player.global_position
+	var cell_size = PATH_CHECK_RESOLUTION
+	var spawn_min = 500.0
+	var spawn_max = 750.0
+	var play_radius = 0.0
+	var spawn_min_prop = game.get("spawn_radius_min")
+	var spawn_max_prop = game.get("spawn_radius_max")
+	if typeof(spawn_min_prop) in [TYPE_FLOAT, TYPE_INT]:
+		spawn_min = float(spawn_min_prop)
+	if typeof(spawn_max_prop) in [TYPE_FLOAT, TYPE_INT]:
+		spawn_max = float(spawn_max_prop)
+	var play_radius_prop = game.get("play_radius")
+	if typeof(play_radius_prop) in [TYPE_FLOAT, TYPE_INT]:
+		play_radius = float(play_radius_prop)
+
+	if spawn_max <= 0.0:
+		return true
+
+	var max_radius = spawn_max + cell_size * 2.0
+	var grid_radius = int(ceil(max_radius / cell_size))
+	var grid_size = grid_radius * 2 + 1
+	# Snap the validation grid to world cells so preview validity doesn't flicker
+	# when the player moves sub-pixel amounts between frames.
+	var player_cell_center = Vector2i(
+		int(floor(player_pos.x / cell_size)),
+		int(floor(player_pos.y / cell_size))
+	)
+	var origin = Vector2(
+		float(player_cell_center.x - grid_radius) * cell_size,
+		float(player_cell_center.y - grid_radius) * cell_size
+	)
+
+	var total = grid_size * grid_size
+	var blocked = _build_blocked_grid(origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius)
+
+	# Clearance field (distance from nearest obstacle cell)
+	var required_cells = _get_required_clearance_cells(cell_size)
+	var clearance = _clearance_field_if_needed(blocked, grid_size, required_cells)
+	var needs_clearance: bool = required_cells > 1
+
+	# BFS from player
+	var dist = PackedInt32Array()
+	dist.resize(total)
+	for i in range(total):
+		dist[i] = -1
+	var start_cell = _world_to_path_cell(player_pos, origin, cell_size)
+	if start_cell.x < 0 or start_cell.y < 0 or start_cell.x >= grid_size or start_cell.y >= grid_size:
+		return true
+	var queue: Array = _path_start_cells(blocked, clearance, grid_size, start_cell, required_cells, needs_clearance)
+	if queue.is_empty():
+		return false
+	for seed_idx in queue:
+		dist[seed_idx] = 0
+	var head = 0
+	var dirs = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		for dir in dirs:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if blocked[nidx] == 1 or (needs_clearance and clearance[nidx] < required_cells):
+				continue
+			if dist[nidx] >= 0:
+				continue
+			if play_radius > 0.0:
+				var world = _path_cell_center(Vector2i(nx, ny), origin, cell_size)
+				if world.length() > play_radius:
+					continue
+			dist[nidx] = dist[idx] + 1
+			queue.append(nidx)
+
+	# The extractor and generators must stay attackable - sealing the objective
+	# behind walls would win the run without defending it.
+	if not _protected_targets_stay_reachable(dist, origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius, proposed_is_target):
+		return false
+
+	# Validate enough reachable spawn ring cells to keep spawning reliable.
+	var min_dist_sq = spawn_min * spawn_min
+	var max_dist_sq = spawn_max * spawn_max
+	var total_spawn_cells = 0
+	var reachable_spawn_cells = 0
+	for y in range(grid_size):
+		for x in range(grid_size):
+			var world = _path_cell_center(Vector2i(x, y), origin, cell_size)
+			if play_radius > 0.0 and world.length() > play_radius:
+				continue
+			var d2 = world.distance_squared_to(player_pos)
+			if d2 < min_dist_sq or d2 > max_dist_sq:
+				continue
+			total_spawn_cells += 1
+			var idx = y * grid_size + x
+			if dist[idx] < 0:
+				continue
+			reachable_spawn_cells += 1
+
+	if total_spawn_cells <= 0:
+		return false
+	var min_reachable_cells = max(PATH_MIN_REACHABLE_SPAWN_CELLS, int(ceil(float(total_spawn_cells) * PATH_MIN_REACHABLE_SPAWN_FRACTION)))
+	return reachable_spawn_cells >= min_reachable_cells
+
+func _path_start_cells(blocked: PackedByteArray, clearance: PackedInt32Array, grid_size: int, start_cell: Vector2i, required_cells: int, needs_clearance: bool) -> Array:
+	"""Where the reachability BFS starts: the player's own cell, or - when that
+	cell reads as blocked - the free cells immediately outside whatever is
+	covering them.
+
+	The player's cell is walkable by definition: they are standing on it. It
+	still reads as blocked in two ordinary cases, neither of which is a sealed
+	path. The building being placed is marked into the grid before the BFS runs,
+	so dropping the extractor at your own feet buries the start cell under the
+	proposal itself. And the grid marks a cell from its centre, which sits up to
+	11px from where the player actually is, so hugging a wall can bury it too.
+
+	Rejecting outright is what produced "Must leave path open!" on placements
+	that sealed nothing - it fired on an empty map with no buildings at all.
+	Walking out through the covering blob keeps the search local: the only cells
+	that can be reached are the ones bordering the thing the player is standing
+	inside, so a genuine enclosure still traps the BFS in its own pocket."""
+	var start_idx = start_cell.y * grid_size + start_cell.x
+	if blocked[start_idx] == 0 and not (needs_clearance and clearance[start_idx] < required_cells):
+		return [start_idx]
+	var seeds: Array = []
+	var seen := {}
+	var queue: Array = [start_cell]
+	seen[start_idx] = true
+	var head = 0
+	while head < queue.size():
+		var cell: Vector2i = queue[head]
+		head += 1
+		if abs(cell.x - start_cell.x) >= PATH_START_ESCAPE_CELLS or abs(cell.y - start_cell.y) >= PATH_START_ESCAPE_CELLS:
+			continue
+		for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var nx = cell.x + dir.x
+			var ny = cell.y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if seen.has(nidx):
+				continue
+			seen[nidx] = true
+			if blocked[nidx] == 1 or (needs_clearance and clearance[nidx] < required_cells):
+				queue.append(Vector2i(nx, ny))  # keep walking through the blob
+			else:
+				seeds.append(nidx)
+	return seeds
+
+func _build_blocked_grid(origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float) -> PackedByteArray:
+	var blocked = PackedByteArray()
+	blocked.resize(grid_size * grid_size)
+	for i in range(blocked.size()):
+		blocked[i] = 0
+	for building in get_tree().get_nodes_in_group("buildings"):
+		if building == null or not is_instance_valid(building):
+			continue
+		var blocks_path = true
+		if "blocks_path" in building:
+			blocks_path = bool(building.blocks_path)
+		if not blocks_path:
+			continue
+		var radius = 12.0
+		if building.has_method("get_footprint_radius"):
+			radius = float(building.get_footprint_radius())
+		_mark_blocked_circle(blocked, origin, grid_size, cell_size, building.global_position, radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+	# The building being previewed is not in the scene yet, so mark it explicitly.
+	_mark_blocked_circle(blocked, origin, grid_size, cell_size, proposed_pos, proposed_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET, play_radius)
+	return blocked
+
+func _protected_targets() -> Array:
+	"""Buildings that enemies must always be able to reach.
+
+	Walling the extractor in would otherwise win the run for free: the horde
+	targets it, so a sealed extractor is an unattackable objective. Same rule the
+	player already lives under - you can't box yourself in either."""
+	var targets: Array = []
+	if game == null:
+		return targets
+	if "extractor" in game:
+		var ext = game.extractor
+		if ext != null and is_instance_valid(ext) and ext is Node2D:
+			targets.append(ext)
+	if "active_generators" in game:
+		for gen in game.active_generators:
+			if gen == null or not is_instance_valid(gen) or not (gen is Node2D):
+				continue
+			if gen in targets:
+				continue
+			targets.append(gen)
+	return targets
+
+func _target_footprint(target: Node2D) -> float:
+	if target.has_method("get_footprint_radius"):
+		return float(target.get_footprint_radius())
+	return 16.0
+
+func _approach_cells(target_pos: Vector2, target_radius: float, origin: Vector2, grid_size: int, cell_size: float) -> Array:
+	"""Cells in the ring just outside a target's footprint - where an attacker has
+	to stand. The footprint itself is marked blocked, so testing its own cell
+	would always report "unreachable"."""
+	var reach = target_radius + PATH_AGENT_RADIUS + PATH_CHECK_RADIUS_OFFSET + cell_size * 2.0
+	var min_cell = _world_to_path_cell(target_pos - Vector2(reach, reach), origin, cell_size)
+	var max_cell = _world_to_path_cell(target_pos + Vector2(reach, reach), origin, cell_size)
+	var cells: Array = []
+	for x in range(min_cell.x, max_cell.x + 1):
+		for y in range(min_cell.y, max_cell.y + 1):
+			if x < 0 or y < 0 or x >= grid_size or y >= grid_size:
+				continue
+			cells.append(y * grid_size + x)
+	return cells
+
+func _def_is_protected_target(def: Dictionary) -> bool:
+	"""Is the building being placed itself an extractor/generator? Matched on
+	scene path because _evaluate_placement only ever receives the def, not its id."""
+	if def.is_empty():
+		return false
+	return str(def.get("scene", "")) == PROTECTED_BUILD_SCENE
+
+func _protected_targets_stay_reachable(dist: PackedInt32Array, origin: Vector2, grid_size: int, cell_size: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float, proposed_is_target: bool) -> bool:
+	var checks: Array = []
+	for target in _protected_targets():
+		checks.append({
+			"pos": (target as Node2D).global_position,
+			"radius": _target_footprint(target),
+			"reason": "Can't wall in the extractor!"
+		})
+	# A generator being placed right now counts too - it is not in the scene yet,
+	# so _protected_targets() cannot see it. Without this, building the fort first
+	# and dropping the extractor into a sealed pocket bypasses the rule entirely.
+	if proposed_is_target:
+		checks.append({
+			"pos": proposed_pos,
+			"radius": proposed_radius,
+			"reason": "Extractor needs an open path!"
+		})
+
+	for check in checks:
+		var target_pos: Vector2 = check["pos"]
+		var target_radius: float = check["radius"]
+		var cells := _approach_cells(target_pos, target_radius, origin, grid_size, cell_size)
+		if cells.is_empty():
+			# Target sits outside the player-centred grid entirely; fall back to a
+			# local check around it.
+			if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+				_last_path_block_reason = str(check["reason"])
+				return false
+			continue
+		var connected := false
+		for idx in cells:
+			if dist[idx] >= 0:
+				connected = true
+				break
+		if connected:
+			continue
+		# Not connected to the player's region within this grid. That is either a
+		# genuine seal or a route that loops outside the grid, so confirm with a
+		# local escape test before rejecting the placement.
+		if not _target_escapes_locally(target_pos, target_radius, proposed_pos, proposed_radius, play_radius, cell_size):
+			_last_path_block_reason = str(check["reason"])
+			return false
 	return true
+
+func _target_escapes_locally(target_pos: Vector2, target_radius: float, proposed_pos: Vector2, proposed_radius: float, play_radius: float, cell_size: float) -> bool:
+	"""Can something standing next to the target walk out of a generous box around
+	it? A ring big enough to fail this is a deliberate enclosure."""
+	var grid_radius = int(ceil((target_radius + PATH_ESCAPE_BOX_RADIUS) / cell_size))
+	var grid_size = grid_radius * 2 + 1
+	var target_cell = Vector2i(
+		int(floor(target_pos.x / cell_size)),
+		int(floor(target_pos.y / cell_size))
+	)
+	var origin = Vector2(
+		float(target_cell.x - grid_radius) * cell_size,
+		float(target_cell.y - grid_radius) * cell_size
+	)
+	var blocked = _build_blocked_grid(origin, grid_size, cell_size, proposed_pos, proposed_radius, play_radius)
+	var required_cells = _get_required_clearance_cells(cell_size)
+	var clearance = _clearance_field_if_needed(blocked, grid_size, required_cells)
+	var needs_clearance: bool = required_cells > 1
+
+	var total = grid_size * grid_size
+	var seen = PackedByteArray()
+	seen.resize(total)
+	for i in range(total):
+		seen[i] = 0
+	var queue: Array = []
+	for idx in _approach_cells(target_pos, target_radius, origin, grid_size, cell_size):
+		if blocked[idx] == 1 or seen[idx] == 1:
+			continue
+		if needs_clearance and clearance[idx] < required_cells:
+			continue
+		seen[idx] = 1
+		queue.append(idx)
+	if queue.is_empty():
+		# Nowhere to even stand next to it - fully walled.
+		return false
+	var head = 0
+	var dirs = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		if x == 0 or y == 0 or x == grid_size - 1 or y == grid_size - 1:
+			return true  # reached the edge of the box: open to the wider map
+		for dir in dirs:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			var nidx = ny * grid_size + nx
+			if seen[nidx] == 1 or blocked[nidx] == 1:
+				continue
+			if needs_clearance and clearance[nidx] < required_cells:
+				continue
+			if play_radius > 0.0:
+				var world = _path_cell_center(Vector2i(nx, ny), origin, cell_size)
+				if world.length() > play_radius:
+					# Outside the arena is not an escape route, but it is also not a
+					# wall the player built - treat the map edge as open.
+					return true
+			seen[nidx] = 1
+			queue.append(nidx)
+	return false
+
+func _world_to_path_cell(world_pos: Vector2, origin: Vector2, cell_size: float) -> Vector2i:
+	return Vector2i(
+		int(floor((world_pos.x - origin.x) / cell_size)),
+		int(floor((world_pos.y - origin.y) / cell_size))
+	)
+
+func _path_cell_center(cell: Vector2i, origin: Vector2, cell_size: float) -> Vector2:
+	return origin + Vector2((float(cell.x) + 0.5) * cell_size, (float(cell.y) + 0.5) * cell_size)
+
+func _mark_blocked_circle(blocked: PackedByteArray, origin: Vector2, grid_size: int, cell_size: float, center: Vector2, radius: float, play_radius: float) -> void:
+	if radius <= 0.0:
+		return
+	var min_cell = _world_to_path_cell(center - Vector2(radius, radius), origin, cell_size)
+	var max_cell = _world_to_path_cell(center + Vector2(radius, radius), origin, cell_size)
+	for x in range(min_cell.x, max_cell.x + 1):
+		if x < 0 or x >= grid_size:
+			continue
+		for y in range(min_cell.y, max_cell.y + 1):
+			if y < 0 or y >= grid_size:
+				continue
+			var idx = y * grid_size + x
+			var world = _path_cell_center(Vector2i(x, y), origin, cell_size)
+			if play_radius > 0.0 and world.length() > play_radius:
+				continue
+			if abs(world.x - center.x) <= radius and abs(world.y - center.y) <= radius:
+				blocked[idx] = 1
+
+func _clearance_field_if_needed(blocked: PackedByteArray, grid_size: int, required_cells: int) -> PackedInt32Array:
+	"""The clearance field is a full multi-source BFS over every cell in the grid -
+	the single most expensive part of the placement check.
+
+	With the current agent radius (7) and cell size (16) `required_cells` works out
+	to 1, and a clearance of >= 1 is by definition "not a blocked cell" - so every
+	test against the field gives the same answer as testing `blocked` directly and
+	the whole pass is wasted work. Only build it if a genuinely wider corridor is
+	ever required."""
+	if required_cells <= 1:
+		return PackedInt32Array()
+	return _compute_clearance_field(blocked, grid_size)
+
+func _compute_clearance_field(blocked: PackedByteArray, grid_size: int) -> PackedInt32Array:
+	var total = grid_size * grid_size
+	var clearance = PackedInt32Array()
+	clearance.resize(total)
+	for i in range(total):
+		clearance[i] = -1
+	var queue: Array = []
+	for i in range(total):
+		if blocked[i] == 1:
+			clearance[i] = 0
+			queue.append(i)
+	if queue.is_empty():
+		for i in range(total):
+			clearance[i] = grid_size
+		return clearance
+	var head = 0
+	while head < queue.size():
+		var idx = queue[head]
+		head += 1
+		var x = idx % grid_size
+		var y = int(idx / grid_size)
+		for dir in PATH_CLEARANCE_DIRS:
+			var nx = x + dir.x
+			var ny = y + dir.y
+			if nx < 0 or ny < 0 or nx >= grid_size or ny >= grid_size:
+				continue
+			var nidx = ny * grid_size + nx
+			if clearance[nidx] >= 0:
+				continue
+			clearance[nidx] = clearance[idx] + 1
+			queue.append(nidx)
+	return clearance
+
+func _get_required_clearance_cells(cell_size: float) -> int:
+	var required = (PATH_AGENT_RADIUS + PATH_CLEARANCE_MARGIN + cell_size * 0.5) / cell_size
+	return int(ceil(required))
 
 func _apply_cost_mult(cost: int) -> int:
 	var final_cost = cost
@@ -606,4 +1454,4 @@ func _apply_cost_mult(cost: int) -> int:
 	return max(0, final_cost)
 
 func _controls_text() -> String:
-	return "LMB: place/select | RMB/Esc: cancel | U: upgrade | X: sell | B: build"
+	return "LMB: place/select | RMB: cancel | U: upgrade | X: sell | B: build | H: resource dump | Esc/P: pause"

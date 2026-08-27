@@ -1,6 +1,7 @@
 extends CharacterBody2D
 
 const FeedbackConfig = preload("res://scripts/feedback_config.gd")
+const PLAYER_HALO_TEXTURE = preload("res://assets/ui/ui_selection_ring_64x64_v001.png")
 
 var speed = 250.0
 var attack_range = 520.0
@@ -9,16 +10,26 @@ var damage = 15.0
 var projectile_speed = 720.0
 var projectile_range = 420.0
 
-var max_health = 100.0
-var health = 100.0
+var max_health = 130.0
+var health = 130.0
 var _base_speed = 250.0
 var _speed_bonus = 0.0
-var _base_max_health = 100.0
+var _base_max_health = 130.0
 var _max_health_bonus = 0.0
+var _damage_taken_mult = 1.0
 
 var _attack_cooldown = 0.0
 var _game: Node = null
 var _shot_counter = 0
+
+# --- Multiplayer identity (solo: peer_id stays 1, is_local() always true) ---
+var peer_id: int = 1
+var is_bot: bool = false
+# When a bot drives this player, the controller writes a desired move vector
+# here each frame; _get_move_vector() reads it instead of hardware input.
+var bot_move_vector: Vector2 = Vector2.ZERO
+# Inert players (dead/left in FFA) stop moving, firing, and contributing.
+var inert: bool = false
 var _base_damage = 15.0
 var _base_attack_rate = 1.2
 var _slow_timer = 0.0
@@ -50,24 +61,127 @@ var _berserk_active = false
 var _berserk_multiplier = 1.0
 var _berserk_timer = 0.0
 var _berserk_glow: Sprite2D = null
+var _contrast_plate: Sprite2D = null
+var _outline_material: ShaderMaterial = null
+var _visibility_halo: Sprite2D = null
+var _focus_marker: Sprite2D = null
+var _visibility_halo_time: float = 0.0
+var _combat_density: float = 0.0
+var _health_bar_bg: ColorRect = null
+var _health_bar_fill: ColorRect = null
+# Warm near-white: reads against grey stone, green grass and the dark contrast
+# plate alike, and stays distinct from the enemies' green and the extractor's cyan.
+const PLAYER_OUTLINE_COLOR = Color(1.0, 0.96, 0.78, 0.95)
+# In source texels (art is 32x32). Above ~1.2 the rim starts bridging the gap
+# between the legs and the silhouette turns into a blob.
+const PLAYER_OUTLINE_WIDTH = 1.0
+
+const PLAYER_HP_BAR_WIDTH = 38.0
+const PLAYER_HP_BAR_HEIGHT = 4.0
+const PLAYER_HP_BAR_OFFSET_Y = 22.0
+const DAMAGE_GRACE_WINDOW = 0.10
+const DAMAGE_GRACE_MAX_STACKED_HIT = 20.0
+const OCCLUSION_SCAN_INTERVAL = 0.08
+const OCCLUSION_RADIUS_MIN = 72.0
+const OCCLUSION_RADIUS_MAX = 108.0
+# Crowding transparency keeps the player readable in a melee, but enemies must
+# stay clearly visible so incoming threats register. Floor raised from 0.16.
+const OCCLUSION_ALPHA_NEAR = 0.55
+const OCCLUSION_ALPHA_FAR = 0.72
+static var _shared_focus_marker_tex: ImageTexture = null
+static var _shared_contrast_plate_tex: ImageTexture = null
+
+var _damage_grace_timer: float = 0.0
+var _occlusion_scan_timer: float = 0.0
+var _occluded_enemy_bodies: Dictionary = {}
+
+# --- Snappy-arcade movement model ---
+const MOVE_ACCEL = 2600.0          # ramp to full speed fast
+const MOVE_DECEL = 3200.0          # stop a touch faster than we start = crisp
+const MOVE_TURN_BOOST = 1.35       # extra accel when reversing direction
+const MOVE_IDLE_EPS = 12.0         # speed below this counts as "stopped"
+var _is_moving: bool = false
+var _speed_ratio: float = 0.0
+
+# --- Body juice (secondary motion on the $Body sprite) ---
+var _body_base_scale: Vector2 = Vector2.ONE
+var _body_base_pos: Vector2 = Vector2.ZERO
+var _body_juice_ready: bool = false
+var _body_anim_phase: float = 0.0
+var _body_smooth_scale: Vector2 = Vector2.ONE
+var _body_smooth_skew: float = 0.0
+var _body_smooth_offset: Vector2 = Vector2.ZERO
+var _body_stop_impulse: float = 0.0
+var _body_fire_impulse: float = 0.0
+var _body_fire_dir: Vector2 = Vector2.RIGHT
+var _was_moving: bool = false
+var _juice_scale: float = 1.0
 
 func _ready() -> void:
 	_ensure_game_ref()
 	add_to_group("player")
+	z_as_relative = false
+	z_index = 120
 	collision_layer = GameLayers.PLAYER
-	collision_mask = GameLayers.ENEMY | GameLayers.BUILDING
+	# Player should phase through enemy bodies in frantic maze-survivor combat.
+	collision_mask = GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	if sprite != null and sprite is CanvasItem:
+		(sprite as CanvasItem).z_index = 16
 	_base_damage = damage
 	_base_attack_rate = attack_rate
 	_base_speed = speed
 	_base_max_health = max_health
+	_setup_contrast_plate()
+	_setup_visibility_halo()
+	_setup_focus_marker()
+	_create_health_bar()
+	_update_health_bar()
+	_init_body_juice()
+
+func _init_body_juice() -> void:
+	if sprite != null and sprite is Node2D:
+		_body_base_scale = (sprite as Node2D).scale
+		_body_base_pos = (sprite as Node2D).position
+		_body_smooth_scale = _body_base_scale
+		_body_smooth_offset = Vector2.ZERO
+		_body_juice_ready = true
+	var manager = _get_settings_manager_safe()
+	if manager != null and manager.has_method("is_reduced_motion") and bool(manager.is_reduced_motion()):
+		_juice_scale = 0.0
+	else:
+		_juice_scale = 1.0
+
+func _get_settings_manager_safe() -> Node:
+	if _game != null and _game.has_method("_get_settings_manager"):
+		return _game._get_settings_manager()
+	return get_node_or_null("/root/SettingsManager")
 
 func set_character(base_path: String, prefix: String) -> void:
 	if sprite != null and sprite.has_method("configure"):
 		sprite.configure(base_path, prefix)
 
 func _physics_process(delta: float) -> void:
+	_update_outline_fade()
 	_ensure_game_ref()
+	# While dying, the death sequence owns the frame: advance it and skip the
+	# normal movement/combat update so the run-end screen can be triggered.
+	if _is_dying:
+		_process_death_animation(delta)
+		return
+	# Once the run has ended (game over / run-end screen up) the player must
+	# stay put: the death animation flips _is_dying back off, so without this
+	# guard movement input would resume behind the end screen.
+	if _game != null and _game.game_over:
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+	_update_visibility_halo(delta)
+	_update_contrast_plate(delta)
+	_update_focus_marker(delta)
+	_update_enemy_occlusion(delta)
+	_update_health_bar()
+	_damage_grace_timer = max(0.0, _damage_grace_timer - delta)
 	if _slow_timer > 0.0:
 		_slow_timer = max(0.0, _slow_timer - delta)
 	else:
@@ -79,18 +193,49 @@ func _physics_process(delta: float) -> void:
 		if _berserk_timer <= 0.0:
 			_deactivate_berserk()
 	
-	var input_vector = Vector2(
-		Input.get_action_strength("move_right") - Input.get_action_strength("move_left"),
-		Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
-	)
-	if input_vector.length() > 1.0:
-		input_vector = input_vector.normalized()
+	# In FFA, a non-authority player's transform is replicated by the
+	# MultiplayerSynchronizer — skip local integration so it doesn't fight the
+	# synced position. Solo and the local/bot-owned player run the full sim.
+	if not is_local():
+		_update_remote_visuals(delta)
+		return
+	# Inert players (spectating after death / left the match) freeze in place.
+	if inert:
+		velocity = Vector2.ZERO
+		move_and_slide()
+		return
+
+	var input_vector := _get_move_vector()
 	_update_facing(input_vector)
-	velocity = input_vector * speed * _slow_factor
+
+	# Snappy-arcade acceleration: ramp toward target velocity instead of snapping.
+	var has_input := input_vector.length() > 0.05
+	var target_velocity: Vector2 = input_vector * speed * _slow_factor
+	var rate: float = MOVE_ACCEL if has_input else MOVE_DECEL
+	# Reversing direction? give it extra bite so quick turns feel responsive.
+	if has_input and velocity.length() > 1.0 and velocity.dot(target_velocity) < 0.0:
+		rate *= MOVE_TURN_BOOST
+	velocity = velocity.move_toward(target_velocity, rate * delta)
 	move_and_slide()
 	if _game != null and _game.has_method("clamp_to_play_area"):
 		global_position = _game.clamp_to_play_area(global_position)
 
+	# Movement state for animation + juice systems (skip during death so the
+	# death sequence owns the transform).
+	if not _is_dying:
+		var spd := velocity.length()
+		_is_moving = spd > MOVE_IDLE_EPS
+		_speed_ratio = clampf(spd / max(1.0, speed), 0.0, 1.4)
+		_update_move_animation()
+		_update_body_juice(delta)
+
+	# Auto-fire only on the input-authority side (host owns damage). In solo
+	# is_local() is always true, so firing is unchanged.
+	if inert:
+		return
+	if character_id == "reaper":
+		_tick_reaper_summon(delta)
+		return
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
 	if _attack_cooldown <= 0.0:
 		var target = _find_target()
@@ -101,6 +246,14 @@ func _physics_process(delta: float) -> void:
 			else:
 				dir = _vector_from_dir(_facing_dir)
 			_shot_counter += 1
+			# Shot tap for the DPS harness (see main.gd:_run_dps_selftest). One
+			# fire event, however many projectiles a burst puts into the air.
+			if _game.dps_logging:
+				_game.log_shot()
+			# Body fire kick (juice): brief punch along shot direction.
+			if _juice_scale > 0.0:
+				_body_fire_impulse = max(_body_fire_impulse, 0.5)
+				_body_fire_dir = dir
 			# Muzzle flash and shell casing effects
 			_spawn_muzzle_flash(dir)
 			_spawn_shell_casing(dir)
@@ -114,12 +267,56 @@ func _physics_process(delta: float) -> void:
 			# Audio: Gun fire sound
 			AudioManager.play_weapon_sound("gun", global_position)
 
+# --- Reaper: raise the dead instead of firing ---------------------------------
+#
+# Summons ride the existing ally system rather than a new unit type: allies
+# already chase and attack enemies, already sit on GameLayers.ALLY with
+# collision_mask 0, and -- checked, not assumed -- building placement only tests
+# GameLayers.BUILDING, so a summon can never block a tower going down. That is
+# the "don't give them collision so it doesn't mess with building" requirement,
+# already satisfied by the layer the allies use.
+var character_id: String = ""
+const REAPER_SUMMON_INTERVAL := 4.0
+const REAPER_SUMMON_CAP := 6          # under the game's max_allies of 16
+const REAPER_SUMMON := {
+	"max_health": 70.0,
+	"attack_damage": 11.0,
+	"attack_rate": 1.0,
+	"attack_range": 24.0,
+	"speed": 95.0,
+	"aggro_range": 420.0,
+	"leash_radius": 560.0,
+	"scale": 0.85,
+	"damage_type": "poison",
+	"attack_fx": "poison",
+	"spawn_fx": "summon_green",
+	"death_fx": "poison",
+}
+var _summon_timer: float = 0.0
+
+func _tick_reaper_summon(delta: float) -> void:
+	_summon_timer -= delta
+	if _summon_timer > 0.0:
+		return
+	_summon_timer = REAPER_SUMMON_INTERVAL
+	if _game == null or not _game.has_method("spawn_reaper_summon"):
+		return
+	_game.spawn_reaper_summon(global_position, REAPER_SUMMON, REAPER_SUMMON_CAP)
+
 func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = attack_range * attack_range
-	for enemy: Node2D in get_tree().get_nodes_in_group("enemies"):
-		if enemy == null:
+	var enemies: Array = []
+	if _game != null and _game.has_method("get_cached_enemies"):
+		enemies = _game.get_cached_enemies()
+	else:
+		enemies = get_tree().get_nodes_in_group("enemies")
+	for raw_enemy in enemies:
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
 			continue
+		if not (raw_enemy is Node2D):
+			continue
+		var enemy := raw_enemy as Node2D
 		var dist = global_position.distance_squared_to(enemy.global_position)
 		if dist <= best_dist:
 			best = enemy
@@ -134,6 +331,92 @@ func _update_facing(input_vector: Vector2) -> void:
 		sprite.set_direction(_facing_dir)
 	else:
 		sprite.set_direction(_facing_dir)
+
+func _update_move_animation() -> void:
+	if sprite == null:
+		return
+	if sprite.has_method("set_moving"):
+		sprite.set_moving(_is_moving)
+	if sprite.has_method("set_speed_ratio"):
+		sprite.set_speed_ratio(_speed_ratio)
+
+# Drive walk animation + facing for a REMOTE player (FFA, non-authority) from
+# the position delta the synchronizer replicates. No physics integration here.
+func _update_remote_visuals(delta: float) -> void:
+	var moved: Vector2 = global_position - _body_base_pos_world()
+	var spd: float = moved.length() / max(0.0001, delta)
+	_is_moving = spd > MOVE_IDLE_EPS
+	_speed_ratio = clampf(spd / max(1.0, speed), 0.0, 1.4)
+	if _is_moving:
+		_update_facing(moved)
+	_update_move_animation()
+	_remote_last_pos = global_position
+
+var _remote_last_pos: Vector2 = Vector2.ZERO
+func _body_base_pos_world() -> Vector2:
+	# Seed on first frame so the initial delta is zero.
+	if _remote_last_pos == Vector2.ZERO:
+		_remote_last_pos = global_position
+	return _remote_last_pos
+
+func _update_body_juice(delta: float) -> void:
+	if not _body_juice_ready or sprite == null or not (sprite is Node2D):
+		return
+	var body := sprite as Node2D
+	_body_anim_phase += delta
+
+	# Decay one-shot impulses.
+	_body_stop_impulse = lerpf(_body_stop_impulse, 0.0, clampf(delta * 9.0, 0.0, 1.0))
+	_body_fire_impulse = lerpf(_body_fire_impulse, 0.0, clampf(delta * 11.0, 0.0, 1.0))
+
+	# Detect move->idle transition to kick a settle overshoot.
+	if _was_moving and not _is_moving:
+		_body_stop_impulse = max(_body_stop_impulse, 0.06)
+	_was_moving = _is_moving
+
+	var js := _juice_scale
+	var dir := velocity
+	var travel := dir.normalized() if dir.length() > 1.0 else _vector_from_dir(_facing_dir)
+
+	# The hunter frames already carry a baked walk cycle, so the procedural
+	# secondary motion is kept subtle to avoid a rubbery/bouncy double-animation.
+	# --- Target scale: gentle run squash/stretch + impulses ---
+	var stretch := 0.04 * _speed_ratio * js
+	# Stretch along travel (use horizontal/vertical bias so it reads in 2D top-down).
+	var horiz_bias := absf(travel.x)
+	var target_scale := _body_base_scale
+	target_scale.x *= 1.0 + stretch * horiz_bias - stretch * (1.0 - horiz_bias) * 0.5
+	target_scale.y *= 1.0 + stretch * (1.0 - horiz_bias) - stretch * horiz_bias * 0.5
+	# Settle overshoot on stop (squash down then recover via decay).
+	target_scale.y *= 1.0 - _body_stop_impulse
+	target_scale.x *= 1.0 + _body_stop_impulse * 0.6
+	# Fire kick: brief punch along shot direction.
+	if _body_fire_impulse > 0.001:
+		var fb := absf(_body_fire_dir.x)
+		target_scale.x *= 1.0 + _body_fire_impulse * 0.10 * fb
+		target_scale.y *= 1.0 + _body_fire_impulse * 0.10 * (1.0 - fb)
+
+	# --- Target skew: slight lean into horizontal travel ---
+	var target_skew := -travel.x * 0.05 * _speed_ratio * js
+
+	# --- Vertical bob (subtle run bob while moving, breathing while idle) ---
+	var bob := 0.0
+	if _is_moving:
+		bob = sin(_body_anim_phase * (10.0 + 6.0 * _speed_ratio)) * 0.4 * _speed_ratio * js
+	else:
+		bob = sin(_body_anim_phase * 2.4) * 0.45 * js
+	var target_offset := _body_base_pos + Vector2(0.0, -absf(bob) if _is_moving else bob)
+
+	# Smooth everything (exp-style alpha so nothing snaps).
+	var a_fast := clampf(delta * 18.0, 0.0, 1.0)
+	var a_slow := clampf(delta * 12.0, 0.0, 1.0)
+	_body_smooth_scale = _body_smooth_scale.lerp(target_scale, a_fast)
+	_body_smooth_skew = lerpf(_body_smooth_skew, target_skew, a_slow)
+	_body_smooth_offset = _body_smooth_offset.lerp(target_offset, a_fast)
+
+	body.scale = _body_smooth_scale
+	body.skew = _body_smooth_skew
+	body.position = _body_smooth_offset
 
 func _direction_from_vector(vec: Vector2) -> String:
 	var angle = atan2(vec.y, vec.x)
@@ -166,7 +449,12 @@ func _vector_from_dir(dir: String) -> Vector2:
 func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true) -> void:
 	if amount <= 0.0:
 		return
-	health -= amount
+	if _game != null and _game.has_method("is_damage_blocked") and _game.is_damage_blocked():
+		return
+	if _damage_grace_timer > 0.0 and amount <= DAMAGE_GRACE_MAX_STACKED_HIT:
+		return
+	health -= amount * _damage_taken_mult
+	_damage_grace_timer = DAMAGE_GRACE_WINDOW
 	# Reset kill streak when taking damage
 	if _game != null and _game.has_method("reset_kill_streak"):
 		_game.reset_kill_streak()
@@ -177,6 +465,10 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	# Chromatic aberration / red flash effect when damaged
 	if _game != null and _game.has_method("trigger_damage_flash"):
 		_game.trigger_damage_flash()
+	# Camera zoom punch scales with hit severity (only meaningful hits, avoids jitter)
+	if _game != null and _game.has_method("kick_camera_zoom") and amount >= 8.0:
+		var kick = clampf(0.025 + amount * 0.0016, 0.025, 0.08)
+		_game.kick_camera_zoom(kick)
 	# Audio: Shield hit sound when taking damage
 	AudioManager.play_one_shot("shield_hit", global_position, AudioManager.HIGH_PRIORITY)
 	if _game != null and show_hit_fx and FeedbackConfig.ENABLE_HIT_SPARKS and amount >= FeedbackConfig.HIT_SPARK_MIN_DAMAGE:
@@ -191,11 +483,20 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			_last_hit_fx_ms = now_ms
 	if health <= 0.0:
 		health = 0.0
-		# Start death animation instead of immediate game over
-		start_death_animation()
+		# FFA: dying does NOT end the match or trigger global slow-mo. The player
+		# goes inert (spectates), their score locks in, and their towers stop. The
+		# host owns this transition and tells every peer via the game.
+		if _game != null and _game.has_method("is_ffa") and _game.is_ffa():
+			if _game.has_method("ffa_on_player_died"):
+				_game.ffa_on_player_died(peer_id)
+		else:
+			# Start death animation instead of immediate game over
+			start_death_animation()
+	_update_health_bar()
 
 func heal(amount: float) -> void:
 	health = min(max_health, health + amount)
+	_update_health_bar()
 
 func apply_gun_tech(id: String, level: int) -> void:
 	match id:
@@ -224,6 +525,18 @@ func apply_max_health_bonus(bonus: float) -> void:
 	if delta > 0.0:
 		health += delta
 	health = min(health, max_health)
+	_update_health_bar()
+
+# Fold persistent meta-progression bonuses into the player's run baseline so that
+# in-run additive bonuses (chest/tech) still stack correctly on top.
+func apply_meta_bonuses(max_hp_bonus: float, speed_mult: float, damage_taken_mult: float = 1.0) -> void:
+	_base_max_health = 130.0 + max(0.0, max_hp_bonus)
+	max_health = _base_max_health + _max_health_bonus
+	health = max_health
+	_base_speed = 250.0 * max(0.1, speed_mult)
+	speed = _base_speed + _speed_bonus
+	_damage_taken_mult = max(0.1, damage_taken_mult)
+	_update_health_bar()
 
 func apply_slow(factor: float, duration: float) -> void:
 	_slow_factor = min(_slow_factor, factor)
@@ -255,6 +568,296 @@ func _ensure_game_ref() -> void:
 	if _game == null:
 		_game = get_tree().get_first_node_in_group("game")
 
+# True when this client (or the host, for bots) owns this player's input.
+# In solo, always true. In FFA, the input authority drives movement/fire; other
+# peers receive the transform via the MultiplayerSynchronizer.
+func is_local() -> bool:
+	var net := get_node_or_null("/root/Net")
+	if net == null or not net.is_multiplayer():
+		return true
+	# Host drives bots; clients/host drive their own player.
+	if is_bot:
+		return net.is_host
+	return is_multiplayer_authority()
+
+# Movement source: hardware input for a local human, the bot vector for a bot.
+func _get_move_vector() -> Vector2:
+	if is_bot:
+		var v := bot_move_vector
+		if v.length() > 1.0:
+			v = v.normalized()
+		return v
+	var input_vector := Vector2(
+		Input.get_action_strength("move_right") - Input.get_action_strength("move_left"),
+		Input.get_action_strength("move_down") - Input.get_action_strength("move_up")
+	)
+	if input_vector.length() > 1.0:
+		input_vector = input_vector.normalized()
+	return input_vector
+
+# A bright rim traced around the player's silhouette. Against a packed tower base
+# everything is mid-grey stone and the player - small, dark, and the one thing you
+# must never lose - blends straight into it. An outline separates them regardless
+# of what is behind, which a glow or a tint cannot do.
+const PLAYER_OUTLINE_SHADER := """
+shader_type canvas_item;
+
+uniform vec4 outline_color : source_color = vec4(1.0, 0.96, 0.78, 1.0);
+uniform float outline_width = 1.0;
+// Mirrors sprite.modulate.a. The rim lives where the texture is transparent, so
+// it never picks up modulate on its own and would stay solid through the death
+// fade. MODULATE is not exposed to canvas_item shaders in this renderer, so the
+// player pushes the value in each frame instead.
+uniform float rim_alpha = 1.0;
+
+// Treat anything outside the frame as empty. Sampling past the edge would
+// otherwise clamp and smear the border pixels into a false outline.
+// TEXTURE has to be passed in: shader built-ins are only visible inside the
+// entry-point functions, not in user-defined ones.
+float edge_alpha(sampler2D tex, vec2 uv) {
+	if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+		return 0.0;
+	}
+	return texture(tex, uv).a;
+}
+
+void fragment() {
+	// COLOR arrives as texture * modulate, so it is already the correct pixel for
+	// the sprite itself - leave it alone and only paint the surrounding rim.
+	vec4 base = COLOR;
+	vec4 src = texture(TEXTURE, UV);
+	vec2 px = TEXTURE_PIXEL_SIZE * outline_width;
+	float neighbour = 0.0;
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(px.x, 0.0)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - vec2(px.x, 0.0)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(0.0, px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - vec2(0.0, px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + px));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV - px));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(px.x, -px.y)));
+	neighbour = max(neighbour, edge_alpha(TEXTURE, UV + vec2(-px.x, px.y)));
+	// Paint only where the sprite is transparent but a neighbour is not.
+	float rim = clamp(neighbour - src.a, 0.0, 1.0);
+	vec3 rgb = mix(base.rgb, outline_color.rgb, rim);
+	COLOR = vec4(rgb, max(base.a, rim * outline_color.a * rim_alpha));
+}
+"""
+
+func _setup_visibility_halo() -> void:
+	# Cyan glow ring removed (it cluttered the player silhouette). Readability now
+	# comes from the dark contrast plate under the feet plus a rim outline on the
+	# sprite itself, which survives being surrounded by towers.
+	if sprite == null or not (sprite is CanvasItem):
+		return
+	var shader := Shader.new()
+	shader.code = PLAYER_OUTLINE_SHADER
+	_outline_material = ShaderMaterial.new()
+	_outline_material.shader = shader
+	_outline_material.set_shader_parameter("outline_color", PLAYER_OUTLINE_COLOR)
+	_outline_material.set_shader_parameter("outline_width", PLAYER_OUTLINE_WIDTH)
+	(sprite as CanvasItem).material = _outline_material
+
+func _update_outline_fade() -> void:
+	# Keep the rim in step with the sprite's own fade (death, respawn, flashes).
+	if _outline_material == null or sprite == null:
+		return
+	_outline_material.set_shader_parameter("rim_alpha", (sprite as CanvasItem).modulate.a)
+
+func _setup_contrast_plate() -> void:
+	if _contrast_plate != null:
+		return
+	_contrast_plate = Sprite2D.new()
+	_contrast_plate.name = "ContrastPlate"
+	_contrast_plate.texture = _get_contrast_plate_texture()
+	_contrast_plate.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_contrast_plate.z_index = 108
+	_contrast_plate.position = Vector2(0, 8)
+	_contrast_plate.scale = Vector2.ONE * 1.42
+	_contrast_plate.modulate = Color(0.0, 0.0, 0.0, 0.68)
+	add_child(_contrast_plate)
+
+func _get_contrast_plate_texture() -> ImageTexture:
+	if _shared_contrast_plate_tex != null:
+		return _shared_contrast_plate_tex
+	var img = Image.create(56, 40, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var center = Vector2(28.0, 20.0)
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var dx = (float(x) - center.x) / 26.0
+			var dy = (float(y) - center.y) / 14.0
+			var dist = sqrt(dx * dx + dy * dy)
+			if dist > 1.0:
+				continue
+			var alpha = clampf((1.0 - dist) * 0.92, 0.0, 0.92)
+			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, alpha))
+	_shared_contrast_plate_tex = ImageTexture.create_from_image(img)
+	return _shared_contrast_plate_tex
+
+func _update_contrast_plate(delta: float) -> void:
+	if _contrast_plate == null:
+		return
+	if _is_dying:
+		_contrast_plate.visible = false
+		return
+	_contrast_plate.visible = true
+	var pulse = 0.5 + 0.5 * sin(_visibility_halo_time * 3.2 + delta * 4.0)
+	_contrast_plate.scale = Vector2(1.26 + _combat_density * 0.54, 1.10 + _combat_density * 0.34) * (1.0 + pulse * 0.08)
+	_contrast_plate.modulate.a = clampf(0.58 + _combat_density * 0.24, 0.0, 0.94)
+
+func _update_visibility_halo(delta: float) -> void:
+	if _visibility_halo == null:
+		return
+	_visibility_halo_time += delta
+	var pulse = 0.5 + 0.5 * sin(_visibility_halo_time * 5.2)
+	_visibility_halo.scale = Vector2.ONE * (1.18 + pulse * 0.22 + _combat_density * 0.36)
+	var alpha = clampf(0.86 + pulse * 0.14 + _combat_density * 0.12, 0.0, 1.0)
+	_visibility_halo.modulate = Color(0.42, 1.0, 0.98, alpha)
+
+func _setup_focus_marker() -> void:
+	if _focus_marker != null:
+		return
+	_focus_marker = Sprite2D.new()
+	_focus_marker.name = "FocusMarker"
+	_focus_marker.texture = _get_focus_marker_texture()
+	_focus_marker.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_focus_marker.z_index = 172
+	_focus_marker.position = Vector2(0, -32)
+	_focus_marker.scale = Vector2.ONE * 1.28
+	_focus_marker.modulate = Color(1.0, 1.0, 0.62, 0.96)
+	var marker_mat = CanvasItemMaterial.new()
+	marker_mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_focus_marker.material = marker_mat
+	add_child(_focus_marker)
+
+func _get_focus_marker_texture() -> ImageTexture:
+	if _shared_focus_marker_tex != null:
+		return _shared_focus_marker_tex
+	var img = Image.create(22, 22, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var fill = Color(1.0, 1.0, 0.85, 0.95)
+	var edge = Color(0.1, 0.1, 0.1, 0.95)
+	for y in range(12):
+		var w = int(floor(float(y) * 0.6))
+		for x in range(-w, w + 1):
+			var px = 11 + x
+			var py = y + 3
+			if px < 0 or py < 0 or px >= 22 or py >= 22:
+				continue
+			img.set_pixel(px, py, fill)
+	for y in range(2, 17):
+		img.set_pixel(11, y, fill)
+	for x in range(22):
+		for y in range(22):
+			var c = img.get_pixel(x, y)
+			if c.a <= 0.0:
+				continue
+			for ox in range(-1, 2):
+				for oy in range(-1, 2):
+					var nx = x + ox
+					var ny = y + oy
+					if nx < 0 or ny < 0 or nx >= 22 or ny >= 22:
+						continue
+					if img.get_pixel(nx, ny).a <= 0.0:
+						img.set_pixel(nx, ny, edge)
+	_shared_focus_marker_tex = ImageTexture.create_from_image(img)
+	return _shared_focus_marker_tex
+
+func _update_focus_marker(_delta: float) -> void:
+	if _focus_marker == null:
+		return
+	if _is_dying:
+		_focus_marker.visible = false
+		return
+	_focus_marker.visible = true
+	var t = Time.get_ticks_msec() * 0.001
+	var bob = sin(t * 6.0) * 2.8
+	var pulse = 0.98 + (0.10 + _combat_density * 0.22) * (0.5 + 0.5 * sin(t * 9.0))
+	_focus_marker.position = Vector2(0, -33 + bob)
+	_focus_marker.scale = Vector2.ONE * pulse
+	_focus_marker.modulate = Color(1.0, 1.0, 0.72, clampf(0.92 + _combat_density * 0.08, 0.0, 1.0))
+
+func _update_enemy_occlusion(delta: float) -> void:
+	if _is_dying:
+		_clear_enemy_occlusion()
+		_combat_density = 0.0
+		return
+	_occlusion_scan_timer = max(0.0, _occlusion_scan_timer - delta)
+	if _occlusion_scan_timer > 0.0:
+		return
+	_occlusion_scan_timer = OCCLUSION_SCAN_INTERVAL
+	var enemies: Array = []
+	if _game != null and _game.has_method("get_cached_enemies"):
+		enemies = _game.get_cached_enemies()
+	else:
+		enemies = get_tree().get_nodes_in_group("enemies")
+	var density = clampf(float(enemies.size()) / 90.0, 0.0, 1.0)
+	_combat_density = density
+	var radius = lerpf(OCCLUSION_RADIUS_MIN, OCCLUSION_RADIUS_MAX, density)
+	var alpha = lerpf(OCCLUSION_ALPHA_FAR, OCCLUSION_ALPHA_NEAR, density)
+	var radius_sq = radius * radius
+	var visible_now: Dictionary = {}
+	for raw_enemy in enemies:
+		if raw_enemy == null or not is_instance_valid(raw_enemy):
+			continue
+		if not (raw_enemy is Node2D):
+			continue
+		var enemy := raw_enemy as Node2D
+		if global_position.distance_squared_to(enemy.global_position) > radius_sq:
+			continue
+		var enemy_body = enemy.get_node_or_null("Body")
+		if enemy_body == null or not (enemy_body is CanvasItem):
+			continue
+		var enemy_body_item := enemy_body as CanvasItem
+		enemy_body_item.self_modulate = Color(1.0, 1.0, 1.0, alpha)
+		visible_now[enemy.get_instance_id()] = enemy_body_item
+	for enemy_id in _occluded_enemy_bodies.keys():
+		if visible_now.has(enemy_id):
+			continue
+		var old_body = _occluded_enemy_bodies[enemy_id]
+		if old_body != null and is_instance_valid(old_body):
+			old_body.self_modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_occluded_enemy_bodies = visible_now
+
+func _clear_enemy_occlusion() -> void:
+	for enemy_id in _occluded_enemy_bodies.keys():
+		var body = _occluded_enemy_bodies[enemy_id]
+		if body != null and is_instance_valid(body):
+			body.self_modulate = Color(1.0, 1.0, 1.0, 1.0)
+	_occluded_enemy_bodies.clear()
+
+func _create_health_bar() -> void:
+	if _health_bar_bg != null and is_instance_valid(_health_bar_bg):
+		return
+	_health_bar_bg = ColorRect.new()
+	_health_bar_bg.name = "PlayerHealthBarBg"
+	_health_bar_bg.size = Vector2(PLAYER_HP_BAR_WIDTH, PLAYER_HP_BAR_HEIGHT)
+	_health_bar_bg.position = Vector2(-PLAYER_HP_BAR_WIDTH / 2.0, PLAYER_HP_BAR_OFFSET_Y)
+	_health_bar_bg.color = Color(0.05, 0.05, 0.05, 0.72)
+	_health_bar_bg.z_index = 95
+	add_child(_health_bar_bg)
+
+	_health_bar_fill = ColorRect.new()
+	_health_bar_fill.name = "PlayerHealthBarFill"
+	_health_bar_fill.size = Vector2(PLAYER_HP_BAR_WIDTH, PLAYER_HP_BAR_HEIGHT)
+	_health_bar_fill.position = Vector2.ZERO
+	_health_bar_fill.color = Color(0.22, 0.96, 0.35, 0.92)
+	_health_bar_bg.add_child(_health_bar_fill)
+
+func _update_health_bar() -> void:
+	if _health_bar_bg == null or _health_bar_fill == null:
+		return
+	var max_hp = max(max_health, 1.0)
+	var ratio = clampf(health / max_hp, 0.0, 1.0)
+	_health_bar_fill.size.x = PLAYER_HP_BAR_WIDTH * ratio
+	if ratio > 0.55:
+		_health_bar_fill.color = Color(0.22, 0.96, 0.35, 0.92)
+	elif ratio > 0.25:
+		_health_bar_fill.color = Color(0.96, 0.82, 0.24, 0.95)
+	else:
+		_health_bar_fill.color = Color(0.98, 0.22, 0.22, 0.98)
+	_health_bar_bg.visible = not _is_dying
+
 # ============================================
 # DRAMATIC ROGUELIKE DEATH SEQUENCE
 # ============================================
@@ -274,6 +877,12 @@ func start_death_animation() -> void:
 	
 	# Stop all movement
 	velocity = Vector2.ZERO
+	if _contrast_plate != null:
+		_contrast_plate.visible = false
+	if _visibility_halo != null:
+		_visibility_halo.visible = false
+	if _health_bar_bg != null:
+		_health_bar_bg.visible = false
 	
 	# Phase 0: The fatal blow - dramatic impact
 	_spawn_fatal_blow_effect()
@@ -286,8 +895,13 @@ func start_death_animation() -> void:
 		_game.shake_camera(15.0, 2.0)
 
 func _process_death_animation(delta: float) -> void:
-	_death_animation_time += delta * Engine.time_scale
-	
+	# delta is already scaled by Engine.time_scale (0.15 during the death slow-mo).
+	# Convert back to REAL seconds so the 6s sequence lasts ~6 real seconds and
+	# actually reaches completion (the old `* Engine.time_scale` double-scaled it,
+	# stretching the run to minutes and stalling the run-end screen).
+	var ts: float = max(Engine.time_scale, 0.0001)
+	_death_animation_time += delta / ts
+
 	var progress = _death_animation_time / _death_animation_duration
 	
 	# PHASE 0: The Impact (0.0 - 0.1) - First 0.6 real seconds
@@ -478,6 +1092,8 @@ func _spawn_blood_burst() -> void:
 func _finish_death_animation() -> void:
 	"""Called when death animation completes"""
 	_is_dying = false
+	_clear_enemy_occlusion()
+	_combat_density = 0.0
 
 	# Reset time scale
 	Engine.time_scale = 1.0
@@ -489,15 +1105,67 @@ func _finish_death_animation() -> void:
 func is_dying() -> bool:
 	return _is_dying
 
+func clear_run_modifiers() -> void:
+	# Reset all run-scoped combat modifiers back to character baseline.
+	gun_pierce = 0
+	burst_level = 0
+	burst_every = 0
+	burst_spread = 0.25
+	slow_factor = 1.0
+	slow_duration = 0.0
+	explosive_radius = 0.0
+	_speed_bonus = 0.0
+	_max_health_bonus = 0.0
+	speed = _base_speed
+	max_health = _base_max_health
+	health = max_health
+	_shot_counter = 0
+	_berserk_active = false
+	_berserk_multiplier = 1.0
+	_berserk_timer = 0.0
+	_remove_berserk_glow()
+	_clear_enemy_occlusion()
+	_combat_density = 0.0
+	apply_global_bonuses(0.0)
+	_update_health_bar()
+
 func reset() -> void:
-	"""Reset player state for new game"""
+	"""Reset player state for new game.
+
+	The death animation drives rotation, scale, skew and modulate directly, so
+	every one of them has to be put back. Missing `rotation` in particular left
+	the character permanently lying on their side after a replay."""
 	_is_dying = false
 	_death_animation_time = 0.0
+	_death_phase = 0
 	scale = _original_scale if _original_scale != Vector2.ZERO else Vector2.ONE
+	rotation = 0.0
+	modulate = Color.WHITE
 	if sprite != null:
 		sprite.modulate = Color.WHITE
+		sprite.visible = true
+		if "skew" in sprite:
+			sprite.skew = 0.0
+		if "rotation" in sprite:
+			sprite.rotation = 0.0
+	_body_smooth_skew = 0.0
+	# Soul fragments from the death sequence outlive the run otherwise.
+	for p in _soul_particles:
+		if p != null and is_instance_valid(p):
+			p.queue_free()
+	_soul_particles.clear()
+	if _visibility_halo != null:
+		_visibility_halo.visible = true
+		_visibility_halo_time = 0.0
+	if _focus_marker != null:
+		_focus_marker.visible = true
+	_clear_enemy_occlusion()
+	_combat_density = 0.0
 	health = max_health
 	velocity = Vector2.ZERO
+	if _health_bar_bg != null:
+		_health_bar_bg.visible = true
+	_update_health_bar()
 
 # ============================================
 # BERSERK BUFF - Power-up effect

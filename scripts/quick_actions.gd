@@ -232,22 +232,15 @@ func _get_building_cost(building: Node) -> int:
 	
 	# Default costs based on building type
 	var type = _get_building_type(building)
+	# Fallback refund/cost estimates for the five buildable structures. Removed
+	# buildings (traps + barracks/tech_lab/armory) were dropped; see
+	# docs/REMOVED_BUILDINGS.md.
 	var default_costs = {
 		"arrow_turret": 50,
 		"cannon_tower": 100,
 		"tesla_tower": 150,
-		"sniper_tower": 120,
-		"barrage_tower": 130,
-		"wall": 30,
-		"gate": 50,
 		"resource_generator": 80,
-		"barracks": 150,
-		"tech_lab": 200,
-		"armory": 180,
-		"shrine": 150,
-		"mine_trap": 60,
-		"ice_trap": 80,
-		"acid_trap": 100
+		"shrine": 150
 	}
 	return default_costs.get(type, 50)
 

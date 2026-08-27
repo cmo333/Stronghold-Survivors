@@ -13,6 +13,8 @@ func setup(game_ref: Node, difficulty: float) -> void:
 func _ready() -> void:
 	super._ready()
 	is_siege = true
+	_create_health_bar()
+	create_siege_threat_ring()
 
 func _find_target() -> Node2D:
 	if _game == null:

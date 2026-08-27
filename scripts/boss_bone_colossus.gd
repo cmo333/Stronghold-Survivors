@@ -58,7 +58,11 @@ func _boss_behavior(delta: float) -> void:
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
 		velocity = Vector2.ZERO
 	else:
-		var dir = (target.global_position - global_position).normalized()
+		# Maze-aware, same as every regular enemy. A raw straight line walked
+		# bosses face-first into whatever tower happened to be between them and
+		# the player, where they ground to a halt instead of taking the route
+		# the horde takes.
+		var dir = _get_move_direction(target.global_position, delta)
 		velocity = dir * speed * _slow_multiplier
 		move_and_slide()
 	
@@ -147,9 +151,10 @@ func _execute_slam() -> void:
 	# Create shockwave projectile
 	_create_shockwave()
 	
-	# Reset visual
+	# Reset visual. Must use boss_scale, not a literal: hardcoding 2.5 here
+	# silently undid the boss sizing on the first slam and every one after.
 	if body != null:
-		body.scale = Vector2.ONE * 2.5
+		body.scale = Vector2.ONE * boss_scale
 
 func _apply_slam_damage() -> void:
 	"""Apply damage to all targets in slam radius"""
@@ -158,7 +163,10 @@ func _apply_slam_damage() -> void:
 	# Damage player
 	if _game != null and _game.player != null and is_instance_valid(_game.player):
 		var dist_sq = global_position.distance_squared_to(_game.player.global_position)
-		if dist_sq <= radius_sq:
+		# A shockwave travels along the ground, so a solid building between the
+		# impact and the target stops it. Buildings themselves still take it -
+		# that is the slam hitting the wall.
+		if dist_sq <= radius_sq and has_los_between(global_position, _game.player.global_position, self):
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
 			var damage = slam_damage * damage_factor
 			if _game.player.has_method("take_damage"):
@@ -169,7 +177,7 @@ func _apply_slam_damage() -> void:
 		if ally == null or not is_instance_valid(ally):
 			continue
 		var dist_sq = global_position.distance_squared_to(ally.global_position)
-		if dist_sq <= radius_sq:
+		if dist_sq <= radius_sq and has_los_between(global_position, ally.global_position, self):
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
 			var damage = slam_damage * damage_factor
 			if ally.has_method("take_damage"):
@@ -182,7 +190,9 @@ func _apply_slam_damage() -> void:
 		var dist_sq = global_position.distance_squared_to(building.global_position)
 		if dist_sq <= radius_sq:
 			var damage_factor = 1.0 - (sqrt(dist_sq) / slam_radius) * 0.5
-			var damage = slam_damage * damage_factor
+			# Structures take a fraction: at full damage one slam one-shot every
+			# turret in radius, so a boss walking into a base erased it.
+			var damage = slam_damage * damage_factor * BOSS_AOE_BUILDING_MULT
 			if building.has_method("take_damage"):
 				building.take_damage(damage)
 

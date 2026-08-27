@@ -1,0 +1,108 @@
+Original prompt: Find the existing Stronghold Survivors repo and start the visual-direction pivot toward a space/Mars theme, including smoother animations, a Missile Turret replacement for the Arrow Turret, updated Cannon visuals, and upgrade-screen styling inspiration, while leaving music alone for now.
+
+## 2026-02-25
+- Confirmed active project repo at `projects/stronghold-survivors` (Godot project).
+- User has active in-progress gameplay/pathing-related changes in multiple files; avoid gameplay regressions and avoid touching those files unless necessary.
+- Identified relevant visual/UI hooks:
+- `scripts/ui.gd` for upgrade popup and upgrade panel styling
+- `scripts/arrow_turret.gd` and `scripts/cannon_tower.gd` for procedural tower visuals/animation
+- `data/structures.json` for player-facing tower names/icons
+- `assets/level1/*` and `assets/ui*` for terrain/UI art pipeline
+- Patched stuttery procedural pulse timing in arrow/cannon tower visuals to use continuous time (`Time.get_ticks_msec`) instead of stepped `system second`.
+- Changed player-facing display name `"Arrow Turret"` -> `"Missile Turret"` in `data/structures.json` (internal id remains `arrow_turret`).
+- Updated `ART_TASKS.md` for Mars pivot priorities and marked music as deferred.
+- Added `docs/VISUAL_PIVOT_MARS.md` with phased visual pivot plan and repo hook map.
+- Fixed a build-placement preview mismatch in `scripts/build_manager.gd`: preview/placement checks now use the same effective footprint sizing rule as `Building.configure()` (blocking buildings clamp to min radius 16), which should reduce false-feeling red `X` states near towers/walls.
+- Changed player/enemy body collision behavior so the player can move through enemies while still being blocked by towers/buildings (`scripts/player.gd`, `scripts/enemy.gd`; also aligned `boss_plague_bringer.gd` explicit mask). Contact damage/attacks remain distance-based and should still work.
+- Reduced intermittent build-preview `X` flicker by snapping the placement path-validation grid to 16px world cells (instead of centering it on the player's sub-pixel position each frame), which should make adjacent tower placement validation more stable while moving.
+- Tightened path-block prevention:
+- placement path validity now requires a minimum reachable spawn-ring area (not just a single reachable cell), reducing cases where enemies can become effectively path-blocked.
+- toggling a gate/structure from non-blocking -> blocking now runs the same path-validity check and reverts if it would seal routes.
+- gate/structure toggles now mark the flow field dirty so enemy routing updates immediately.
+- Performance pass (build placement + pathing):
+- Added preview placement-status caching/throttling in `scripts/build_manager.gd` (`PREVIEW_STATUS_REFRESH_INTERVAL = 0.08`) so expensive path checks are not recomputed every frame while aiming at the same snapped cell.
+- Added preview cache invalidation on place/sell/toggle/build-mode transitions to keep correctness.
+- Flow-field rebuild now uses a dynamic radius tied to spawn/play bounds instead of a permanently large fixed radius (`scripts/main.gd`), reducing rebuild cell count in normal gameplay.
+- Readability pass:
+- Added a pulsing additive player `VisibilityHalo` in `scripts/player.gd` to keep the main character visible in dense maze combat.
+
+## 2026-02-27
+- Performed benchmark research pass against `Vampire Survivors`, `Death Must Die`, and `Soulstone Survivors` using live Steam/store/community signals.
+- Captured key market guidance for this project:
+- prioritize readability and upgrade decision speed
+- preserve visual spectacle without late-run clutter/perf collapse
+- ensure practical in-game quality controls exist for lower-power hardware
+- Added execution roadmap doc: `docs/INDIE_BENCHMARK_GAMEPLAN.md`.
+- Updated `TASKS.md` to prioritize placement reliability, performance instrumentation, UI/UX redesign, Mars terrain/zone visual pivot, and runtime settings integration.
+- Added pause + settings foundation:
+- real pause flow and modal level-up pause behavior
+- pause stats screen with chosen-upgrade summary
+- runtime settings wiring for wave preview/range rings/FX density/shake/flash reduction
+- Added startup safety fixes:
+- removed `class_name` collision for `SettingsManager` autoload
+- guarded menu instantiation null paths in `main.gd`
+- readability hotfix for level-up modal:
+- removed fade-in tween under time-scale pause
+- stronger backdrop contrast
+- stronger text outlines
+- hid build overlays while menus are open
+- Created hard rollback checkpoint before major progression push:
+- branch: `codex/snapshot-20260226-171050`
+- tag: `snapshot-pre-overhaul-20260226-171050`
+- Created active overhaul branch: `codex/progression-overhaul-v1`
+- Added progression blueprint: `docs/PROGRESSION_ESSENCE_OVERHAUL_PLAN.md`
+- Updated `TASKS.md` to progression-overhaul phase structure.
+- Implemented Phase A progression foundation in code (`scripts/main.gd`, `scripts/ui.gd`):
+- all core buildables in the active palette are unlocked at run start/reset.
+- draft generator now uses rarity-floor + pity logic with graceful fallback.
+- level-up supports Essence reroll on `R` with scaling cost and dynamic UI hinting.
+- added run telemetry counters for offered/chosen rarity, rerolls, reroll Essence spend, dead-screen proxy, and pity state (logged at run end).
+- added new higher-tier draft cards to support rarity spread (`tower_overclock`, `tower_ordnance`, `orbital_overdrive`, `essence_cache`).
+- Added draft-agency controls (Essence spend layer) in level-up:
+- `Z/X/C` lock option `1/2/3` for next draft
+- `A/S/D` infuse pick `1/2/3` (extra stack for multi-rank cards)
+- `Q/W/E` force next reroll into `tower/engineer/economy` category
+- Added category-aware offer generation and surfaced category tags in draft options.
+- Implemented sustain-loop pass for health drops:
+- centralized heal drop policy in `scripts/main.gd` with missing-health scaling.
+- enemy and breakable/chest heal-drop spawns now call shared policy (`should_spawn_heal_drop`, `get_heal_drop_amount`) instead of fixed per-script chances.
+- added readable life pickup feedback (`scripts/pickup.gd`): distinct heal tint/pulse and `+HP` floating text on collect.
+- Implemented chest tower-impact pass:
+- added tower-focused chest upgrades in `scripts/treasure_chest.gd` (`tower_core_damage`, `tower_targeting`, `tower_barrage`, `orbital_matrix`).
+- wired chest tower damage/rate modifiers in `scripts/main.gd` via `chest_tower_damage_bonus` and `chest_tower_rate_mult`.
+- updated tower scalar calculations so chest tower upgrades stack cleanly with tech/building rate effects.
+- Added run-reset stability pass:
+- new `_reset_run_modifiers()` in `scripts/main.gd` to clear run-scoped chest/diamond modifiers each reset.
+- new `clear_run_modifiers()` in `scripts/player.gd` to clear run-scoped player weapon/combat modifiers.
+- Added upgrade-moment feedback pass:
+- rare/epic/legendary tech picks now trigger stronger announcement + camera/time accents in `scripts/main.gd` (`_play_tech_pick_feedback`).
+- infused picks now surface explicit infused rarity callouts.
+- Crash hardening pass:
+- fixed freed-instance targeting crash by sanitizing tower enemy iteration in `scripts/tower.gd`.
+- expanded freed-reference guards in `scripts/player.gd` and `scripts/build_manager.gd` for typed group loops.
+- added `_refresh_cached_enemies()` in `scripts/main.gd` so shared enemy cache is filtered each frame before tower use.
+- Horde pressure pass:
+- enemy count now scales by `+0.5x` per elapsed minute in `scripts/main.gd` (`_get_horde_count_multiplier` + `_scale_horde_enemy_count`).
+- spawn interval now shrinks with horde multiplier (with floor), and dynamic cap scales with horde pressure (hard-capped to protect perf).
+- Balance retune pass:
+- enemy HP baseline doubled, then ramps `+25%` every `30s` via `get_enemy_health_mult()` in `scripts/main.gd`.
+- economy tightened to ~`-15%` income (`add_resources`) and lower start gold (`START_RESOURCES = 170`).
+- XP gain increased by ~`+50%` (`add_xp` multiplier).
+- added new tech card `engineer_vitality` (up to +100 max HP) so player can reach ~2x HP through level choices.
+- Player readability + performance sweep:
+- added a persistent world-space player HP bar under the character in `scripts/player.gd`.
+- added adaptive runtime performance scaling in `scripts/main.gd` (FX density, particle cap, projectile cap, damage-number budget, and flow-field rebuild pacing react to FPS/load).
+- switched player/tower enemy queries to shared cached-enemy access paths to reduce repeated group-query/allocation pressure.
+- Stability + pacing follow-up:
+- fixed Tesla death-time crash by sanitizing/safe-sorting enemy lists in `scripts/tesla_tower.gd` before comparator access.
+- increased starting player HP baseline (`130`) in `scripts/player.gd`.
+- eased first-5-minute pressure in `scripts/main.gd` via early horde ramp smoothing and an early enemy-health grace ramp while preserving long-run scaling targets.
+
+## TODO (Next Agent / Next Pass)
+- Reskin `scripts/ui.gd` upgrade panel and upgrade toast to a sci-fi extraction theme.
+- Replace arrow projectile/tower art with missile-themed visuals and exhaust FX.
+- Convert cannon tower T2/T3 visuals away from rune/magic motifs to industrial sci-fi motifs.
+- Build Mars terrain tile set (regolith/path/basalt/edges) and wire into tile usage.
+- Run an in-engine visual verification pass (Godot/Playwright or manual) and capture screenshots.
+- If red `X` still feels wrong, log or surface placement failure reasons during preview (`Blocked placement` vs `Must leave path open!` vs affordability) to isolate path-check strictness vs overlap checks.
+- Playtest enemy crowding on player after pass-through change; if too punishing, add brief contact grace, pushback immunity window, or enemy spacing rules without restoring hard body-block.

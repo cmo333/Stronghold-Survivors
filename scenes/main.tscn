@@ -1,13 +1,12 @@
-[gd_scene load_steps=18 format=3 uid="uid://b3iccjuodukry"]
+[gd_scene load_steps=17 format=3 uid="uid://b3iccjuodukry"]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="2"]
 [ext_resource type="Script" path="res://scripts/build_manager.gd" id="3"]
 [ext_resource type="Script" path="res://scripts/ui.gd" id="4"]
-[ext_resource type="PackedScene" path="res://scenes/buildings/stronghold_core.tscn" id="5"]
 [ext_resource type="Texture2D" uid="uid://bxhh6lfeqopiy" path="res://assets/ui/ui_panel_frame_small_256x128_v001.png" id="6"]
-[ext_resource type="Texture2D" uid="uid://chdf520aoaouq" path="res://assets/ui/ui_bar_xp_384x16_v001.png" id="7"]
-[ext_resource type="Texture2D" uid="uid://bd6hunee4nvrb" path="res://assets/ui/ui_bar_xp_empty_384x16_v001.png" id="8"]
+[ext_resource type="Texture2D" path="res://assets/ui/ui_bar_xp_384x16_v002.png" id="7"]
+[ext_resource type="Texture2D" path="res://assets/ui/ui_bar_xp_empty_384x16_v002.png" id="8"]
 [ext_resource type="Texture2D" uid="uid://caf0i0ns76qm1" path="res://assets/ui/ui_icon_gold_32_v001.png" id="9"]
 [ext_resource type="Script" path="res://scripts/directional_sprite.gd" id="11"]
 [ext_resource type="Texture2D" uid="uid://burf07jpx6hws" path="res://assets/ui/ui_panel_frame_medium_384x192_v001.png" id="13"]
@@ -52,18 +51,19 @@ script = ExtResource("23")
 
 [node name="Buildings" type="Node2D" parent="World"]
 
-[node name="StrongholdCore" parent="World/Buildings" instance=ExtResource("5")]
-
 [node name="Props" type="Node2D" parent="World"]
+y_sort_enabled = true
 
 [node name="Pickups" type="Node2D" parent="World"]
 
 [node name="Breakables" type="Node2D" parent="World"]
+y_sort_enabled = true
 
 [node name="BuildManager" type="Node" parent="."]
 script = ExtResource("3")
 
 [node name="UI" type="CanvasLayer" parent="."]
+layer = 2
 script = ExtResource("4")
 
 [node name="HUD" type="Control" parent="UI"]
@@ -271,7 +271,7 @@ offset_top = 48.0
 offset_right = 20.0
 offset_bottom = 48.0
 theme_override_font_sizes/font_size = 12
-text = "Press Enter to start\\n1-9: build | Q/E/R/T: Barracks/Armory/Tech/Shrine\\nClick to place, U to upgrade, G to toggle gate"
+text = "Press Enter to start\\n1-9: build | Q/E/R/T: Barracks/Armory/Tech/Stargate\\nClick to place, U to upgrade, G to toggle gate"
 
 [node name="Option1Icon" type="TextureRect" parent="UI/HUD/StartPanel"]
 layout_mode = 0

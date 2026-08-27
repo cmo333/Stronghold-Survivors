@@ -1,0 +1,145 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/pause_menu.gd" id="1_pause"]
+
+[node name="PauseMenu" type="CanvasLayer"]
+layer = 100
+script = ExtResource("1_pause")
+
+[node name="Background" type="ColorRect" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.72)
+
+[node name="Panel" type="Panel" parent="."]
+custom_minimum_size = Vector2(860, 480)
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -430.0
+offset_top = -240.0
+offset_right = 430.0
+offset_bottom = 240.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 24.0
+offset_top = 14.0
+offset_right = 420.0
+offset_bottom = 46.0
+theme_override_font_sizes/font_size = 28
+text = "PAUSED"
+
+[node name="Hint" type="Label" parent="Panel"]
+layout_mode = 0
+offset_left = 24.0
+offset_top = 50.0
+offset_right = 460.0
+offset_bottom = 72.0
+text = "Press P to resume"
+
+[node name="StatsContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 24.0
+offset_top = 90.0
+offset_right = 300.0
+offset_bottom = 420.0
+theme_override_constants/separation = 8
+
+[node name="StatsTitle" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Run Stats"
+
+[node name="TimeLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Time: 0:00"
+
+[node name="KillsLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Kills: 0"
+
+[node name="GoldLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Gold: 0"
+
+[node name="LevelLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Level: 1"
+
+[node name="WaveLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Wave: 1"
+
+[node name="HealthLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Health: 0/0"
+
+[node name="QualityLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Quality: High"
+
+[node name="PerfLabel" type="Label" parent="Panel/StatsContainer"]
+layout_mode = 2
+text = "Perf: 60 FPS | 100%"
+
+[node name="PowerupsContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 314.0
+offset_top = 90.0
+offset_right = 598.0
+offset_bottom = 420.0
+theme_override_constants/separation = 8
+
+[node name="PowerupsTitle" type="Label" parent="Panel/PowerupsContainer"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 18
+text = "Chosen Upgrades"
+
+[node name="PowerupsList" type="Label" parent="Panel/PowerupsContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+autowrap_mode = 3
+vertical_alignment = 0
+text = "No upgrades selected yet."
+
+[node name="VBoxContainer" type="VBoxContainer" parent="Panel"]
+layout_mode = 0
+offset_left = 626.0
+offset_top = 120.0
+offset_right = 826.0
+offset_bottom = 360.0
+theme_override_constants/separation = 12
+
+[node name="ResumeButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Resume"
+
+[node name="SettingsButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Settings"
+
+[node name="QualityButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Quality: High"
+
+[node name="QuitMenuButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Quit To Menu"
+
+[node name="QuitDesktopButton" type="Button" parent="Panel/VBoxContainer"]
+custom_minimum_size = Vector2(0, 44)
+layout_mode = 2
+text = "Quit Desktop"

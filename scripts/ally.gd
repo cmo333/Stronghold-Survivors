@@ -24,6 +24,23 @@ var _game: Node = null
 var _orbit_angle: float = 0.0
 var _orbit_dir: float = 1.0
 
+# How often an ally goes looking for a NEW target. It still revalidates the one
+# it has every frame, so this is the cadence of the expensive half only.
+#
+# _find_target used to run every physics frame per ally, over the whole
+# "enemies" group. Measured at the ally cap against a full horde (16 v 440):
+# 7040 distance checks and 16 group walks every physics frame, all of it
+# bypassing the two caches main.gd already maintains for exactly this.
+#
+# 0.2s is 5 re-picks a second. An ally that is already fighting keeps swinging
+# at what it has; the only thing this delays is noticing a *better* target,
+# which at 5Hz is well under the ~0.5s an ally needs to close the distance
+# anyway.
+const RETARGET_INTERVAL := 0.2
+
+var _target: Node2D = null
+var _retarget_timer: float = 0.0
+
 @onready var body: AnimatedSprite2D = $Body
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 
@@ -53,6 +70,11 @@ func setup(game_ref: Node, config: Dictionary) -> void:
 		var scale = float(config.get("scale", 1.0))
 		body.scale = Vector2.ONE * scale
 		body.z_index = int(config.get("z", 1))
+		# Optional tint, so a summoner can reskin its units without a second
+		# sprite set. Applied to the Body rather than the node so it does not
+		# also stain the health bar or any child FX.
+		if config.has("tint"):
+			body.modulate = config.get("tint")
 	if collision_shape != null and collision_shape.shape is CircleShape2D:
 		var shape: CircleShape2D = collision_shape.shape
 		shape.radius = max(6.0, float(config.get("hit_radius", shape.radius)))
@@ -64,13 +86,17 @@ func _ready() -> void:
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
 	_orbit_angle = randf() * TAU
 	_orbit_dir = -1.0 if randf() < 0.5 else 1.0
+	# Randomised phase, not a flat interval: sixteen allies spawned on the same
+	# frame would otherwise all re-pick on the same frame forever, turning a
+	# smoothed cost back into a spike every 0.2s.
+	_retarget_timer = randf() * RETARGET_INTERVAL
 
 func _physics_process(delta: float) -> void:
 	if _game == null:
 		return
 	_cooldown = max(0.0, _cooldown - delta)
 	var player: Node2D = _game.player as Node2D
-	var target = _find_target()
+	var target = _acquire_target(delta)
 	if target != null and _within_leash(player, target):
 		var dist = global_position.distance_to(target.global_position)
 		if dist <= attack_range:
@@ -81,17 +107,67 @@ func _physics_process(delta: float) -> void:
 	else:
 		_orbit_player(player, delta)
 
+# Keep the target we have; only go shopping on the cadence.
+func _acquire_target(delta: float) -> Node2D:
+	_retarget_timer -= delta
+	# Revalidated EVERY frame, and deliberately so. A bare timer would leave an
+	# ally swinging at an enemy that has died, started its death animation or
+	# walked out of aggro for up to a fifth of a second. These three checks are
+	# a handful of operations against the full group walk they replace.
+	if _target != null and not _target_still_valid():
+		_target = null
+		_retarget_timer = 0.0
+	if _target != null and _retarget_timer > 0.0:
+		return _target
+	_retarget_timer = RETARGET_INTERVAL
+	_target = _find_target()
+	return _target
+
+func _target_still_valid() -> bool:
+	if not _is_live_enemy(_target):
+		return false
+	return global_position.distance_squared_to(_target.global_position) <= aggro_range * aggro_range
+
+# An enemy plays out its death animation before it frees itself, so
+# is_instance_valid stays true while it is dying and worth nothing as a target.
+#
+# This has to be applied in the SEARCH as well as the revalidation, and a probe
+# is what proved it: dropping a dying target and then re-picking from a list
+# that still contains it selects the same corpse again -- it is still the
+# nearest thing -- so the guard reads as working while changing nothing.
+func _is_live_enemy(e) -> bool:
+	if e == null or not is_instance_valid(e):
+		return false
+	if "_is_dying" in e and e._is_dying:
+		return false
+	return true
+
 func _find_target() -> Node2D:
 	var best: Node2D = null
 	var best_dist = aggro_range * aggro_range
-	for enemy in get_tree().get_nodes_in_group("enemies"):
-		if enemy == null or not is_instance_valid(enemy):
+	for enemy in _candidate_enemies():
+		if not _is_live_enemy(enemy):
 			continue
 		var dist = global_position.distance_squared_to(enemy.global_position)
 		if dist <= best_dist:
 			best = enemy
 			best_dist = dist
 	return best
+
+# The spatial grid when it is up, the group scan when it is not.
+#
+# The emptiness check is on the CACHE, not on the grid query. main.gd builds
+# both below the spawn_delay early return in _process, so for the first ten
+# seconds of a run neither exists -- and get_enemies_near() falls back to the
+# same empty cached_enemies rather than degrading to a group scan, so it
+# silently returns nothing rather than everything. Asking whether the cache is
+# populated separates "the grid is not up yet" from "there is genuinely nothing
+# near me", which an empty query result on its own cannot tell you.
+func _candidate_enemies() -> Array:
+	if _game != null and _game.has_method("get_cached_enemies") and _game.has_method("get_enemies_near"):
+		if not _game.get_cached_enemies().is_empty():
+			return _game.get_enemies_near(global_position, aggro_range)
+	return get_tree().get_nodes_in_group("enemies")
 
 func _within_leash(player: Node2D, target: Node2D) -> bool:
 	if player == null:

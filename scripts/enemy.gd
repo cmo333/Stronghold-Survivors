@@ -15,6 +15,12 @@ var is_siege = false
 
 var _attack_cooldown = 0.0
 var _game: Node = null
+# FFA replication. Host assigns net_id (monotonic) and remembers the scene/script
+# path it spawned from so clients can instantiate a matching proxy. 0 = unreplicated.
+var net_id: int = 0
+var net_scene_path: String = ""
+var net_script_path: String = ""
+var is_net_proxy: bool = false
 var _slow_sources: Dictionary = {}
 var _slow_multiplier = 1.0
 var _stun_timer = 0.0
@@ -69,20 +75,113 @@ const HEALTH_BAR_OFFSET_Y = -22.0
 @onready var collision_shape: CollisionShape2D = $CollisionShape2D
 var _base_color: Color = Color.WHITE
 
+# Per-hit feedback: white flinch flash + decaying knockback shove
+var _hit_flash_timer = 0.0
+var _hit_flash_duration = 0.0
+var _hit_flash_strength = 0.0
+var _knockback: Vector2 = Vector2.ZERO
+
+# --- Horde performance caches ---
+# _find_target() used to run every frame for every enemy and scan the whole
+# "buildings" and "allies" groups each time. With a few hundred enemies that is
+# hundreds of array allocations and tens of thousands of iterations per frame.
+# Targets are now re-evaluated a few times a second off shared cached lists,
+# and the expensive 8-way steering probe is reused for a beat when blocked.
+var _cached_target: Node2D = null
+var _target_refresh_cooldown: float = 0.0
+var _steer_dir: Vector2 = Vector2.ZERO
+var _steer_pref_dir: Vector2 = Vector2.ZERO
+var _steer_cooldown: float = 0.0
+
+var _cached_visible: bool = true
+var _visibility_check_timer: float = 0.0
+
+func _is_visible_to_camera() -> bool:
+	"""Cheap on-screen test, re-evaluated a few times a second and staggered
+	across the horde. Movement and damage always run — this only gates
+	decoration, so being a frame or two stale is harmless."""
+	_visibility_check_timer -= get_physics_process_delta_time()
+	if _visibility_check_timer > 0.0:
+		return _cached_visible
+	_visibility_check_timer = randf_range(0.1, 0.2)
+	if _game == null:
+		return _cached_visible
+	var cam = _game.get("camera")
+	if cam == null or not is_instance_valid(cam):
+		_cached_visible = true
+		return true
+	var zoom: Vector2 = cam.zoom
+	if zoom.x <= 0.001 or zoom.y <= 0.001:
+		_cached_visible = true
+		return true
+	var half: Vector2 = get_viewport_rect().size / zoom * 0.5
+	var d: Vector2 = global_position - cam.global_position
+	_cached_visible = absf(d.x) <= half.x + 120.0 and absf(d.y) <= half.y + 120.0
+	return _cached_visible
+
+func _allies_list() -> Array:
+	if _game != null and _game.has_method("get_cached_allies"):
+		return _game.get_cached_allies()
+	return get_tree().get_nodes_in_group("allies")
+
+func _breach_damage_mult(target: Node) -> float:
+	"""Extra damage against structures while breaching. Sealing the objective is
+	meant to be a losing move, so the wall has to come down on a timescale the
+	player feels - not eventually."""
+	if target == null or not target.is_in_group("buildings"):
+		return 1.0
+	if _game == null or not _game.has_method("get_breach_damage_mult"):
+		return 1.0
+	return float(_game.get_breach_damage_mult())
+
+func _nearest_blocking_building() -> Node2D:
+	"""Closest structure that actually obstructs pathing. Only walls and towers
+	qualify - chasing a non-blocking prop would leave the route just as sealed."""
+	var best: Node2D = null
+	var best_dist := INF
+	for building in _buildings_list():
+		if building == null or not is_instance_valid(building) or not (building is Node2D):
+			continue
+		if "blocks_path" in building and not bool(building.blocks_path):
+			continue
+		if building.has_method("is_destroyed") and building.is_destroyed():
+			continue
+		var d: float = global_position.distance_squared_to((building as Node2D).global_position)
+		if d < best_dist:
+			best_dist = d
+			best = building as Node2D
+	return best
+
+func _buildings_list() -> Array:
+	if _game != null and _game.has_method("get_cached_buildings"):
+		return _game.get_cached_buildings()
+	return get_tree().get_nodes_in_group("buildings")
+
 func setup(game_ref: Node, difficulty: float) -> void:
 	_game = game_ref
 	var health_mult = 1.0
 	if _game != null and _game.has_method("get_enemy_health_mult"):
 		health_mult = float(_game.get_enemy_health_mult())
+	var speed_mult = 1.0
+	if _game != null and _game.has_method("get_enemy_speed_mult"):
+		speed_mult = float(_game.get_enemy_speed_mult())
 	max_health = max_health * difficulty * health_mult
 	health = max_health
-	speed = speed * (1.0 + difficulty * 0.03) * 0.9  # Slightly slower to reduce pile-ups
+	speed = speed * (1.0 + difficulty * 0.03) * 0.72 * speed_mult  # 20% slower than current baseline
+	var damage_scale = 1.0 + max(0.0, difficulty - 1.35) * 0.28
+	attack_damage *= damage_scale
 
 func _ready() -> void:
 	add_to_group("enemies")
 	collision_layer = GameLayers.ENEMY
-	collision_mask = GameLayers.PLAYER | GameLayers.ALLY | GameLayers.BUILDING
+	# Enemies collide with allies/buildings, but not the player body.
+	collision_mask = GameLayers.ALLY | GameLayers.BUILDING
 	motion_mode = CharacterBody2D.MOTION_MODE_FLOATING
+	# Skipped when the frame budget is already tight - a shadow is the first thing
+	# worth losing in a 300-body horde, and the only thing lost is depth.
+	if _game == null or not _game.has_method("get_adaptive_perf_scale") \
+			or float(_game.get_adaptive_perf_scale()) >= 0.8:
+		ContactShadow.attach(self, 26.0, 0.30, 9.0)
 	if body != null:
 		_base_color = body.modulate
 		body.scale = Vector2.ONE * 1.8
@@ -94,28 +193,48 @@ func _physics_process(delta: float) -> void:
 		return
 	if _game == null:
 		return
+	_tick_hit_flash(delta)
 	_tick_aura_bonus(delta)
 	_tick_elite(delta)
-	_tick_elite_glow_particles(delta)
-	if _stun_timer > 0.0:
-		_stun_timer = max(0.0, _stun_timer - delta)
-		velocity = Vector2.ZERO
+	# Elite glow particles are decoration; a swarm off-screen does not need them.
+	if _is_visible_to_camera():
+		_tick_elite_glow_particles(delta)
+	# FFA clients: the host owns enemy AI/damage; we only render the replicated
+	# transform + visuals. Skip targeting, attacking, and movement integration.
+	if _game.has_method("is_sim_authority") and not _game.is_sim_authority():
 		_update_status_visuals()
 		return
-	var target = _find_target()
+	# Knockback shove is independent of AI: it plays during stun/attack/move so
+	# every hit registers as a physical flinch, then decays back to zero.
+	var knockback_step := _consume_knockback(delta)
+	if _stun_timer > 0.0:
+		_stun_timer = max(0.0, _stun_timer - delta)
+		velocity = knockback_step
+		if knockback_step != Vector2.ZERO:
+			move_and_slide()
+		else:
+			velocity = Vector2.ZERO
+		_update_status_visuals()
+		return
+	var target = _get_cached_target(delta)
 	if target == null or not is_instance_valid(target):
+		if knockback_step != Vector2.ZERO:
+			velocity = knockback_step
+			move_and_slide()
 		return
 	var dist = global_position.distance_to(target.global_position)
 	_attack_cooldown = max(0.0, _attack_cooldown - delta)
-	if dist <= attack_range:
-		if _attack_cooldown <= 0.0:
+	if dist <= _effective_attack_range(target):
+		if _attack_cooldown <= 0.0 and _has_attack_los(target):
 			if target.has_method("take_damage"):
-				target.take_damage(attack_damage)
+				target.take_damage(attack_damage * _breach_damage_mult(target))
 			_attack_cooldown = 1.0 / max(0.1, attack_rate)
-		velocity = Vector2.ZERO
+		velocity = knockback_step
+		if knockback_step != Vector2.ZERO:
+			move_and_slide()
 	else:
 		var dir: Vector2 = _get_move_direction(target.global_position, delta)
-		velocity = dir * speed * _slow_multiplier
+		velocity = dir * speed * _slow_multiplier + knockback_step
 		move_and_slide()
 	_update_status_visuals()
 
@@ -133,7 +252,17 @@ func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
 
 	var step = preferred_dir * speed * _slow_multiplier * max(delta, 0.016)
 	if not test_move(global_transform, step):
+		_steer_cooldown = 0.0
 		return preferred_dir
+
+	# Blocked. Probing 8 alternate headings costs 8 more physics queries, so with
+	# a few hundred enemies in a maze this dominates the frame. The chosen
+	# detour stays valid for a beat, so reuse it briefly instead of recomputing
+	# every frame; re-probe early if the goal direction swings sharply.
+	_steer_cooldown -= delta
+	if _steer_cooldown > 0.0 and _steer_dir != Vector2.ZERO \
+			and preferred_dir.dot(_steer_pref_dir) > 0.86:
+		return _steer_dir
 
 	var best_dir = preferred_dir
 	var best_dist = INF
@@ -149,17 +278,72 @@ func _get_move_direction(target_pos: Vector2, delta: float) -> Vector2:
 		if dist < best_dist:
 			best_dist = dist
 			best_dir = candidate
+	_steer_dir = best_dir
+	_steer_pref_dir = preferred_dir
+	# Staggered so the horde doesn't all re-probe on the same frame.
+	_steer_cooldown = randf_range(0.10, 0.18)
 	return best_dir
+
+func _get_cached_target(delta: float) -> Node2D:
+	"""Target selection is expensive and does not need to run every frame.
+
+	Re-evaluating ~4x/second is imperceptible in play but cuts the cost by an
+	order of magnitude with a large horde. The cache is dropped immediately if
+	the current target dies so enemies never stall on a corpse."""
+	_target_refresh_cooldown -= delta
+	if _cached_target != null and not is_instance_valid(_cached_target):
+		_cached_target = null
+		_target_refresh_cooldown = 0.0
+	if _cached_target == null or _target_refresh_cooldown <= 0.0:
+		_cached_target = _find_target()
+		# Stagger refreshes across the horde so they don't all recompute on the
+		# same frame and cause a periodic hitch.
+		_target_refresh_cooldown = randf_range(0.18, 0.32)
+	return _cached_target
 
 func _find_target() -> Node2D:
 	if _game == null:
 		return null
-	
-	var player: Node2D = _game.player as Node2D
+
+	# FFA: chase the NEAREST living player. Solo: this is just the one player.
+	var player: Node2D = null
+	if _game.has_method("get_nearest_player"):
+		player = _game.get_nearest_player(global_position) as Node2D
+	if player == null:
+		player = _game.player as Node2D
 	var best: Node2D = null
 	var best_dist = INF
 	var is_generator = false
-	
+
+	# Breach mode: the objective has been walled off, so there is no route to
+	# path along. Stop trying and tear down whatever is in the way instead -
+	# otherwise the horde mills about outside a sealed fort and the player wins
+	# by doing nothing.
+	if _game.has_method("is_extractor_sealed") and _game.is_extractor_sealed():
+		var blocker := _nearest_blocking_building()
+		if blocker != null:
+			return blocker
+
+	# Extraction mode: the extractor is the objective, so it outranks everything.
+	# Enemies only peel off to swing at the player or allies that are close
+	# enough to be in the way — otherwise they beeline for the objective.
+	if _game.has_method("has_extractor") and _game.has_extractor():
+		var ext := _game.extractor as Node2D
+		if ext != null and is_instance_valid(ext):
+			var ext_dist = global_position.distance_squared_to(ext.global_position)
+			var interrupt_range = attack_range * 1.6
+			# Something is close enough to be blocking the path — deal with it.
+			if player != null and is_instance_valid(player) \
+					and global_position.distance_squared_to(player.global_position) <= interrupt_range * interrupt_range:
+				return player
+			for ally in _allies_list():
+				if ally == null or not is_instance_valid(ally):
+					continue
+				if global_position.distance_squared_to(ally.global_position) <= interrupt_range * interrupt_range:
+					return ally
+			var _unused = ext_dist
+			return ext
+
 	# First check: player
 	if player != null and is_instance_valid(player):
 		best = player
@@ -167,7 +351,7 @@ func _find_target() -> Node2D:
 		is_generator = false
 	
 	# Check allies (higher priority than generators, lower than player)
-	for ally in get_tree().get_nodes_in_group("allies"):
+	for ally in _allies_list():
 		if ally == null or not is_instance_valid(ally):
 			continue
 		var dist = global_position.distance_squared_to(ally.global_position)
@@ -178,7 +362,7 @@ func _find_target() -> Node2D:
 	
 	# Check generators (target if within aggro range)
 	# Generators have lower priority than player/allies but will be attacked if closest
-	for building in get_tree().get_nodes_in_group("buildings"):
+	for building in _buildings_list():
 		if building == null or not is_instance_valid(building):
 			continue
 		# Only target resource generators
@@ -208,7 +392,53 @@ func _find_target() -> Node2D:
 		return best
 	return player
 
+func _effective_attack_range(target: Node2D) -> float:
+	"""Attack range measured to a target's *surface*, not its origin.
+
+	Buildings are solid colliders, so an enemy pathing into a 2x2 structure
+	physically stops ~footprint_radius away from its centre. Comparing raw
+	distance-to-centre against attack_range meant large buildings could never be
+	reached: enemies would crowd the extractor forever without ever swinging."""
+	if target == null or not is_instance_valid(target):
+		return attack_range
+	if target.is_in_group("buildings") and target.has_method("get_footprint_radius"):
+		return attack_range + float(target.get_footprint_radius())
+	return attack_range
+
+func _has_attack_los(target: Node2D) -> bool:
+	"""True if no blocking building sits between this enemy and the target.
+
+	Prevents melee enemies from damaging the player/allies *through* maze walls
+	when they happen to be within attack_range on opposite sides of a structure.
+	Building targets (the enemy is attacking the wall itself) always have LOS.
+	"""
+	if target == null or not is_instance_valid(target):
+		return false
+	if target.is_in_group("buildings"):
+		return true
+	return has_los_between(global_position, target.global_position, self)
+
+# Shared by melee swings and by ground-level AoE (slams, pulses). Those used to
+# test radius alone, so a hit landed on anyone inside the circle even with a
+# packed tower block between - damage visibly passing through solid walls.
+# Attacks that genuinely arc over cover (mortars) deliberately skip this.
+static func has_los_between(from: Vector2, to: Vector2, exclude_node: Node = null) -> bool:
+	var tree := Engine.get_main_loop() as SceneTree
+	if tree == null or tree.root == null:
+		return true
+	var world := tree.root.world_2d
+	if world == null:
+		return true
+	var params := PhysicsRayQueryParameters2D.create(from, to, GameLayers.BUILDING)
+	if exclude_node != null and exclude_node is CollisionObject2D:
+		params.exclude = [exclude_node]
+	params.collide_with_areas = false
+	params.collide_with_bodies = true
+	return world.direct_space_state.intersect_ray(params).is_empty()
+
 func _create_health_bar() -> void:
+	if _health_bar_bg != null:
+		return
 	_health_bar_bg = ColorRect.new()
 	_health_bar_bg.size = Vector2(HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT)
 	_health_bar_bg.position = Vector2(-HEALTH_BAR_WIDTH / 2.0, HEALTH_BAR_OFFSET_Y)
@@ -239,7 +469,7 @@ func _update_health_bar() -> void:
 		else:
 			_health_bar_fill.color = Color(1.0, 0.9, 0.2, 0.9).lerp(Color(1.0, 0.2, 0.2, 0.9), 1.0 - ratio * 2.0)
 
-func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal") -> void:
+func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_fx: bool = true, show_damage_number: bool = true, damage_type: String = "normal", hit_dir: Vector2 = Vector2.ZERO) -> void:
 	if amount <= 0.0:
 		return
 	var hit_pos = hit_position
@@ -248,6 +478,21 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 	var now_ms = Time.get_ticks_msec()
 	var will_die = health - amount <= 0.0
 	var is_crit = _is_crit_hit(amount)
+
+	# Per-hit flinch: white flash + a shove away from the impact. Skip if already
+	# dying so the death sequence owns the visuals.
+	if not _is_dying:
+		_trigger_hit_flash(is_crit)
+		var push_dir = hit_dir
+		if push_dir == Vector2.ZERO and hit_position != Vector2.ZERO:
+			push_dir = global_position - hit_position
+		if push_dir != Vector2.ZERO:
+			var kb = FeedbackConfig.HIT_KNOCKBACK_BASE
+			if is_crit:
+				kb *= FeedbackConfig.HIT_KNOCKBACK_CRIT_MULT
+			if will_die:
+				kb *= FeedbackConfig.HIT_KNOCKBACK_KILL_MULT
+			apply_knockback(push_dir, kb)
 
 	if will_die:
 		# Play death sound
@@ -263,6 +508,18 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 				var hit_kind = "hit"
 				if is_crit:
 					hit_kind = "crit"
+				else:
+					match damage_type:
+						"fire":
+							hit_kind = "fire_burst"
+						"ice":
+							hit_kind = "ice"
+						"lightning":
+							hit_kind = "chain_hit"
+						"acid", "poison":
+							hit_kind = "poison"
+						"bleed":
+							hit_kind = "blood"
 				_game.spawn_fx(hit_kind, hit_pos)
 			_last_hit_fx_ms = now_ms
 
@@ -274,6 +531,12 @@ func take_damage(amount: float, hit_position: Vector2 = Vector2.ZERO, show_hit_f
 			_last_damage_number_ms = now_ms
 
 	health -= amount
+	# Damage tap for the DPS harness. This is the only place an enemy loses
+	# health -- every source, projectile or aura or slam or DoT, arrives here --
+	# so one gated call measures all of them. Off in normal play; the bool test
+	# is the whole cost.
+	if _game != null and _game.dps_logging:
+		_game.log_damage(amount)
 	_update_health_bar()
 
 	# Trigger hitstop on crit
@@ -302,11 +565,14 @@ func _start_death_sequence() -> void:
 		_game.spawn_fx("blood", global_position)
 		if FeedbackConfig.ENABLE_DEATH_FEEDBACK:
 			if is_elite or is_siege:
-				_game.spawn_fx("elite_kill", global_position)
+				if _game.has_method("spawn_setpiece_fx"):
+					_game.spawn_setpiece_fx("elite_death", global_position, 1.15 if is_siege else 1.0)
+				else:
+					_game.spawn_fx("elite_kill", global_position)
 			else:
 				_game.spawn_fx("kill_pop", global_position)
-		# Extra particle burst for satisfying death
-		_game.spawn_glow_burst_death(global_position, _base_color)
+			# Extra particle burst for satisfying death
+			_game.spawn_glow_burst_death(global_position, _base_color)
 	
 	# Use FX Manager for enhanced death effects if available
 	if _game != null and _game.fx_manager != null:
@@ -314,6 +580,12 @@ func _start_death_sequence() -> void:
 		if body != null and body is Sprite2D:
 			corpse_texture = (body as Sprite2D).texture
 		_game.fx_manager.spawn_death_effect(self, _base_color, corpse_texture)
+		# Gore spray on every kill for visceral, dopamine-rich feedback.
+		if _game.fx_manager.has_method("spawn_gore_particles"):
+			_game.fx_manager.spawn_gore_particles(global_position, _base_color)
+		# Heavies erupt in a bigger burst.
+		if (is_elite or is_siege) and _game.fx_manager.has_method("spawn_death_burst"):
+			_game.fx_manager.spawn_death_burst(global_position, _base_color, 16)
 
 	# Hide health bar on death
 	if _health_bar_bg != null:
@@ -353,13 +625,11 @@ func _start_death_sequence() -> void:
 			if is_elite:
 				gold_amount = 6
 			_game.spawn_pickup(global_position, gold_amount, "gold")
-			# Life pickups: regular enemies have 8% chance, siege 20%, elite 40%
-			if is_elite and randf() < 0.40:
-				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 15, "heal")
-			elif is_siege and randf() < 0.20:
-				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 8, "heal")
-			elif not is_elite and not is_siege and randf() < 0.08:
-				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), 5, "heal")
+			if _game.has_method("should_spawn_heal_drop") and _game.should_spawn_heal_drop(is_elite, is_siege, "enemy", false):
+				var heal_amount = 5
+				if _game.has_method("get_heal_drop_amount"):
+					heal_amount = int(_game.get_heal_drop_amount(is_elite, is_siege, "enemy", false))
+				_game.spawn_pickup(global_position + Vector2(randf_range(-8, 8), randf_range(-8, 8)), heal_amount, "heal")
 		if is_elite and _game.has_method("spawn_treasure_chest"):
 			_game.spawn_treasure_chest(global_position)
 		# Essence drops from elite/siege kills (throttled to reduce clutter)
@@ -394,7 +664,9 @@ func apply_slow(source_id: int, factor: float, duration: float = 0.0) -> void:
 	_update_status_visuals()
 	if duration > 0.0:
 		var timer = get_tree().create_timer(duration)
-		timer.timeout.connect(func(): remove_slow(source_id))
+		timer.timeout.connect(func():
+			remove_slow(source_id)
+		)
 
 func remove_slow(source_id: int) -> void:
 	_slow_sources.erase(source_id)
@@ -493,6 +765,50 @@ func _update_status_visuals() -> void:
 	else:
 		body.modulate = _base_color
 
+func _trigger_hit_flash(is_crit: bool) -> void:
+	if not FeedbackConfig.ENABLE_HIT_FLASH or body == null:
+		return
+	if is_crit:
+		_hit_flash_duration = FeedbackConfig.HIT_FLASH_CRIT_DURATION
+		_hit_flash_strength = FeedbackConfig.HIT_FLASH_CRIT_STRENGTH
+	else:
+		_hit_flash_duration = FeedbackConfig.HIT_FLASH_DURATION
+		_hit_flash_strength = FeedbackConfig.HIT_FLASH_STRENGTH
+	_hit_flash_timer = _hit_flash_duration
+
+func _tick_hit_flash(delta: float) -> void:
+	if _hit_flash_timer <= 0.0 or body == null:
+		return
+	_hit_flash_timer = max(0.0, _hit_flash_timer - delta)
+	if _hit_flash_timer <= 0.0:
+		# Flash done: hand modulate back to the status-visual state machine.
+		_was_stunned = false
+		_was_slowed = false
+		_update_status_visuals()
+		return
+	# Owns body.modulate while active; fades the white tint out over its lifetime.
+	var t = _hit_flash_timer / max(0.001, _hit_flash_duration)
+	body.modulate = _base_color.lerp(Color.WHITE, _hit_flash_strength * t)
+
+func apply_knockback(dir: Vector2, strength: float) -> void:
+	if not FeedbackConfig.ENABLE_HIT_KNOCKBACK or dir == Vector2.ZERO or strength <= 0.0:
+		return
+	if is_siege:
+		strength *= FeedbackConfig.HIT_KNOCKBACK_SIEGE_RESIST
+	_knockback += dir.normalized() * strength
+	if _knockback.length() > FeedbackConfig.HIT_KNOCKBACK_MAX:
+		_knockback = _knockback.normalized() * FeedbackConfig.HIT_KNOCKBACK_MAX
+
+func _consume_knockback(delta: float) -> Vector2:
+	if _knockback == Vector2.ZERO:
+		return Vector2.ZERO
+	var step := _knockback
+	# Exponential decay so the shove settles smoothly rather than snapping.
+	_knockback = _knockback.lerp(Vector2.ZERO, clampf(FeedbackConfig.HIT_KNOCKBACK_DECAY * delta, 0.0, 1.0))
+	if _knockback.length() < 4.0:
+		_knockback = Vector2.ZERO
+	return step
+
 func apply_aura_bonus(amount: float, duration: float) -> void:
 	if amount <= 0.0 or duration <= 0.0:
 		return
@@ -536,59 +852,19 @@ func _spawn_split_minions() -> void:
 		return
 	_game.spawn_split_minions(global_position, _split_child_count)
 
-func _create_elite_glow(color: Color) -> void:
+func create_siege_threat_ring() -> void:
+	# Siege units get a steady red threat ring so the player can pick them
+	# out of the horde at a glance (they hit buildings hard and move slow).
 	if _elite_glow != null:
 		return
-	_elite_glow = Sprite2D.new()
-	_elite_glow.name = "EliteGlow"
-	_elite_glow.texture = ELITE_GLOW_TEXTURE
-	_elite_glow.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_elite_glow.z_index = -1
-	var mat = CanvasItemMaterial.new()
-	mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_elite_glow.material = mat
-	add_child(_elite_glow)
-	var base_scale = Vector2.ONE * 2.0
-	if body != null and body is Node2D:
-		base_scale = (body as Node2D).scale * 1.35
-	_elite_glow.scale = base_scale
-	_elite_glow.modulate = Color(color.r, color.g, color.b, 0.55)
-	_start_elite_glow_pulse(base_scale, color)
+	_create_elite_glow(Color(1.0, 0.25, 0.2))
 
-func _start_elite_glow_pulse(base_scale: Vector2, color: Color) -> void:
-	if _elite_glow == null or not is_instance_valid(_elite_glow):
-		return
-	if not is_inside_tree() or not _elite_glow.is_inside_tree():
-		return
-	if _elite_glow_tween != null:
-		_elite_glow_tween.kill()
-	var dim = Color(color.r, color.g, color.b, 0.35)
-	var bright = Color(color.r, color.g, color.b, 0.7)
-	_elite_glow_tween = create_tween()
-	if _elite_glow_tween == null:
-		return
-	_elite_glow_tween.set_loops()
-	_elite_glow_tween.tween_property(_elite_glow, "scale", base_scale * 1.1, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_elite_glow_tween.parallel().tween_property(_elite_glow, "modulate", bright, 0.65)
-	_elite_glow_tween.tween_property(_elite_glow, "scale", base_scale, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_elite_glow_tween.parallel().tween_property(_elite_glow, "modulate", dim, 0.65)
+func _create_elite_glow(_color: Color) -> void:
+	# Aura/threat rings removed: in dense swarms the stacked ground rings buried the
+	# action and destroyed readability. Elites/siege stay identifiable via their
+	# tinted body. Gameplay aura buff logic (_process_aura) is unaffected.
+	return
 
-func _tick_elite_glow_particles(delta: float) -> void:
-	if not is_elite or _game == null or not _game.has_method("spawn_glow_particle"):
-		return
-	_elite_glow_timer += delta
-	if _elite_glow_timer < _elite_glow_interval:
-		return
-	_elite_glow_timer = 0.0
-	var glow_color = _base_color
-	match elite_modifier:
-		"aura":
-			glow_color = Color(1.0, 0.45, 0.25)
-		"regen":
-			glow_color = Color(0.35, 1.0, 0.55)
-		"splitter":
-			glow_color = Color(0.75, 0.65, 1.0)
-	glow_color = glow_color.lerp(Color.WHITE, 0.3)
-	var offset = Vector2.RIGHT.rotated(randf() * TAU) * randf_range(8.0, 18.0)
-	var vel = offset.normalized() * randf_range(12.0, 32.0)
-	_game.spawn_glow_particle(global_position + offset, glow_color, randf_range(6.0, 9.0), 0.5, vel, 1.8, 0.65, 1.0, 0)
+func _tick_elite_glow_particles(_delta: float) -> void:
+	# Aura/threat glow particles removed alongside the rings for swarm readability.
+	return
